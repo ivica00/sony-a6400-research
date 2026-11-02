@@ -81,6 +81,7 @@ class GuestThreads:
         }
         self.futex_waiters: Dict[int, List[int]] = {}
         self.uipc_waiters: Dict[int, List[int]] = {}
+        self.fd_waiters: Dict[int, List[int]] = {}
         self.thread_log: List[Dict[str, object]] = []
 
     def save_context(self, uc) -> None:
@@ -267,6 +268,24 @@ class GuestThreads:
             'syscall': 'ioctl',
             'cmd': 'UIPC_CMD_RCV_MSG_TMO',
             'queue': queue,
+            'blocked_tid': self.current_tid,
+            'switched_to': next_tid
+        }
+        return next_tid, event
+
+    def handle_fd_wait(self, fd: int, op: str, resume_pc: int) -> Tuple[Optional[int], Dict[str, object]]:
+        """Handles blocking wait on a file descriptor (e.g. read on /dev/usb/event)."""
+        curr_thread = self.threads[self.current_tid]
+        curr_thread.state = f'blocked_{op}'
+        curr_thread.blocked_uaddr = fd
+        self.fd_waiters.setdefault(fd, []).append(self.current_tid)
+
+        runnable = [t for t in self.threads.values() if t.state == 'runnable']
+        next_tid = runnable[0].tid if runnable else None
+
+        event = {
+            'syscall': op,
+            'fd': fd,
             'blocked_tid': self.current_tid,
             'switched_to': next_tid
         }

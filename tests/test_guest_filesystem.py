@@ -234,6 +234,35 @@ class FilesystemTests(unittest.TestCase):
         self.assertEqual(ev_sub['returned'], 0xfffffffe)
         self.assertEqual(ev_sub['reason'], 'ENOENT_experimental_empty_proc')
 
+    def test_setting_overlay_stop_policy_blocks_setting(self):
+        fs = GuestFilesystem(self.mu, self.nodes, lambda p, n: b'', setting_overlay='stop')
+        with self.assertRaises(UnsupportedFilesystem):
+            fs.request(33, [self.path('/setting'), 0, 0])
+        with self.assertRaises(UnsupportedFilesystem):
+            fs.request(5, [self.path('/setting/test'), 0, 0])
+
+    def test_setting_overlay_experimental_empty(self):
+        fs = GuestFilesystem(self.mu, self.nodes, lambda p, n: b'', setting_overlay='experimental-empty')
+        # access('/setting') -> 0
+        ev_access = fs.request(33, [self.path('/setting'), 0, 0])
+        self.assertEqual(ev_access['returned'], 0)
+        self.assertEqual(ev_access['reason'], 'experimental_setting_access')
+
+        # access('/setting/foo') -> ENOENT
+        ev_sub_access = fs.request(33, [self.path('/setting/foo'), 0, 0])
+        self.assertEqual(ev_sub_access['returned'], 0xfffffffe)
+        self.assertEqual(ev_sub_access['reason'], 'ENOENT_experimental_empty_setting')
+
+        # open('/setting') -> unsupported (setting_directory_open_not_implemented)
+        with self.assertRaises(UnsupportedFilesystem) as caught:
+            fs.request(5, [self.path('/setting'), 0, 0])
+        self.assertEqual(caught.exception.details['reason'], 'setting_directory_open_not_implemented')
+
+        # open('/setting/foo') -> ENOENT
+        ev_open = fs.request(5, [self.path('/setting/foo'), 0, 0])
+        self.assertEqual(ev_open['returned'], 0xfffffffe)
+        self.assertEqual(ev_open['reason'], 'ENOENT_experimental_empty_setting')
+
 
 
 class ContentTests(unittest.TestCase):

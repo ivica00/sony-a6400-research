@@ -45,12 +45,18 @@ def main():
                         help='stop on NULL pointer access (default); read-zero maps read-only zero page at 0x0 (handling MonCtrl debug print flag checks in libMWF)')
     parser.add_argument('--proc-overlay', choices=('stop', 'experimental-empty'), default='stop',
                         help='stop on /proc (default); experimental-empty provides virtual /proc directory and ENOENT for missing runtime nodes')
+    parser.add_argument('--setting-overlay', choices=('stop', 'experimental-empty'), default='stop',
+                        help='stop on /setting (default); experimental-empty provides virtual /setting mountpoint directory')
+    parser.add_argument('--media-service', choices=('stop', 'authentic-sd'), default='stop',
+                        help='stop on MediaCommonDriver queue 0x00d9016e (default); authentic-sd provides SD presence reply')
     parser.add_argument('--kmod-service', choices=('stop', 'verified-image'), default='stop',
                         help='stop on init_module (default); verified-image allows authentic insertion of hash-matched kernel modules')
     parser.add_argument('--gpio-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/gpio (default); driver-bound binds /dev/gpio (240:0) with verified ioctl contracts')
     parser.add_argument('--usb-buspower-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/usb/buspwr (default); driver-bound binds /dev/usb/buspwr (248:13) with verified ioctl contracts')
+    parser.add_argument('--usb-event-device', choices=('stop', 'driver-bound'), default='stop',
+                        help='stop on /dev/usb/event (default); driver-bound binds /dev/usb/event (242:0) with verified ioctl/read contracts')
     parser.add_argument('--gles-device', choices=('stop', 'kernel-bound'), default='stop',
                         help='stop on /dev/dmpgles2 (default); kernel-bound binds /dev/dmpgles2 with verified TASK_SIZE 0x5f000000')
     parser.add_argument('--mmap-base', type=lambda x: int(x, 0), default=None,
@@ -82,7 +88,7 @@ def main():
     content_loader = VerifiedContent(PROJECT_ROOT, PROJECT_ROOT / 'firmware', expected_inputs)
     filesystem = {'nodes': manifest['nodes'], 'content_loader': content_loader, 'urandom_open': args.urandom_open,
                   'urandom_entropy_policy': args.urandom_entropy,
-                  'regular_inode_rdev': args.regular_inode_rdev, 'tmp_overlay': args.tmp_overlay, 'proc_overlay': args.proc_overlay,
+                  'regular_inode_rdev': args.regular_inode_rdev, 'tmp_overlay': args.tmp_overlay, 'proc_overlay': args.proc_overlay, 'setting_overlay': args.setting_overlay,
                   'readonly_image_times': args.readonly_image_times}
     if args.stream_device == 'image-driver':
         from tools.research.stream_contract import load_stream_profile
@@ -137,6 +143,7 @@ def main():
                              graphics_service_policy=args.graphics_service,
                              null_page_policy=args.null_page,
                              kmod_service_policy=args.kmod_service,
+                             media_service_policy=args.media_service,
                              mmap_base=mmap_base,
                              mmap_search_low=mmap_search_low)
     stack_bottom = 0x5e390000 if args.gles_device == 'kernel-bound' else 0x7fe00000
@@ -157,6 +164,9 @@ def main():
     if args.usb_buspower_device == 'driver-bound':
         from src.a6400.execution.guest_usb_buspower import GuestUsbBusPower
         probe.usb_buspower = GuestUsbBusPower()
+    if args.usb_event_device == 'driver-bound':
+        from src.a6400.execution.guest_usb_event import GuestUsbEvent
+        probe.usb_event = GuestUsbEvent()
     if args.readonly_image_times:
         probe.report['readonly_image_mount_selection'] = readonly_mounts
 

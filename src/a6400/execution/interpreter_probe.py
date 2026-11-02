@@ -24,6 +24,7 @@ from src.a6400.execution.guest_stream import GuestStream, UnsupportedStream
 from src.a6400.execution.guest_gles import GuestGles, UnsupportedGles, GLES_LOCK_SEMAPHORE
 from src.a6400.execution.guest_gpio import GuestGpio, UnsupportedGpio
 from src.a6400.execution.guest_usb_buspower import GuestUsbBusPower, UnsupportedUsbBusPower
+from src.a6400.execution.guest_usb_event import GuestUsbEvent, UnsupportedUsbEvent
 from src.a6400.execution.kernel_task_identity import UnsupportedKernelBinding
 
 
@@ -32,6 +33,7 @@ class InterpreterProbe:
                  madvise_policy='stop', backup_service_policy='unverified-ack',
                  graphics_service_policy='stop', null_page_policy='stop',
                  kmod_service_policy='stop',
+                 media_service_policy='stop',
                  mmap_base=None, mmap_ceiling=None, mmap_search_low=None):
         if null_page_policy not in ('stop', 'read-zero'):
             raise ValueError('Unknown null page policy')
@@ -43,6 +45,9 @@ class InterpreterProbe:
         if kmod_service_policy not in ('stop', 'verified-image'):
             raise ValueError('Unknown kmod service policy')
         self.kmod_service_policy = kmod_service_policy
+        if media_service_policy not in ('stop', 'authentic-sd'):
+            raise ValueError('Unknown media service policy')
+        self.media_service_policy = media_service_policy
         self.graphics_service_policy = graphics_service_policy
         if madvise_policy not in ('stop', 'private-anonymous-dontneed'):
             raise ValueError('Unknown madvise policy')
@@ -109,6 +114,7 @@ class InterpreterProbe:
                                               urandom_entropy_policy=filesystem.get('urandom_entropy_policy', 'stop'),
                                               tmp_overlay=filesystem.get('tmp_overlay', 'stop'),
                                               proc_overlay=filesystem.get('proc_overlay', 'stop'),
+                                              setting_overlay=filesystem.get('setting_overlay', 'stop'),
                                               **({'unknown_roots': filesystem['unknown_roots']}
                                                  if 'unknown_roots' in filesystem else {}))
         if filesystem and filesystem.get('urandom_open'):
@@ -134,7 +140,9 @@ class InterpreterProbe:
             self.report['assumptions'].append('ARM Linux high vectors page at 0xffff0000 with kernel helper template (version 5) and set_tls contract.')
         if syscall_policy in ('uipc', 'threads'):
             self.uipc = GuestUipc(backup_service_policy=backup_service_policy,
-                                  graphics_service_policy=graphics_service_policy)
+                                  graphics_service_policy=graphics_service_policy,
+                                  media_service_policy=media_service_policy)
+            self.report['media_service_policy'] = media_service_policy
             self.report['backup_service_policy'] = backup_service_policy
             self.report['graphics_service_policy'] = graphics_service_policy
             if graphics_service_policy == 'authentic-grm':
@@ -262,6 +270,44 @@ class InterpreterProbe:
                     self._stream_boundary(UnsupportedStream('stream_file_operation_not_supported',
                                                            number=number, fd=stream_fd), pc, number)
                     return
+            if number == 3:  # sys_read on device fds
+                fd = uc.reg_read(arm.UC_ARM_REG_R0)
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'usb_event':
+                    buf = uc.reg_read(arm.UC_ARM_REG_R1)
+                    count = uc.reg_read(arm.UC_ARM_REG_R2)
+                    owner_id = self.filesystem.fds[fd].get('owner_id')
+                    try:
+                        bytes_read = self.usb_event.read(owner_id, count, lambda data: uc.mem_write(buf, data))
+                    except UnsupportedUsbEvent as error:
+                        self.report.update(status='unsupported_usb_event_contract', boundary={
+                            **error.details, 'fd': fd, 'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    if bytes_read is None:
+                        if self.syscall_policy == 'threads':
+                            self.threads.save_context(uc)
+                            self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
+                            next_tid, event = self.threads.handle_fd_wait(fd, 'read', pc - size)
+                            event.update(pc=pc, instruction_address=pc - size, thumb=thumb, path='/dev/usb/event')
+                            self.report['serviced_syscalls'].append(event)
+                            if next_tid is not None:
+                                self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+                            else:
+                                self.report.update(status='blocked_read', boundary=event)
+                                uc.emu_stop()
+                            return
+                        else:
+                            self.report.update(status='blocked_read', boundary={'fd': fd, 'path': '/dev/usb/event', 'pc': pc})
+                            uc.emu_stop()
+                            return
+                    else:
+                        ret = bytes_read
+                        event = {'syscall': 'read', 'r7': 3, 'fd': fd, 'count': count, 'returned': ret,
+                                 'path': '/dev/usb/event', 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                        self.report['serviced_syscalls'].append(event)
+                        self.report['syscall_responses_supplied'] += 1
+                        uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                        return
             if number in (4, 146):  # write / writev on stdio
                 fd = uc.reg_read(arm.UC_ARM_REG_R0)
                 if self.stdio.is_stdio_fd(fd):
@@ -441,6 +487,51 @@ class InterpreterProbe:
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
+                if preview.get('status') == 'terminated' and preview.get('value') == '/dev/usb/event':
+                    try:
+                        self._uipc_read(path_ptr, len(b'/dev/usb/event\0'))
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    except UnsupportedUipc as error:
+                        self.report.update(status='unsupported_usb_event_contract', boundary={
+                            **error.details, 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    if not hasattr(self, 'usb_event') or self.usb_event is None:
+                        self.report.update(status='unsupported_usb_event_contract', boundary={
+                            'reason': 'usb_event_device_not_supplied',
+                            'path': '/dev/usb/event', 'flags': flags, 'pc': pc, 'r7': number,
+                            'instruction_address': pc - size,
+                            'guest_tid': self.threads.current_tid if hasattr(self, 'threads') else None,
+                            'guest_tgid': self.threads.process_id if hasattr(self, 'threads') else None})
+                        uc.emu_stop()
+                        return
+                    caller_pid = self.threads.current_tid if hasattr(self, 'threads') else None
+                    caller_tgid = self.threads.process_id if hasattr(self, 'threads') else None
+                    try:
+                        owner = self.usb_event.open(flags, caller_pid, caller_tgid)
+                    except UnsupportedUsbEvent as error:
+                        self.report.update(status='unsupported_usb_event_contract', boundary={
+                            **error.details, 'path': '/dev/usb/event', 'flags': flags,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size,
+                            'guest_tid': caller_pid, 'guest_tgid': caller_tgid})
+                        uc.emu_stop()
+                        return
+                    fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
+                    if fd is None:
+                        ret = 0xffffffe8
+                    else:
+                        ret = fd
+                        self.filesystem.fds[fd] = {'path': '/dev/usb/event', 'device': 'usb_event', 'flags': flags,
+                                                   'owner_id': owner['owner_id'], 'device_number': [self.usb_event.major, self.usb_event.minor]}
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/usb/event', 'fd': fd, 'returned': ret,
+                             'flags': flags, 'device_number': [self.usb_event.major, self.usb_event.minor],
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
                 if preview.get('status') == 'terminated' and preview.get('value') == '/dev/usb/buspwr':
                     try:
                         self._uipc_read(path_ptr, len(b'/dev/usb/buspwr\0'))
@@ -586,6 +677,26 @@ class InterpreterProbe:
                         return
                     event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
                              'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'gpio'}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'usb_event':
+                    owner_id = self.filesystem.fds[fd].get('owner_id')
+                    try:
+                        ret = self.usb_event.ioctl(
+                            owner_id, cmd, arg,
+                            lambda addr, sz: bytes(uc.mem_read(addr, sz)),
+                            lambda addr, data: uc.mem_write(addr, data)
+                        )
+                    except UnsupportedUsbEvent as error:
+                        self.report.update(status='unsupported_usb_event_contract', boundary={
+                            **error.details, 'fd': fd, 'cmd': cmd, 'arg': arg,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'usb_event'}
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
@@ -1111,6 +1222,8 @@ class InterpreterProbe:
                         self.gpio.close(entry.get('owner_id'))
                     if entry.get('device') == 'usb_buspower' and hasattr(self, 'usb_buspower') and self.usb_buspower:
                         self.usb_buspower.close(entry.get('owner_id'))
+                    if entry.get('device') == 'usb_event' and hasattr(self, 'usb_event') and self.usb_event:
+                        self.usb_event.close(entry.get('owner_id'))
                     ret = 0
                 else:
                     ret = 0xfffffff7  # -EBADF

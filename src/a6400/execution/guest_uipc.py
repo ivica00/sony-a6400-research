@@ -29,6 +29,7 @@ DEFAULT_FBLOCK_SIZE = 0x8000        # 32 KiB
 BACKUP_SERVICE_QUEUE = 0x003e014d
 GRM_MA_SERVICE_QUEUE = 0x014c0424
 DMM_SERVICE_QUEUE = 0x0061003c
+MEDIA_COMMON_DRIVER_QUEUE = 0x00d9016e
 
 
 class UnsupportedUipc(RuntimeError):
@@ -51,11 +52,20 @@ class GuestUipc:
                  backup_service_policy: str = 'stop',
                  backup_service: Optional[object] = None,
                  graphics_service_policy: str = 'stop',
-                 grm_service: Optional[object] = None):
+                 grm_service: Optional[object] = None,
+                 media_service_policy: str = 'stop',
+                 media_service: Optional[object] = None):
         if backup_service_policy not in ('stop', 'unverified-ack', 'preset-backed'):
             raise ValueError('Unknown backup service policy')
         if graphics_service_policy not in ('stop', 'authentic-grm'):
             raise ValueError('Unknown graphics service policy')
+        if media_service_policy not in ('stop', 'authentic-sd'):
+            raise ValueError('Unknown media service policy')
+        self.media_service_policy = media_service_policy
+        self.media_service = media_service
+        if self.media_service_policy == 'authentic-sd' and self.media_service is None:
+            from src.a6400.execution.guest_media_common import GuestMediaCommon
+            self.media_service = GuestMediaCommon()
         self.backup_service_policy = backup_service_policy
         self.backup_service = backup_service
         if self.backup_service_policy == 'preset-backed' and self.backup_service is None:
@@ -154,6 +164,16 @@ class GuestUipc:
                 self.backup_service.handle_uipc_sync_message(
                     memory_reader, memory_writer, msg_ptr, self.allocated_msgs.get(msg_ptr, 64)
                 )
+        elif target_queue == MEDIA_COMMON_DRIVER_QUEUE:
+            if self.media_service_policy == 'stop':
+                words = list(struct.unpack('<' + 'I' * (len(msg_preview) // 4), msg_preview[:len(msg_preview) // 4 * 4]))
+                raise UnsupportedUipc('media_service_reply_not_supplied', queue=target_queue,
+                                      msg_ptr=msg_ptr, timeout=tmo, flag=flag,
+                                      request_words=words, preview_hex=msg_preview.hex(),
+                                      replies_supplied=0)
+            elif self.media_service_policy == 'authentic-sd':
+                if self.media_service is not None and memory_writer is not None:
+                    self.media_service.handle_message(memory_reader, memory_writer, msg_ptr, self)
         elif target_queue == GRM_MA_SERVICE_QUEUE:
             if self.graphics_service_policy == 'stop':
                 words = list(struct.unpack('<' + 'I' * (len(msg_preview) // 4), msg_preview[:len(msg_preview) // 4 * 4]))
@@ -360,6 +380,18 @@ class GuestUipc:
             'msg_ptr': msg_ptr,
             'preview_hex': msg_preview.hex(),
         })
+
+        if queue == MEDIA_COMMON_DRIVER_QUEUE:
+            if self.media_service_policy == 'stop':
+                words = list(struct.unpack('<' + 'I' * (len(msg_preview) // 4), msg_preview[:len(msg_preview) // 4 * 4]))
+                raise UnsupportedUipc('media_service_reply_not_supplied', queue=queue,
+                                      msg_ptr=msg_ptr, request_words=words, preview_hex=msg_preview.hex())
+            elif self.media_service_policy == 'authentic-sd':
+                if self.media_service is not None and memory_writer is not None:
+                    media_event = self.media_service.handle_message(memory_reader, memory_writer, msg_ptr, self)
+                    if media_event:
+                        self.transactions[-1]['media_reply'] = media_event
+                        self.transactions[-1]['classification'] = media_event.get('classification', 'media common reply')
 
         if queue == DMM_SERVICE_QUEUE:
             if self.graphics_service_policy == 'authentic-grm' and self.grm_service is not None and memory_writer is not None:

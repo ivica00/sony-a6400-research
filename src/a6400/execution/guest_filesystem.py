@@ -28,17 +28,22 @@ class GuestFilesystem:
                                  'size': 4096, 'block_size': 4096, 'blocks_512': 8}
     EXPERIMENTAL_PROC_METADATA = {'mode': 0o040555, 'uid': 0, 'gid': 0, 'nlink': 2, 'inode': 1,
                                   'size': 0, 'block_size': 1024, 'blocks_512': 0}
+    EXPERIMENTAL_SETTING_METADATA = {'mode': 0o040755, 'uid': 0, 'gid': 0, 'nlink': 2, 'inode': 1,
+                                     'size': 4096, 'block_size': 4096, 'blocks_512': 8}
 
     def __init__(self, mu, nodes, content_loader, before_read=None, after_write=None,
                  uid=0, gid=0, stat_contract=None, unknown_roots=UNKNOWN_ROOTS,
                  urandom_open=False, urandom_entropy_policy='stop', urandom_seed=b'\x12\x34\x56\x78',
-                 tmp_overlay='stop', proc_overlay='stop'):
+                 tmp_overlay='stop', proc_overlay='stop', setting_overlay='stop'):
         if urandom_entropy_policy not in ('stop', 'deterministic'):
             raise ValueError(f'Unknown urandom entropy policy: {urandom_entropy_policy}')
         if tmp_overlay not in ('stop', 'experimental-empty'):
             raise ValueError(f'Unknown tmp overlay policy: {tmp_overlay}')
         if proc_overlay not in ('stop', 'experimental-empty'):
             raise ValueError(f'Unknown proc overlay policy: {proc_overlay}')
+        if setting_overlay not in ('stop', 'experimental-empty'):
+            raise ValueError(f'Unknown setting overlay policy: {setting_overlay}')
+        self.setting_overlay = setting_overlay
         self.tmp_overlay = tmp_overlay
         self.proc_overlay = proc_overlay
         self.mu, self.nodes, self.content_loader = mu, nodes, content_loader
@@ -91,6 +96,24 @@ class GuestFilesystem:
             raise UnsupportedFilesystem('stat64_success_structure_not_implemented', path=path)
         result = self.stat_contract.request(dict(self.EXPERIMENTAL_PROC_METADATA), args[1])
         return {**event, **note, **result, 'experimental_values': dict(self.EXPERIMENTAL_PROC_METADATA)}
+
+    def _setting_overlay_request(self, number, event, path, args):
+        """Experimental /setting mount contract. Returns an event or None."""
+        if self.setting_overlay != 'experimental-empty' or not (path == '/setting' or path.startswith('/setting/')):
+            return None
+        note = {'experimental': 'setting overlay; empty /setting mountpoint (real partition 2 on nflasha2)'}
+        if number == 5:
+            if path == '/setting':
+                raise UnsupportedFilesystem('setting_directory_open_not_implemented', path=path)
+            return {**event, **note, 'returned': (-2) & 0xffffffff, 'reason': 'ENOENT_experimental_empty_setting'}
+        if path != '/setting':
+            return {**event, **note, 'returned': (-2) & 0xffffffff, 'reason': 'ENOENT_experimental_empty_setting'}
+        if number == 33:
+            return {**event, **note, 'returned': 0, 'reason': 'experimental_setting_access'}
+        if self.stat_contract is None:
+            raise UnsupportedFilesystem('stat64_success_structure_not_implemented', path=path)
+        result = self.stat_contract.request(dict(self.EXPERIMENTAL_SETTING_METADATA), args[1])
+        return {**event, **note, **result, 'experimental_values': dict(self.EXPERIMENTAL_SETTING_METADATA)}
 
     def _scope(self, path):
         if any(path == root or path.startswith(root + '/') for root in self.unknown_roots):
@@ -170,6 +193,9 @@ class GuestFilesystem:
                 proc_overlay = self._proc_overlay_request(number, event, path, args)
                 if proc_overlay is not None:
                     return proc_overlay
+                setting_overlay = self._setting_overlay_request(number, event, path, args)
+                if setting_overlay is not None:
+                    return setting_overlay
                 entropy_open = self.urandom_open and number == 5 and path == '/dev/urandom'
                 resolved, node = self._resolve(path, allow_urandom=entropy_open)
                 if entropy_open:
