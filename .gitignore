@@ -1,0 +1,38 @@
+# Local runtime and caches
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+
+# Firmware, device state, dumps and generated outputs
+firmware/
+backups/
+artifacts/
+scratch/
+assets/reference/*
+!assets/reference/README.md
+
+# Proprietary binary formats and disk images
+*.dat
+*.fdat
+*.tar
+*.bin
+*.ko
+*.so
+*.elf
+*.img
+*.raw
+
+# Local driver installer & executables
+tools/*.exe
+*.exe
+
+# Existing upstream checkouts: track revisions/provenance separately
+/fwtool.py/
+/Sony-PMCA-RE/
+
+# OS metadata
+.DS_Store
+Thumbs.db

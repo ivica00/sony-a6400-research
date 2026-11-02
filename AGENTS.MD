@@ -1,0 +1,212 @@
+# Project instructions
+
+## Objective
+
+Build an evidence-backed Sony ILCE-6400 execution environment in which original or modified firmware produces application behavior. Progress toward real camera behavior through verified CPU, operating-system and hardware contracts. Do not replace original navigation, rendering or camera decisions with host-written approximations and call the result firmware compatibility.
+
+This file applies throughout the project. Follow the user's current scope and constraints. Continue useful authorized work without routine confirmation requests. Do not spawn subagents unless explicitly requested by the user or another applicable instruction.
+
+## Read before continuing
+
+## Read before continuing
+
+Latest Sugilite display handshake and render loop: read docs/evidence/0070-sugilite-render-loop-and-surface-transfer.md. Configuring sub_device_id: 1 in GuestGles resolves display panel polling in libObj.so (0x72baf0). Main process achieves continuous steady-state rendering, executing 61,582 complete frame render cycles (123,168 GLES_LOCK_SEMAPHORE, 123,166 GLES_UNLOCK_SEMAPHORE, 61,582 GLES_GET_RESOURCE_SUB, 61,582 GLES_GET_POWER_STATE_ALT) and performing 800-element display surface memory transfers via ARM memcpy in libc at 0x502601c0. 486 tests pass. Next media detection pipeline (libInfraMediaDetect.so) for read-only SD E:\ integration. SD E:\ remains strictly read-only.
+
+Latest USB bus power driver contract and 100M instruction milestone: read docs/evidence/0069-usb-buspower-driver-contract-and-100m-instruction-milestone.md. GuestUsbBusPower (major 248, minor 13) services open, SetPortState (0xf20c) ioctl, and close. Verified image module loading authenticates and initializes all three USB kernel modules (usbg_buspower.ko, usb_darwin.ko, usb_buspwr.ko). Execution reaches 100,000,000 instructions (1,013,768 serviced syscalls) with 11 concurrent threads, emitting '!!! GLES Vecgen disabled.' and executing the active Sugilite GPU/display worker (thread 1008, ModelYuvMuteToInstance in libObj.so). 486 tests pass. Next ModelYuvMute state transitions and SD media path integration. SD E:\\ remains strictly read-only.
+
+Latest GPIO binding and USB bus power boundary: read docs/evidence/0068-gpio-contract-and-usbg-buspower-module-boundary.md. GuestGpio (major 240, minor 0) services open, two GPIO_CMD_SET_MODE (0xc0104702) ioctls, and close. Execution advances to 81,686,763 instructions (1,051 serviced syscalls), loads libUsbBusPower.so, and maps /usr/kmod/usbg_buspower.ko stopping at init_module (r7 = 128). 476 tests pass. Next USB bus power module contracts and device integration. SD E:\\ remains strictly read-only.
+
+Latest GLES binding and GPIO boundary: read docs/evidence/0067-gles-kernel-binding-and-gpio-boundary.md. Connecting main process (im.elf) to GuestGles under --gles-device kernel-bound successfully opens /dev/dmpgles2 (fd 10), executes 10 authentic Sugilite GLES ioctl/mmap calls, maps /dev/mem, and loads Bluetooth libraries, advancing execution to 81,540,245 instructions stopping at /dev/gpio (open flags 2). 468 tests pass. Next GPIO driver contracts and device numbers. SD E:\ remains strictly read-only.
+
+Latest task copy limits and GRM thread resolution: read `docs/evidence/0066-kernel-task-copy-limits-and-grm-vdf-identity.md`. Original task copy windows in `tools.research.kernel_task_copy_trace` execute 409 instructions to notifier boundary; confirms strict user limit 0x5f000000. `observed_task_name` resolves captured task 358 (0x60a4a800, PID 358) as THREAD_INFRA0. Real grm_dn_vdf_if is task 356 (0x60a4abe0, PID 356, TGID 152) in adjacent 0x3e0 slab slot with state 0x40 (TASK_DEAD); string at 0x60a4a800+0x5c8 is task 356 comm (+0x1e8). Userland `libObj.so` creates grm_dn_vdf_if at 0x70f188 / 0x70f358 via osal_create_waitable_thread on queue 0x0080003b (TID 1005 in firmware boot). Main process 150M boot reaches 80,739,451 instructions, maps /dev/stream (32 MiB, VA 0x53f00000 / PA 0x202e0000), clone syscalls, and opens /dev/dmpgles2 stopping at gles_kernel_process_binding_not_supplied. 446 tests pass. Next GLES kernel process binding and authentic GPU submission toward VRAM pixels. SD E:\ remains strictly read-only.
+
+Latest SD emulation contract: read `docs/evidence/0062-sdhci-adma2-bridge-and-physical-volume-read.md`. User reaffirmed correct emulation, no injection/security investigation. Complete SD transfer pipeline verified end-to-end: ioctl 0x10f dispatches through mmcd_blk_ioctl (0x3fa0), extent validator (0x343c), and chunker (0x31d4) to mcmnd_scatter_makescatterlist (0xd5cc) which pins memory. mmc_hw_exec_command (0xd754) builds 8-byte ADMA2 descriptors (attribute 0x21, terminating 0x23) and writes physical table address to SDHCI_ADMA_ADDRESS (0x58). SDHCI bridge (tools.research.sdhci_bridge) emulates host controller registers (base 0xf2a00000), executes CMD17/18 ADMA2 transfers, and reads authentic sectors from mounted physical volume E:\ (\\.\E:, exFAT, 249,966,592 sectors / 119.19 GB). Verified LBA 0 (VBR, OEM EXFAT, SHA-256 ed765d4031463b2c3ad0d08d02fef20f2d9333843f9dc4080b8264d6b89a7a56) and multi-block root directory clusters (PRIVATE, AVF_INFO). 386 tests pass. Next userland mcmn_drv/MWF media path integration and mount dispatch. No host SD ioctl/card writes/service success or main/UI advance.
+
+Current scope supersedes E0056 update priorities: user requests SD-card communication and explicitly says disregard injection. Read `docs/evidence/0057-sd-communication-layers-and-original-read-bounds.md`. Five WSL REA batches completed34 queries. Detect GetDevicePath and Mount request media path via MWF (0xe4 bytes/header1000,3,cc); actual responder/path unknown. Mount calls mcmn_drv_open; common read uses runtime callback at devctrl+cc behind mutex/reject/log gates, not simple host open/read. mmc_drv text Ghidra base100c4; mmc_mmcp_read17070 passes selector3 to unnamed16e94, statically commands17/18 and512-byte blocks. sd_read_bounds original invalid controls return-1 at14/17/21 events; valid18 events stops before helper16328. Capacity1024 is constructed, not E:\ state; no clock/lock/DMA/card replies. Four new tests;361 pass. Next actual path responder/callback/kernel routing and preparation/MMIO contracts. No injection/updater work, card writes or main/UI advance.
+
+Current user-directed focus: read `docs/evidence/0056-sd-card-inputs-and-update-surface.md`. User redirected research to SD-provided inputs/custom-update reachability; original card is E:\. Read-only only: no payload/card/camera writes or updater execution. sd_surface_survey inventories81 camera-tree files (49ARW/8JPG/7MP4/metadata), prefix-only media identity, full small metadata hashes;374 preserved software inputs checked. sd_firmware_profile retains6 original playback/updater windows. WSL REA sd-update-ufp-exact completed3 queries (base+10000, init119fc/copy11c58); first ambiguous-name batch retained failed. MSBOOT/DATSRC_MS labels are leads, not SD support; actual udtr_ufp_init mounts internal nflasha1 at /mnt, so pathname alone is not SD evidence. Next actual RAW/JPEG byte-reader/parser edges and MS selector/boot-marker consumers, package validation/reachability.357 tests pass. No exploit/update/main/UI advancement; retain E0055/E0051/E0034 boundaries.
+
+Latest trace allocator: read `docs/evidence/0055-original-trace-uipc-allocator-runtime-state.md`. trace_uipc_allocator executes32 original instruction events including terminal read: queue008f013a has bit8000 clear, takes4004 -> veneer1980/PLT1984 -> u_osal_valloc_msg_wait2871. Original nested ABI command8000000a, outer queue/params, inner out08002fac/size42/flag0. Stops2898 reading unknown uconf[0] at ef80, no ioctl/allocation reply. Same-image bindings checked; writable source data and unwritten stack remain unknown. Static do_init stores open return2128 before connect/mmap. Next establish original UIPC initialization/pool/driver effects, not merely reuse host cursor allocation.354 tests pass; E0054 initializer/E0051 callback/E0034 main/UI unchanged.
+
+Latest constructor return: read `docs/evidence/0054-original-pthread-constructor-return-and-trace-ipc.md`. ma_object_constructor --loader-pagesize --pthread-initializers binds original version-matched libpthread GLIBC_2.4 funcs (SONAME/dependency/version checks), executes168 instructions/44 stores and returns;157/184 object bytes known. Optional --lookup-initialize freshly obtains original GRM reply and directly calls71fc64 with constructed ABI frame; total202 instructions stops at720740 osal_valloc_msg_wait(queue008f013a,out08002fac,size2a,r3=0), before handle storage/map. No IPC/trace result supplied. Next original trace allocator/transport contract; E0051 kernel thread/lock gate still independent.354 tests pass; main/UI unchanged.
+
+Latest original loader/constructor chain: read `docs/evidence/0053-original-loader-to-sysconf-constructor-chain.md`. loader_pagesize_trace runs original default stop probe1183 instructions/zero replies: original PC4000f778 writes declared AT_PAGESZ4096 to _rtld_global_ro+16 at4001fe10. ma_object_constructor --loader-pagesize freshly consumes only those4 runtime bytes through original PLT/sysconf/getpagesize with checked explicit symbol bindings.86 instructions/17 stores/68 of184 object bytes initialized, stops at71f2a2 pthread_mutex_init PLT104828 (object0830005c, attr0). Default remains32/sysconf stop. Next actual pthread provider/null-attribute initializer; kernel callback-thread/IPC gates remain.351 tests pass; main/UI unchanged.
+
+Latest constructor follow-up: read `docs/evidence/0052-original-client-constructor-and-page-size-dependency.md`. ma_object_constructor executes32 original Thumb instructions/seven stores (28/184 bytes initialized) on explicit uninitialized research storage; stops at71f928 sysconf(selector30), verified PLT102f84. Relative GOT slots13704f0/1370a18 are source-backed with isolated bias0. ma_sysconf_trace statically connects selector30 to getpagesize9b580 -> undefined _rtld_global_ro word+16; visible4096 fallback does not authorize skipping that runtime read. Following static map code uses /dev/stream/mmap but is not executed. Next loader/page-size state and original constructor continuation; kernel callback-thread/mutex/IPC gates remain.351 tests pass; main/UI unchanged.
+
+Latest callback prerequisite: read `docs/evidence/0051-original-grm-mutex-thread-state-boundary.md`. wbi_grm_consumer --operation callback stops at _mutex_lock(5f3fc4a4); optional --mutex-prefix verifies five captured/preserved kernel windows, records41 instruction events, stops at603c6e5c reading unsupplied constructed stack base+4 (08002004). Written-stack-byte tracking prevents accepting host zeros; no non-stack/retain/reply writes or lock success. Object-pointer scan finds only trace-like/reference candidates at PA067609f0/088ffff4, not validated client objects or thread contexts. Next kernel callback-thread context/mutex contract and original user object constructor independently.348 tests pass; main/UI unchanged.
+
+Latest original client follow-up: read `docs/evidence/0050-original-ma-client-status-consumption.md`. wbi_ma_client freshly executes original GRM lookup, copies actual output into an explicit constructed post-transport context, and executes Thumb client status read at720986/988: status at full packet+20. Success:6 instructions to operator-new call720f10, size184; absent control:5 instructions to cleanup720f4a, status-9. Transport/mutex/operator-new/constructor NOT executed, no main response supplied. Client eventually creates a C++ object, so raw kernelhandle68a96220 cannot replace startup output. Next callback mutex/transport effects and original object constructor/lifetime.348 tests pass; main/UI unchanged.
+
+Latest extent/startup follow-up: read `docs/evidence/0049-original-extent-failure-and-startup-lookup-branch.md`. Explicit --operation alloc --inner-extent completes original failure cleanup:2565 instructions/88 stores, return-257/outputffff, record65 inactive/free queue count restored (head43/tail23,sequence67 remain). Default alloc still stops2019. Crucially fresh libObj disassembly shows lookup client71f3dc success at6bcb7e/80 branches to6bcefc common exit, skipping duplicate open. Next verify original lookup-client reply consumption and authentic captured GRM service effects (mutex/transport) under explicit package-WBI policy; do not force branch/success.345 tests pass; main/UI unchanged.
+
+Latest original allocation: read `docs/evidence/0048-original-dmm-allocation-state-transitions.md`. wbi_dmm_handle --operation alloc executes2019 original instructions and11 non-stack stores: free queue head42->43/count1389->1388; new record65, sequence67, internal MakeHandle(65,1)=0441. Stops at runtime5f0d5658 / .text+a658 / REA1a694 before inner extent allocation; output remainsa5a5 and first extent0, no allocation success. Explicit mutation ranges cover queue globals and record65 only. Exact DMM Ghidra textbase1003c; earlier helper batch with1002c misaddressing is retained and not used. Search still returns0417;345 tests pass; main/UI unchanged. Next exact inner extent function with ownership/mutation guards.
+
+Latest captured DMM follow-up: read `docs/evidence/0047-original-dmm-handle-and-captured-ownership.md`. wbi_dmm_handle uniquely locates original MakeHandle, selected-root translates DMM code base5f0cb000, verifies46,256 non-relocated bytes (1211 relocation words excluded), and executes original SearchUnitTypeToHandle(280)/MakeHandle:224 instructions return0417, matching GRM gl_common. Table5f1709e0 has inactive index8 and active index23 sharing extent5f1f454c; extent owner points to index23, base20200000+offsete0000=size02000000 matches GRM. No allocation or service reply executed. Next bounded original Alloc(280,1) with explicit mutation/clock guards. 342 tests pass; main/UI unchanged.
+
+Latest open follow-up: read `docs/evidence/0046-original-grm-open-and-dmm-handle.md`. Actual symbol is ma_dmm_open_impl; original captured open/sendrecv execute26 instructions then stop before osal_valloc_msg_wait(queue61003c,size18,flags1). No name reuse occurs; existing gl_common cannot bypass DMM. Original instructions pass a fourth stack-halfword output pointer and later use returned DMM identifier for ma_list_add; pseudocode's apparent constant0 is misleading. Next captured DMM unit table/handle and original allocation/access-info path. Lookup still returns after285 instructions; 342 tests pass; main/UI boundary unchanged.
+
+Latest original allocator lookup: read `docs/evidence/0045-wbi-page-tables-and-original-grm-lookup.md`. Explicit selected WBI page-table root PA 0x104000 maps head VA 0x5f3fc348 to PA 0x096ce348. All 14,548 non-relocated grm_ma text bytes match (208 relocation words excluded); captured original lookup and kernel comparison execute 285 instructions, returning status0/PA202e0000/size02000000/handle68a96220 and increasing count1->2. Absent control returns -9 without count writes. Active TTBR/TTBCR and cold-start ownership are not established. Next original ma_open_impl for unit0x280 flags0 and existing captured object. 342 tests pass; backend/main/UI boundary unchanged.
+
+Latest allocator follow-up: read `docs/evidence/0044-wbi-grm-reciprocal-list.md`. `wbi_grm_scan` validates six reciprocal captured allocator nodes including exactly one gl_common (PA 0x08a96220, pool PA 0x202e0000, size 32 MiB). Candidate head backing PA 0x096ce348 corresponds structurally to VMALLOC pointer 0x5f3fc348, but no WBI declared virtual mapping covers it; establish page-table/module mapping before original lookup execution. Original lookup increments count at +2. Captured ownership is not a cold-start allocation reply. 339 tests pass; main/UI boundary unchanged.
+
+Latest recovered-input follow-up: read `docs/evidence/0043-wbi-memory-and-recovered-logging-input.md`. Preserved `nflasha5` is WBI1: 644 sections / 145,162,240 expanded bytes; all sections match the preserved fwtool decoder. `wbi_logging_trace` recovers a 3,772-byte `/setting/ulogio.bin` buffer (SHA a7b1aa1919c3f3273baa1e4a9ece71c620e0d755b9d9c197e49be74c4a790a44) from identified captured module state. DMM 0x61/area0 is PA 0x033f1148, size 0x10024; five original initializer markers match. `wbi_log_consumer` executes 71 original instructions and returns that address/size without invented replies. This supersedes the earlier unknown logging input for an explicit package-WBI environment; it is not current camera state or a complete partition-2 image. Candidate gl_common record at PA 0x08a96220 needs allocator/ownership verification before use. No timer MMIO values supplied; main/UI boundary unchanged. Latest suite: 339 passing tests.
+
+Latest follow-up: read `docs/evidence/0042-elapsed-timer-versus-calendar.md`. `timer_units_trace` executes original divisor-argument windows in each function's actual ELF section: utimer boot diagnostics divide by 1000 for ms; `udate_get_localtime` divides timer deltas by 1000000 before adding seconds. This specific counter is elapsed software microseconds, not a date/image count; calendar queue 0x0090013d uses the timer service as a dependency. DMM stores access timestamps. No hardware frequency/reset/current state is supplied. Latest suite: 334 passing tests; logging input and main/UI boundary remain unchanged.
+
+Latest follow-up: read `docs/evidence/0041-freerun-existing-state-and-timer-message-abi.md`. Original setup at 0x6011fdec first reads 0xf2403100: unknown state stops; explicit mode 0x1031 returns without stores, so no fresh zero epoch is established. `freerun_boot_trace` retains guarded branch controls. Planner/REA connects 0x00910042 to `utimer_kif_counter` through OSAL wrappers: selector/status/counter at full-message offsets 16/20/24, selectors 0/1 choose system/sched clocks, other selectors write -1024. Transport success is not a clock reply. Latest suite: 331 passing tests; initial hardware/logging state and main/UI boundary remain open.
+
+Latest scripted research: read `docs/evidence/0040-utimer-clock-origin-and-rollover.md`. Original `utimer_read_freerun` (.text+0x1b78) reads 0xf240310c, separate from the four resource channels. `utimer_init_counter` derives its offset from scheduling-clock minus resource-counter samples; no zero epoch is established. `utimer_counter_trace` executes the unnamed rollover helper at .text+0x1394 with explicit controls and stops the original freerun reader before MMIO. Investigate freerun initialization, dispatch and scheduling next. Planner warm run has 4 static hits and 8/8 REA queries cached. Latest suite: 328 passing tests; logging input and main/UI boundary unchanged.
+
+Latest tooling follow-up: read `docs/evidence/0039-dependency-planner-and-evidence-cache.md` and `docs/DEPENDENCY_WORKFLOW.md`. Before substantial repeated ARM module analysis, use `tools.research.dependency_plan` with named functions or a translated .text-relative PC. Inspect generated graph/bounds and run the prepared WSL batches as needed; `--reuse-evidence` retains provenance and avoids unchanged queries. Cache hits are not fresh analysis or runtime proof. Latest full suite: 326 passing tests; E0038 runtime gates and E0034 application boundary remain unchanged.
+
+Latest follow-up: read `docs/evidence/0038-timer-programming-and-setting-partition.md`. `python -m tools.research.dmm_timer_program` records 12 original timer stores (offset 0: 0x32 then 0x1032; offset 4: 0x11) and stops before the runtime callback table at 0x60124d4c. No counter/reset/clock semantics are supplied. Original init mounts `/dev/nflasha2` at `/setting`; that partition image and `ulogio.bin` are not preserved inputs. Resolve that input/producer and register effects without invented buffers/timestamps. Latest suite: 318 passing tests; main-process boundary still E0034, no GUI.
+
+Latest follow-up: read `docs/evidence/0037-timer-pointer-producer-and-native-wsl-rea.md`. `python -m tools.research.dmm_timer_setup` executes original pointer stores for four channels; composed reads stop at counters 0xf240350c/360c/370c/380c without supplying values. `ulogio_input_scan` checks all 1,126 preserved inputs and finds no candidate raw LOGB record; compressed/runtime sources remain open. REA works by invoking the stdlib-only launcher directly within WSL (command in E0037), avoiding the failing nested Windows-Python WSL launch. Keep hash/namespace guards and new report directories. Latest full suite: 315 passing tests; no GUI or application-boundary change.
+
+Latest DMM runtime follow-up: read `docs/evidence/0036-dmm-timer-runtime-and-log-configuration.md`. `python -m tools.research.dmm_runtime_trace` stops original kernel timer execution at PC 0x60125718 before consuming runtime table slot 0x604be020. Original init loads logging with `ulogio_initfile=/setting/ulogio.bin`; that input is not inventoried, so the subsystem 0x61/area-0 log address remains unknown. Trace both producers; do not accept static kernel zeros or guessed log buffers. Latest suite: 310 passing tests; application boundary remains E0034. Python-launched WSL currently returns E_ACCESSDENIED despite direct elevated WSL working; failed REA batches are retained in E0036.
+
+Latest allocator follow-up: read `docs/evidence/0035-dmm-configuration-and-boot-reservations.md`. `python -m tools.research.dmm_config_trace` executes original package-backed DMM parsers and allocation-state initialization. Unit 0x280 references a configured 32 MiB extent, not a demonstrated allocated address. First boot reservation 0x116 stops at timer queue 0x00910042/opcode 0x20; shared reservation-log memory is also required. Do not supply guessed timestamps, buffers or allocation replies. Process boundary remains E0034; latest full suite has 306 passing tests.
+
+Read `README.md`, `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`, and the latest relevant record in `docs/evidence/`. Use `docs/VALIDATION.md` for fidelity claims and `docs/experiments/` for bounded execution experiments. Inspect existing implementation and tests before changing interfaces. Historical evidence is a record of its stated configuration, not automatically the current capability.
+
+At the time this file was created, the latest record was `docs/evidence/0006-read-only-guest-filesystem.md`:
+
+- The original interpreter reaches 5,078 instructions under the optional `files` policy.
+- It stops at successful `stat64` metadata for the existing `/lib` directory.
+- No original UI, application-entry milestone, or successful firmware library read has been demonstrated.
+- The latest complete suite had 100 passing tests. Recheck after implementation changes; do not treat this count as permanent.
+
+Next planned work: establish ARM EABI `stat64`/`fstat64` layout and trustworthy metadata, then target the first original library read and guest file-backed mapping. Do not invent inode, device, timestamp or runtime identity values to get past a boundary.
+
+Current follow-up: read `docs/evidence/0008-runtime-mount-boundaries.md`. The snapshot-only `metadata` policy reaches 6,493 instructions and a library header read, but original init evidence includes a writable `/etc` overlay. `--respect-runtime-mounts` stops at unsupplied `/etc` at 3,091 instructions. Preserve both baselines. Do not promote static missing paths to camera-runtime facts or select compressed/direct device identities without evidence.
+
+Storage follow-up: `docs/evidence/0009-storage-driver-consumers.md` records driver consumers and isolated parameter-copy execution. Decompressed partition numbering is conditional on registration checks; the candidate values are not permission to supply runtime `st_dev`. Continue with compressed-header validation and identified runtime state. `python -m tools.research.storage_trace` reproduces the bounded evidence report.
+
+Header follow-up: `docs/evidence/0010-compressed-header-comparison.md` records the original `TPZL` comparison. Preserved updater image headers mismatch; a constructed matching control is not a validated image. `python -m tools.research.compressed_header` reproduces this isolated experiment. Establish the updater's write/compression representation or identified physical header bytes before selecting runtime device identities; `/etc` still needs identified runtime state.
+
+Updater follow-up: `docs/evidence/0011-updater-image-write-path.md` traces the copy loop to `write`; `python -m tools.research.updater_trace` performs static analysis only. Resolve the packed-buffer virtual reader and downstream device write behavior before claiming physical byte identity. Never execute the updater or its scripts as a research check. ARM PLT recognition now decodes rotated immediate instruction fields rather than formatted disassembly text.
+
+Buffer/storage follow-up: read `docs/evidence/0012-ring-buffer-and-storage-write.md`; `python -m tools.research.buffer_storage_trace` reproduces static RingBuffer dispatch candidates and storage write-guard evidence. Producer inputs and the complete block-worker/physical-write path remain unresolved. Vtable candidates and the ordinary-write branch do not establish successful physical writes or authorize removing runtime-state guards.
+
+Producer/physical-write follow-up: read `docs/evidence/0013-producer-and-physical-storage-trace.md`; `python -m tools.research.producer_physical_trace` reproduces the connected static pipeline from `crypter.elf` / `Dec_Scramble` through the block-worker and SDHCI host controller DMA path. Nonvolatile device byte identity, runtime device numbering and writable `/etc` state remain open. Preserve existing execution guards and probe baselines.
+
+Boot-mount/root-device follow-up: read `docs/evidence/0014-boot-selection-and-root-device.md`; `python -m tools.research.boot_mount_trace` reproduces the extraction of `udif_devnodes` (major 252 for all flash blocks) and `sbin/init` `mnts`. Linux ARM EABI `st_dev` for `/rootfs` (partition 7, `/lib`) resolves to `0xfc87` (compressed `/dev/dnflasha7`) and `0xfc07` (uncompressed fallback `/dev/nflasha7`). Static rootfs `/etc` is verified empty; `sbin/init` mounts `/dev/nflasha10` (vfat, read-write, `0xc0ed0490`) over `/etc` at boot, establishing why static firmware images cannot provide `/etc/ld.so.preload` or runtime camera configuration.
+
+Backup-state/REA follow-up: read `docs/evidence/0030-rea-backup-dispatch-and-preset-state.md` and `docs/evidence/0029-backup-service-guard-and-liro-entry.md`. REA/Ghidra works through WSL, and original ARM/Thumb windows identify the first backup request as a write and read relevant units in all 11 packaged presets. Package values do not establish runtime files or RAM. Keep the strict backup-service guard; next resolve actual module arguments, `/setting` inputs and the boot-time RAM producer/address conversion.
+
+Boot-parameter/RAM-mapping follow-up: read `docs/evidence/0031-backup-boot-parameters-and-ram-mapping.md`. `sbin/init` explicitly loads `backup.ko` with `Backup_load=0`. In `vmlinux.bin`, `arch_phys_to_cache` adds `0x60000000` to physical addresses below `0x40000000` (`0x02e80000` -> `0x62e80000`, `0x035c6000` -> `0x635c6000`). With `Backup_load=0`, `backupfile_init` skips file reload and calls `Data_init` directly on preexisting RAM. `Backup_write_core` enforces subsystem matching, takes `backup_rwlock`, copies data, and dispatches callbacks. The strict backup guard remains unchanged.
+
+Preset-backed-backup/LIRO follow-up: read `docs/evidence/0032-preset-backed-backup-service-and-liro-module-parameters.md`. `BK4PresetState` and `PresetBackedBackupService` in `src/a6400/execution/backup_service.py` service backup operations under `--backup-service preset-backed`. In `im.elf l`, `Backup_read(0xfa, 0x00fa007c)` returns `0x035c6000`, formatting authentic `adr=0x35c6000` for `sys_init_module(liro.ko)`. In `im.elf i`, Task 94 Phase 0 writes succeed, launching worker thread `THREAD_INFRA0`, loading 30+ infrastructure libraries and executing past 8,000,000 instructions. Strict default `--backup-service stop` remains unchanged. The latest recorded suite has 280 passing tests; recheck after substantive implementation changes.
+
+Stream/DDS follow-up: read `docs/evidence/0034-stream-device-and-graphics-allocator-boundary.md`. `--stream-device image-driver` selects verified 249:7 open/offset-ioctl and a guarded single physical mmap; default remains `stop`. The selected `im.elf i` experiment opens stream twice and reaches 42,465,243 instructions before the original DMP allocator assertion/SIGABRT. No stream ioctl/mmap or fb0 request occurs. Next resolve GRM-MA recipient `0x014c0424` and DMM queue `0x0061003c`; generic transport acknowledgements are not allocation replies. Retain the explicit experimental empty `/tmp`, deterministic entropy and preset-state assumptions. The latest suite has 300 passing tests; unverified physical bytes and framebuffer defaults cannot be treated as camera state.
+
+## Repository responsibilities
+
+- `src/a6400/`: the new bounded execution implementation. Keep it independent of legacy simulator behavior and research-tool implementations.
+- `src/a6400/images/`: input identity, ELF mapping, guest namespace operations and verified content.
+- `src/a6400/execution/`: process entry, execution limits, supported guest contracts and explicit unsupported boundaries.
+- `legacy/`: preserved visual simulators and HLE research harness. Their screens and synthetic state are not authoritative firmware output.
+- `tools/research/`: extraction, analysis, reproducible experiment launchers and deliberate camera utilities.
+- `tests/`: meaningful software checks using constructed or redistributable fixtures; physical-camera scenarios remain separate.
+- `docs/evidence/`: observations with artifact identities, methods, results and limitations.
+- `artifacts/`: generated local reports and test output; keep these separate from source and firmware inputs.
+- Root Python files are compatibility entry points. Preserve their existing launch/import behavior when reorganizing code.
+
+## Fidelity and execution rules
+
+1. Distinguish observed facts, inferred behavior and experimental assumptions. A selected CPU, ELF architecture field, static string or successful test does not establish the camera platform.
+2. Never silently resolve unknown imports, devices, syscalls or metadata with success returns, zeros, automatic memory mapping or Python-generated UI.
+3. Implement contracts from primary specifications/source and local firmware evidence. Record which behavior is supported and which remains unknown.
+4. Stop explicitly at unsupported behavior. Preserve PCs, arguments, input hashes, stop reasons and relevant original instruction evidence. Faults, timeouts, instruction limits and unsupported requests are not successful execution.
+5. Keep execution bounded. Maintain the default no-response probe and earlier experimental policies as regression baselines. Add capabilities through explicit policies, not implicit changes to old runs.
+6. Guest requests must not be forwarded to host syscalls or arbitrary host paths. Guest file access uses the declared namespace and allowlisted, hash-checked image content. Unsupplied runtime mounts are unknown, not verified absent paths.
+7. Check guest memory bounds and permissions before host-side copies. Host memory APIs can bypass CPU protections. Preserve identity/provenance guards across guest and kernel-contract reads and writes.
+8. Original guest code must own application logic and rendering in fidelity experiments. Original-instruction execution within a process probe does not imply a booted kernel, complete machine, timing accuracy or UI compatibility.
+9. Do not weaken a guard merely to advance an instruction counter. Research partial contracts must expose their limits and stop when an unverified value would be consumed.
+
+## Preserve inputs and device state
+
+Treat original firmware packages, filesystem images, extracted inputs, backups and reference assets as preserved inputs. Use separate outputs or explicit patch overlays for modifications. Do not overwrite originals during routine experiments or silently refresh expected hashes to accept changed content.
+
+Keep `fwtool.py/`, `Sony-PMCA-RE/`, and the existing `venv/` in place unless the task requires otherwise. Do not initialize Git, commit, or alter upstream checkouts solely as a side effect of research. Inspect the actual repository state before using Git; this project initially had no root Git checkout.
+
+No camera is needed for ordinary checks. Do not invoke USB diagnostics, service-mode backup scripts, firmware installation, driver replacement or camera writes as part of automated validation. Run device operations only within the user's authorized scope. Do not introduce device changes as an incidental test step.
+
+## Commands
+
+Run from the project root in PowerShell using the existing environment:
+
+```powershell
+.\venv\Scripts\python.exe -m unittest discover -s tests -v
+.\venv\Scripts\python.exe -m tools.research.probe_interpreter
+.\venv\Scripts\python.exe -m tools.research.probe_interpreter --syscalls brk
+.\venv\Scripts\python.exe -m tools.research.probe_interpreter --syscalls brk-uname
+.\venv\Scripts\python.exe -m tools.research.probe_interpreter --syscalls files
+```
+
+Use `--report` to preserve separate experiment results. The current `files` run intentionally returns exit code 2 at its unsupported metadata boundary; inspect its JSON rather than assuming every nonzero exit is a regression. Exit code zero at a syscall boundary means the experiment reached that boundary, not that the guest application succeeded.
+
+Generate missing research inputs in this order when needed:
+
+```powershell
+.\venv\Scripts\python.exe -m tools.research.inventory
+.\venv\Scripts\python.exe -m tools.research.elf_inventory
+.\venv\Scripts\python.exe -m tools.research.startup_trace
+.\venv\Scripts\python.exe -m tools.research.guest_layout
+```
+
+Preserve prior manifests before intentionally regenerating a baseline that may have changed. Do not regenerate expensive inventories after unrelated edits merely to refresh timestamps. Use the root compatibility commands for legacy tools; direct execution of nested implementation scripts is not the supported launch path.
+
+## REA-assisted firmware research
+
+Use REA with Ghidra through WSL as the preferred analysis tool for substantial ARM/Thumb function, dispatcher, call-chain and data-layout investigation. Start from the current unsupported boundary and a concrete question. Reuse hash-matched retained evidence when it already answers the question; use targeted ELF parsing, `rg` and disassembly for small checks. REA assists research; it is not part of the guest execution backend.
+
+### Established local environment
+
+- WSL 2 Ubuntu; REA 6.7.0, Ghidra 12.1.4, Node 22.22.1 and full JDK 21.0.12.1 were verified in E0030. These are observed local versions, not a dependency lock or permission to silently upgrade.
+- REA entry point: `/home/administrator/a6400-rea-tools/runtime/node_modules/rea-agents/scripts/rea.mjs`.
+- `GHIDRA_INSTALL_DIR=/home/administrator/a6400-rea-tools/ghidra_12.1.4_PUBLIC`; `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64`.
+- Use `tools.research.rea_wsl_batch` from the existing Windows Python environment. It sets these Linux paths, converts the target path, checks inventory hashes, retains structured Evidence and closes its shared MCP analysis session.
+- If nested Windows-Python WSL access fails while direct WSL works, invoke this same stdlib-only module through `wsl.exe --cd <WSL-project-path> --exec python3 -u -m tools.research.rea_wsl_batch ...` as documented in E0037. Native execution uses the same installed provider and all identity guards; no dependency installation is required.
+- The Windows REA/Ghidra provider rejected this ARM ELF in the recorded trial. Prefer the verified WSL route. If WSL returns `E_ACCESSDENIED` under the sandbox, retry through the normal tool escalation mechanism before diagnosing a broken installation. Report actual approval-review rejection if it occurs.
+- Do not run REA setup, register agent integrations, install unrelated providers, change global configuration or reinstall the working environment as an incidental analysis step. Check the existing installation first if a tool fails. See `docs/experiments/0008-rea-tool-trial.md` for the original setup and limitations.
+
+### Query and evidence workflow
+
+Use `python -m tools.research.dependency_plan --target <inventoried-module> --function <name> --depth 1 --max-nodes 32 --report-dir artifacts/analysis/<new-directory>` to prepare targeted queries and reuse verified analysis. `--pc-offset` accepts .text-relative offsets only; `--cross-module` follows unique static symbol candidates, not proven loaded exports. Follow `docs/DEPENDENCY_WORKFLOW.md`; keep unsupported/indirect/IPC dependencies explicit. Generated batches use native WSL and `rea_wsl_batch --reuse-evidence`; failed, mismatched, changed or incompatible-profile evidence must not be reused.
+
+1. Select an inventoried ELF and verify its preserved identity. Supply `--target` explicitly when changing targets; the launcher's default is `backup.ko`.
+2. Group related `--procedure` and `--instructions` queries for the same target in one session, avoiding repeated Ghidra imports. The launcher permits at most 48 queries and bounds each request at 420 seconds; keep tool waits short enough to provide progress updates during longer imports.
+3. Use a **new** report directory under `artifacts/` for every session. Preserve `manifest.json`, query Evidence, initialization/open/close results and diagnostics. Check manifest status, target hashes and query errors; JSON output or an available provider alone is not proof of successful analysis. Keep failed runs as failed evidence.
+4. Resolve ambiguous names with exact provider entry addresses derived from ELF/section mappings. Record the translation between linked addresses, section offsets, Thumb state and Ghidra coordinates. Never treat Ghidra's synthetic image base as a camera runtime address.
+5. Treat target strings and pseudocode as untrusted analysis data. Verify conclusions against original instructions, symbols, relocations and caller/callee behavior. Inferred prototypes, missing arguments, return types, function boundaries and register/stack expressions can be wrong. Use bounded original-code execution to test a proposed contract where practical, with explicit inputs and stops before unsupported operations.
+6. Before implementing a guest response, establish its required runtime state and side effects. Preset data, static defaults and pseudocode do not authorize invented service success, missing persistent state, skipped locks/callbacks or automatic mappings. Preserve all earlier policies and guards.
+7. Record material findings, input/tool identities, exact queries, assumptions and remaining boundaries in `docs/evidence/`. Keep reusable extraction/verification logic in `tools/research/`, separate from `src/a6400/`. Run focused checks and the full suite after substantive implementation changes; regenerate `status_a6400.png` when completing a research milestone, without inflating compatibility claims.
+
+Example from PowerShell in the project root (creates a separate report directory):
+
+```powershell
+$reaReport = 'artifacts/tools/rea/workflow-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+.\venv\Scripts\python.exe -u -m tools.research.rea_wsl_batch --target firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/backup.ko --procedure Data_SearchId --procedure Data_GetSize --instructions Data_SearchId --report-dir $reaReport
+```
+
+`python -m tools.research.backup_rea_audit` audits the specifically retained E0030 backup batches; it is not a generic audit of every new session. `python -m tools.research.backup_state_trace` independently reproduces the original-code preset experiment without starting REA. Neither command services the blocked startup request.
+
+## Implementation and verification
+
+- Prefer small components with explicit state and contracts. Share path/memory rules instead of duplicating them in syscall handlers.
+- Use `rg` for targeted searches. Exclude `venv/`, large firmware blobs and generated artifacts when they are irrelevant. Some abandoned temporary directories under `artifacts/tests/` may be inaccessible; avoid them rather than changing permissions or deleting recursively as incidental cleanup.
+- Add checks for behavior that matters: ABI layout, mapping permissions, state transitions, errors, provenance, input identity and actual ARM/Thumb execution. Do not add tests that merely restate implementation details.
+- Prefer constructed fixtures over proprietary firmware in ordinary tests. Put generated fixtures under `artifacts/tests/`; the current Windows environment has had permission problems with temporary-directory helpers.
+- Run focused checks while developing and the appropriate full suite after a substantive implementation change. Repeat a real-firmware experiment when its path changes; compare fresh reports under the same recorded inputs and assumptions.
+- Do not add guessed dependency versions or claim fresh-environment reproducibility from an installed-package snapshot. Dependency locking remains separate work.
+
+## Evidence and communication
+
+For each material execution milestone, record the input identity, command/policy, observed boundary, serviced operations, assumptions, repeatability and remaining work in `docs/evidence/`. Link primary technical sources where they inform a contract. Record backend decisions separately under `docs/decisions/`.
+
+Update the README and roadmap when the current boundary changes. Preserve historical evidence; mark superseded conclusions rather than rewriting history as if they were always known. Clearly distinguish fixture-tested contracts from paths exercised by original firmware and comparisons validated on a physical camera.
+
+Keep user updates concise and understandable. Lead with the concrete progress and remaining boundary. Report what changed, how it was checked and any material limitation. Do not describe a simulator screenshot, higher instruction count or passing unit suite as proof of real-camera equivalence.
+
