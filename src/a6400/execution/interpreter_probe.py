@@ -25,6 +25,7 @@ from src.a6400.execution.guest_gles import GuestGles, UnsupportedGles, GLES_LOCK
 from src.a6400.execution.guest_gpio import GuestGpio, UnsupportedGpio
 from src.a6400.execution.guest_usb_buspower import GuestUsbBusPower, UnsupportedUsbBusPower
 from src.a6400.execution.guest_usb_event import GuestUsbEvent, UnsupportedUsbEvent
+from src.a6400.execution.guest_usb_otgcore import GuestUsbOtgCore, UnsupportedUsbOtgCore
 from src.a6400.execution.kernel_task_identity import UnsupportedKernelBinding
 
 
@@ -487,6 +488,51 @@ class InterpreterProbe:
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
+                if preview.get('status') == 'terminated' and preview.get('value') == '/dev/usb/otgcore':
+                    try:
+                        self._uipc_read(path_ptr, len(b'/dev/usb/otgcore\0'))
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    except UnsupportedUipc as error:
+                        self.report.update(status='unsupported_usb_otgcore_contract', boundary={
+                            **error.details, 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    if not hasattr(self, 'usb_otgcore') or self.usb_otgcore is None:
+                        self.report.update(status='unsupported_usb_otgcore_contract', boundary={
+                            'reason': 'usb_otgcore_device_not_supplied',
+                            'path': '/dev/usb/otgcore', 'flags': flags, 'pc': pc, 'r7': number,
+                            'instruction_address': pc - size,
+                            'guest_tid': self.threads.current_tid if hasattr(self, 'threads') else None,
+                            'guest_tgid': self.threads.process_id if hasattr(self, 'threads') else None})
+                        uc.emu_stop()
+                        return
+                    caller_pid = self.threads.current_tid if hasattr(self, 'threads') else None
+                    caller_tgid = self.threads.process_id if hasattr(self, 'threads') else None
+                    try:
+                        owner = self.usb_otgcore.open(flags, caller_pid, caller_tgid)
+                    except UnsupportedUsbOtgCore as error:
+                        self.report.update(status='unsupported_usb_otgcore_contract', boundary={
+                            **error.details, 'path': '/dev/usb/otgcore', 'flags': flags,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size,
+                            'guest_tid': caller_pid, 'guest_tgid': caller_tgid})
+                        uc.emu_stop()
+                        return
+                    fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
+                    if fd is None:
+                        ret = 0xffffffe8
+                    else:
+                        ret = fd
+                        self.filesystem.fds[fd] = {'path': '/dev/usb/otgcore', 'device': 'usb_otgcore', 'flags': flags,
+                                                   'owner_id': owner['owner_id'], 'device_number': [self.usb_otgcore.major, self.usb_otgcore.minor]}
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/usb/otgcore', 'fd': fd, 'returned': ret,
+                             'flags': flags, 'device_number': [self.usb_otgcore.major, self.usb_otgcore.minor],
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
                 if preview.get('status') == 'terminated' and preview.get('value') == '/dev/usb/event':
                     try:
                         self._uipc_read(path_ptr, len(b'/dev/usb/event\0'))
@@ -717,6 +763,26 @@ class InterpreterProbe:
                         return
                     event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
                              'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'usb_buspower'}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'usb_otgcore':
+                    owner_id = self.filesystem.fds[fd].get('owner_id')
+                    try:
+                        ret = self.usb_otgcore.ioctl(
+                            owner_id, cmd, arg,
+                            lambda addr, sz: bytes(uc.mem_read(addr, sz)),
+                            lambda addr, data: uc.mem_write(addr, data)
+                        )
+                    except UnsupportedUsbOtgCore as error:
+                        self.report.update(status='unsupported_usb_otgcore_contract', boundary={
+                            **error.details, 'fd': fd, 'cmd': cmd, 'arg': arg,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'usb_otgcore'}
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
@@ -1224,6 +1290,8 @@ class InterpreterProbe:
                         self.usb_buspower.close(entry.get('owner_id'))
                     if entry.get('device') == 'usb_event' and hasattr(self, 'usb_event') and self.usb_event:
                         self.usb_event.close(entry.get('owner_id'))
+                    if entry.get('device') == 'usb_otgcore' and hasattr(self, 'usb_otgcore') and self.usb_otgcore:
+                        self.usb_otgcore.close(entry.get('owner_id'))
                     ret = 0
                 else:
                     ret = 0xfffffff7  # -EBADF

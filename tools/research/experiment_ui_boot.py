@@ -57,6 +57,8 @@ def main():
                         help='stop on /dev/usb/buspwr (default); driver-bound binds /dev/usb/buspwr (248:13) with verified ioctl contracts')
     parser.add_argument('--usb-event-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/usb/event (default); driver-bound binds /dev/usb/event (242:0) with verified ioctl/read contracts')
+    parser.add_argument('--usb-otgcore-device', choices=('stop', 'driver-bound'), default='stop',
+                        help='stop on /dev/usb/otgcore (default); driver-bound binds /dev/usb/otgcore (242:2) with verified ioctl contracts')
     parser.add_argument('--gles-device', choices=('stop', 'kernel-bound'), default='stop',
                         help='stop on /dev/dmpgles2 (default); kernel-bound binds /dev/dmpgles2 with verified TASK_SIZE 0x5f000000')
     parser.add_argument('--mmap-base', type=lambda x: int(x, 0), default=None,
@@ -167,6 +169,9 @@ def main():
     if args.usb_event_device == 'driver-bound':
         from src.a6400.execution.guest_usb_event import GuestUsbEvent
         probe.usb_event = GuestUsbEvent()
+    if args.usb_otgcore_device == 'driver-bound':
+        from src.a6400.execution.guest_usb_otgcore import GuestUsbOtgCore
+        probe.usb_otgcore = GuestUsbOtgCore()
     if args.readonly_image_times:
         probe.report['readonly_image_mount_selection'] = readonly_mounts
 
