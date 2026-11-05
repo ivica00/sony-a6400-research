@@ -306,3 +306,78 @@ class BackupServiceTests(unittest.TestCase):
                     service.handle_uipc_sync_message(lambda a, s: bytes(mem[a:a+s]),
                         lambda a, d: self.fail('unexpected mutation'), 100, size)
                 self.assertIn('truncated', caught.exception.details['reason'])
+
+    def test_service_backup_read_multi_and_nread_multi(self):
+        state = BK4PresetState(self.preset_raw)
+        service = PresetBackedBackupService(state)
+        mem = bytearray(1024)
+        # units array at 200: [0x003e000b (1B), 0x00fa007c (4B), 0]
+        struct.pack_into('<3I', mem, 200, 0x003e000b, 0x00fa007c, 0)
+        # dst_ptrs array at 240: [400, 416]
+        struct.pack_into('<2I', mem, 240, 400, 416)
+        # op 5: Backup_read_multi(units_ptr=200, dst_ptrs_ptr=240)
+        struct.pack_into('<8I', mem, 100, 5, 0, 2, BACKUP_SERVICE_QUEUE, 0, 0, 200, 240)
+
+        ret = service.handle_uipc_sync_message(
+            lambda a, s: bytes(mem[a:a+s]),
+            lambda a, d: mem.__setitem__(slice(a, a+len(d)), d),
+            100
+        )
+        self.assertEqual(ret, 0)
+        self.assertEqual(struct.unpack_from('<i', mem, 104)[0], 2)
+        self.assertEqual(mem[400:401], b'\x01')
+        self.assertEqual(struct.unpack_from('<I', mem, 416)[0], 0x035c6000)
+
+        # op 31: Backup_nread_multi(units_ptr=200, dst_ptrs_ptr=240, capacities_ptr=280)
+        mem[400:424] = b'\x00' * 24
+        struct.pack_into('<2I', mem, 280, 1, 4)
+        struct.pack_into('<9I', mem, 100, 31, 0, 3, BACKUP_SERVICE_QUEUE, 0, 0, 200, 240, 280)
+        ret = service.handle_uipc_sync_message(
+            lambda a, s: bytes(mem[a:a+s]),
+            lambda a, d: mem.__setitem__(slice(a, a+len(d)), d),
+            100
+        )
+        self.assertEqual(ret, 0)
+        self.assertEqual(struct.unpack_from('<i', mem, 104)[0], 2)
+        self.assertEqual(mem[400:401], b'\x01')
+        self.assertEqual(struct.unpack_from('<I', mem, 416)[0], 0x035c6000)
+
+    def test_service_backup_get_datasize_multi_and_write_multi_and_sync(self):
+        state = BK4PresetState(self.preset_raw)
+        service = PresetBackedBackupService(state)
+        mem = bytearray(1024)
+        # units array at 200: [0x003e000b (1B), 0x00fa007c (4B), 0]
+        struct.pack_into('<3I', mem, 200, 0x003e000b, 0x00fa007c, 0)
+        # op 1: Backup_get_datasize_multi(units_ptr=200, sizes_ptr=240)
+        struct.pack_into('<8I', mem, 100, 1, 0, 2, BACKUP_SERVICE_QUEUE, 0, 0, 200, 240)
+        service.handle_uipc_sync_message(
+            lambda a, s: bytes(mem[a:a+s]),
+            lambda a, d: mem.__setitem__(slice(a, a+len(d)), d),
+            100
+        )
+        self.assertEqual(struct.unpack_from('<i', mem, 104)[0], 5)
+        self.assertEqual(struct.unpack_from('<2I', mem, 240), (1, 4))
+
+        # op 10: Backup_write_multi(subsystem=0x3e, units_ptr=300, src_ptrs_ptr=320)
+        struct.pack_into('<2I', mem, 300, 0x003e000b, 0)
+        struct.pack_into('<I', mem, 320, 400)
+        mem[400] = 0x77
+        struct.pack_into('<9I', mem, 100, 10, 0, 3, BACKUP_SERVICE_QUEUE, 0, 0, 0x3e, 300, 320)
+        service.handle_uipc_sync_message(
+            lambda a, s: bytes(mem[a:a+s]),
+            lambda a, d: mem.__setitem__(slice(a, a+len(d)), d),
+            100
+        )
+        self.assertEqual(struct.unpack_from('<i', mem, 104)[0], 1)
+        self.assertEqual(state.read_unit(0x003e000b), b'\x77')
+
+        # op 14 / 15: Backup_sync_subsystem / Backup_sync_all
+        for op in (14, 15):
+            struct.pack_into('<7I', mem, 100, op, 0xffffffff, 1, BACKUP_SERVICE_QUEUE, 0, 0, 0x3e)
+            service.handle_uipc_sync_message(
+                lambda a, s: bytes(mem[a:a+s]),
+                lambda a, d: mem.__setitem__(slice(a, a+len(d)), d),
+                100
+            )
+            self.assertEqual(struct.unpack_from('<i', mem, 104)[0], 0)
+

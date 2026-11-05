@@ -167,7 +167,7 @@ class PresetBackedBackupService:
         queue = words[3]
         if queue != BACKUP_SERVICE_QUEUE:
             raise UnsupportedUipc('unexpected_backup_queue', queue=queue, expected=BACKUP_SERVICE_QUEUE)
-        required_words = {0: 7, 2: 7, 3: 8, 4: 7, 8: 9, 30: 9}.get(op)
+        required_words = {0: 7, 1: 8, 2: 7, 3: 8, 4: 7, 5: 8, 8: 9, 10: 9, 14: 7, 15: 6, 30: 9, 31: 9}.get(op)
         if required_words is not None and len(words) < required_words:
             raise UnsupportedUipc('backup_message_arguments_truncated', operation=op,
                                   supplied_words=len(words), required_words=required_words)
@@ -180,6 +180,36 @@ class PresetBackedBackupService:
                 memory_writer(msg_ptr + 4, struct.pack('<I', value & 0xffffffff))
             self.events.append({'type': 'Backup_get_datasize' if op == 0 else 'Backup_get_attribute',
                                 'unit': unit, 'returned': value})
+            return 0
+
+        elif op == 1:  # Backup_get_datasize_multi(units_ptr, sizes_ptr)
+            units_ptr, sizes_ptr = words[6:8]
+            descs = []
+            idx = 0
+            while True:
+                unit = struct.unpack('<I', memory_reader(units_ptr + idx * 4, 4))[0]
+                if unit == 0:
+                    break
+                desc = self.preset_state.search_id(unit)
+                if desc is None:
+                    if memory_writer:
+                        memory_writer(msg_ptr + 4, struct.pack('<i', -1))
+                    self.events.append({'type': 'Backup_get_datasize_multi', 'units_ptr': units_ptr, 'returned': -1})
+                    return 0
+                descs.append(desc)
+                idx += 1
+            total_size = 0
+            for i, desc in enumerate(descs):
+                total_size += desc.size
+                if sizes_ptr != 0 and memory_writer:
+                    memory_writer(sizes_ptr + i * 4, struct.pack('<I', desc.size))
+            if memory_writer:
+                memory_writer(msg_ptr + 4, struct.pack('<I', total_size))
+            self.events.append({
+                'type': 'Backup_get_datasize_multi',
+                'units': [d.unit for d in descs],
+                'returned': total_size
+            })
             return 0
 
         elif op in (3, 30):  # Backup_read / Backup_nread share the original copy helper.
@@ -201,10 +231,59 @@ class PresetBackedBackupService:
             if len(data) != desc.size:
                 raise UnsupportedUipc('backup_payload_outside_preset', unit=unit, required=desc.size)
             if memory_writer:
-                memory_writer(dst_ptr, data)
+                if dst_ptr != 0:
+                    memory_writer(dst_ptr, data)
                 memory_writer(msg_ptr + 4, struct.pack('<I', len(data)))
             self.events.append({'type': read_name, 'unit': unit, 'size': len(data),
                                 'capacity': capacity, 'payload_hex': data.hex(), 'returned': len(data)})
+            return 0
+
+        elif op in (5, 31):  # Backup_read_multi / Backup_nread_multi
+            units_ptr, dst_ptrs_ptr = words[6:8]
+            capacities_ptr = words[8] if op == 31 else None
+            read_name = 'Backup_nread_multi' if op == 31 else 'Backup_read_multi'
+            first_unit = struct.unpack('<I', memory_reader(units_ptr, 4))[0]
+            if first_unit == 0:
+                if memory_writer:
+                    memory_writer(msg_ptr + 4, struct.pack('<I', 0))
+                self.events.append({'type': read_name, 'units': [], 'returned': 0})
+                return 0
+            idx = 0
+            units_read = []
+            while True:
+                unit = struct.unpack('<I', memory_reader(units_ptr + idx * 4, 4))[0]
+                if unit == 0:
+                    break
+                capacity = None
+                if capacities_ptr is not None:
+                    capacity = struct.unpack('<i', memory_reader(capacities_ptr + idx * 4, 4))[0]
+                    if idx > 0 and capacity == 0:
+                        break
+                dst_ptr = struct.unpack('<I', memory_reader(dst_ptrs_ptr + idx * 4, 4))[0]
+                desc = self.preset_state.search_id(unit)
+                if desc is None or desc.size <= 0:
+                    if memory_writer:
+                        memory_writer(msg_ptr + 4, struct.pack('<i', -1))
+                    self.events.append({'type': read_name, 'units': units_read, 'failed_unit': unit, 'returned': -1})
+                    return 0
+                if capacity is not None and capacity < desc.size:
+                    raise UnsupportedUipc('backup_nread_capacity_assertion', unit=unit,
+                                          capacity=capacity, required=desc.size)
+                data = self.preset_state.read_unit(unit)
+                if len(data) != desc.size:
+                    raise UnsupportedUipc('backup_payload_outside_preset', unit=unit, required=desc.size)
+                if memory_writer and dst_ptr != 0:
+                    memory_writer(dst_ptr, data)
+                units_read.append(unit)
+                idx += 1
+            if memory_writer:
+                memory_writer(msg_ptr + 4, struct.pack('<I', len(units_read)))
+            self.events.append({
+                'type': read_name,
+                'units': units_read,
+                'count': len(units_read),
+                'returned': len(units_read)
+            })
             return 0
 
         elif op == 8:  # Backup_write(subsystem, unit, val_ptr)
@@ -229,6 +308,56 @@ class PresetBackedBackupService:
                 'unit': unit,
                 'size': desc.size,
                 'payload_hex': payload.hex(),
+                'returned': 0
+            })
+            return 0
+
+        elif op == 10:  # Backup_write_multi(subsystem, units_ptr, src_ptrs_ptr)
+            subsystem = words[6] & 0xffff
+            units_ptr = words[7]
+            src_ptrs_ptr = words[8]
+            unit_descs = []
+            idx = 0
+            while True:
+                unit = struct.unpack('<I', memory_reader(units_ptr + idx * 4, 4))[0]
+                if unit == 0:
+                    break
+                if (unit >> 16) != subsystem:
+                    if memory_writer:
+                        memory_writer(msg_ptr + 4, struct.pack('<i', -4))
+                    self.events.append({'type': 'Backup_write_multi', 'subsystem': subsystem,
+                                        'failed_unit': unit, 'returned': -4})
+                    return 0
+                desc = self.preset_state.search_id(unit)
+                if desc is None or desc.size <= 0:
+                    if memory_writer:
+                        memory_writer(msg_ptr + 4, struct.pack('<i', -1))
+                    self.events.append({'type': 'Backup_write_multi', 'subsystem': subsystem,
+                                        'failed_unit': unit, 'returned': -1})
+                    return 0
+                unit_descs.append((unit, desc))
+                idx += 1
+            for i, (unit, desc) in enumerate(unit_descs):
+                src_ptr = struct.unpack('<I', memory_reader(src_ptrs_ptr + i * 4, 4))[0]
+                payload = memory_reader(src_ptr, desc.size)
+                self.preset_state.write_unit(unit, payload)
+            if memory_writer:
+                memory_writer(msg_ptr + 4, struct.pack('<I', len(unit_descs)))
+            self.events.append({
+                'type': 'Backup_write_multi',
+                'subsystem': subsystem,
+                'units': [u for u, _ in unit_descs],
+                'returned': len(unit_descs)
+            })
+            return 0
+
+        elif op in (14, 15):  # Backup_sync_subsystem / Backup_sync_all
+            subsystem = (words[6] & 0xffff) if op == 14 else None
+            if memory_writer:
+                memory_writer(msg_ptr + 4, struct.pack('<I', 0))
+            self.events.append({
+                'type': 'Backup_sync_subsystem' if op == 14 else 'Backup_sync_all',
+                'subsystem': subsystem,
                 'returned': 0
             })
             return 0

@@ -273,12 +273,16 @@ class GuestThreads:
         }
         return next_tid, event
 
-    def handle_fd_wait(self, fd: int, op: str, resume_pc: int) -> Tuple[Optional[int], Dict[str, object]]:
-        """Handles blocking wait on a file descriptor (e.g. read on /dev/usb/event)."""
+    def handle_fd_wait(self, fd: int, op: str, resume_pc: int, extra_fds: Optional[List[int]] = None) -> Tuple[Optional[int], Dict[str, object]]:
+        """Handles blocking wait on one or more file descriptors (e.g. read or poll)."""
         curr_thread = self.threads[self.current_tid]
         curr_thread.state = f'blocked_{op}'
         curr_thread.blocked_uaddr = fd
-        self.fd_waiters.setdefault(fd, []).append(self.current_tid)
+        all_fds = [fd] + [f for f in (extra_fds or []) if f != fd]
+        for wait_fd in all_fds:
+            waiters = self.fd_waiters.setdefault(wait_fd, [])
+            if self.current_tid not in waiters:
+                waiters.append(self.current_tid)
 
         runnable = [t for t in self.threads.values() if t.state == 'runnable']
         next_tid = runnable[0].tid if runnable else None
@@ -286,10 +290,22 @@ class GuestThreads:
         event = {
             'syscall': op,
             'fd': fd,
+            'fds': all_fds,
             'blocked_tid': self.current_tid,
             'switched_to': next_tid
         }
         return next_tid, event
+
+    def handle_fd_wake(self, fd: int) -> List[int]:
+        """Unblocks threads waiting on target file descriptor."""
+        waiters = self.fd_waiters.pop(fd, [])
+        woken = []
+        for tid in waiters:
+            if tid in self.threads and self.threads[tid].state.startswith('blocked_'):
+                self.threads[tid].state = 'runnable'
+                self.threads[tid].blocked_uaddr = None
+                woken.append(tid)
+        return woken
 
     def handle_uipc_wake(self, queue: int) -> List[int]:
         """Unblocks threads waiting on target UIPC queue."""

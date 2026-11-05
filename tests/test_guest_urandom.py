@@ -102,6 +102,16 @@ class UrandomTests(unittest.TestCase):
                 self.fs.request(number, [fd, 0x1100, 0])
             self.assertEqual(caught.exception.details['reason'], 'urandom_operation_not_implemented')
 
+    def test_urandom_fstat64_with_contract(self):
+        class MockStatContract:
+            def request(self, metadata, address):
+                return {'returned': 0, 'metadata': metadata, 'address': address}
+        self.fs.stat_contract = MockStatContract()
+        fd = self.request_open()['returned']
+        result = self.fs.request(197, [fd, 0x1100, 0])
+        self.assertEqual(result['returned'], 0)
+        self.assertEqual(result['metadata']['device_number'], {'major': 1, 'minor': 9})
+
     def test_path_provenance_cannot_be_bypassed(self):
         def guard(*args):
             raise UnverifiedIdentityData({'fields': ['machine']})

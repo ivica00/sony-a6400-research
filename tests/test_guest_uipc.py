@@ -221,7 +221,7 @@ class TestGuestUipc(unittest.TestCase):
 
         self._writer(arg_ptr, struct.pack('<IIII', queue, 0x2000, 0, 0))
         ret = uipc.handle_ioctl(self._reader, self._writer, UIPC_CMD_RCV_MSG_TMO, arg_ptr)
-        self.assertEqual(ret, -11) # -EAGAIN
+        self.assertEqual(ret, -1022) # OSAL_ERR_TIMEOUT (0xfffffc02)
 
     def test_message_queue_stat(self):
         from src.a6400.execution.guest_uipc import UIPC_CMD_STAT_MSGQ, UIPC_CMD_SND_MSG

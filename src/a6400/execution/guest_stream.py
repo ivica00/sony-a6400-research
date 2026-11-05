@@ -25,17 +25,21 @@ class GuestStream:
             raise ValueError('Unexpected stream device identity')
         if profile.get('initial_offset') != 0:
             raise ValueError('Expected the selected compiled stream BSS initializer')
-        self.mu, self.mapper, self.profile = mu, mapper, dict(profile)
+        self.backed_physical_ranges = dict(profile.get('backed_physical_ranges') or {})
+        self.mu, self.mapper = mu, mapper
+        self.profile = {k: v for k, v in profile.items() if k != 'backed_physical_ranges'}
         self.stop, self.after_write = stop, after_write
         self.offset = 0
         self.transactions = []
         self.mapping = None
+        self.mappings = []
         self.unknown = []
 
     def open(self, flags):
-        # O_RDWR | O_DSYNC is the original DDS request; other flag semantics
-        # have not been established by this selected initialization contract.
-        if flags != 0x1002:
+        # O_RDWR | O_DSYNC (0x1002) is the original DDS request; mcmn_mmap_init
+        # in libInfraMediaCommon.so invokes open64("/dev/stream", 0x1002) which
+        # sets O_LARGEFILE (0x20000 -> 0x21002).
+        if flags not in (0x1002, 0x21002):
             raise UnsupportedStream('stream_open_flags_not_supported', flags=flags)
 
     def ioctl(self, cmd, arg):
@@ -60,7 +64,8 @@ class GuestStream:
             raise UnsupportedStream('stream_physical_range_not_supported', pgoff=pgoff, length=length)
         if flags not in (1, 0x11) or prot not in (1, 2, 3):
             raise UnsupportedStream('stream_mapping_flags_not_supported', flags=flags, prot=prot)
-        if self.mapping is not None:
+        if any(physical < m['physical_start'] + m['length'] and m['physical_start'] < physical + rounded
+               for m in self.mappings):
             raise UnsupportedStream('stream_multiple_mapping_requires_physical_alias_contract')
         if addr and addr % PAGE_SIZE:
             raise UnsupportedStream('stream_unaligned_address_hint', address=addr)
@@ -83,18 +88,29 @@ class GuestStream:
         event['mapping'] = dict(device_mapping)
         self.mapping = {'virtual_start': virtual, 'physical_start': physical, 'length': rounded,
                         'pgoff': pgoff, 'prot': prot}
-        self.unknown = [(virtual, virtual + rounded)]
+        self.mappings.append(self.mapping)
         self.offset = abs(virtual - physical)
-        self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read, begin=virtual, end=virtual + rounded - 1)
-        self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write, begin=virtual, end=virtual + rounded - 1)
+        backed_data = self.backed_physical_ranges.get((physical, rounded))
+        if backed_data is not None:
+            self.mu.mem_write(virtual, backed_data)
+            device_mapping['physical_contents'] = 'verified WBI section 555 mcmn_buf_init region'
+            self.mapper.mappings[-1]['physical_contents'] = device_mapping['physical_contents']
+            event['physical_contents'] = device_mapping['physical_contents']
+        else:
+            self.unknown.append((virtual, virtual + rounded))
+            self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read, begin=virtual, end=virtual + rounded - 1)
+            self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write, begin=virtual, end=virtual + rounded - 1)
         self.transactions.append({'operation': 'mmap', **self.mapping, 'offset': self.offset})
         return event
 
     def details(self, address, size):
         if any(address < end and begin < address + size for begin, end in self.unknown):
+            target = next((m for m in self.mappings
+                           if m['virtual_start'] <= address < m['virtual_start'] + m['length']),
+                          self.mapping)
             return {'reason': 'stream_physical_bytes_not_supplied', 'domain': 'stream',
                     'address': address, 'size': size,
-                    'physical_address': self.mapping['physical_start'] + address - self.mapping['virtual_start'],
+                    'physical_address': target['physical_start'] + address - target['virtual_start'],
                     'source': self.profile}
         return None
 

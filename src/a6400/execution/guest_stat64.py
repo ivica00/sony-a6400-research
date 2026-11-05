@@ -53,6 +53,16 @@ class GuestStat64(GuardedGuestBytes):
             values['st_rdev'] = bytes(8)
             event['source'].update(st_rdev=0, st_rdev_basis='regular_inode_initialization')
             event['guarded_fields'] = [field for field in guarded if field != 'st_rdev']
+        device_rdev = (stat.S_ISCHR(metadata['mode']) or stat.S_ISBLK(metadata['mode'])) and 'device_number' in metadata
+        if device_rdev:
+            dev = metadata['device_number']
+            rdev = ((dev['minor'] & 0xff) |
+                    ((dev['major'] & 0xfff) << 8) |
+                    ((dev['minor'] & ~0xff) << 12) |
+                    ((dev['major'] & ~0xfff) << 32))
+            values['st_rdev'] = struct.pack('<Q', rdev)
+            event['source'].update(st_rdev=rdev, device_number=dict(dev), st_rdev_basis='device_number')
+            event['guarded_fields'] = [field for field in guarded if field != 'st_rdev']
         mount = metadata.get('readonly_image_mount', {})
         image_hash = metadata.get('image_sha256', '')
         readonly_times = (self.readonly_image_times and len(image_hash) == 64
@@ -74,9 +84,8 @@ class GuestStat64(GuardedGuestBytes):
         labels = [None] * SIZE
         for field, (offset, length) in LAYOUT.items():
             labels[offset:offset + length] = [field] * length
-        if regular_rdev:
-            # Only this buffer's regular-file rdev is known. Special-node and
-            # other buffers retain the global unknown-field guard.
+        if regular_rdev or device_rdev:
+            # Sourced regular-file (0) or special device node (major/minor) rdev is known.
             offset, length = LAYOUT['st_rdev']
             labels[offset:offset + length] = [None] * length
         if readonly_times:

@@ -447,7 +447,7 @@ class GuestUipc:
                 'queue': queue,
                 'status': 'timeout' if timeout == 0 else 'empty_queue'
             })
-            return -11
+            return -1022  # OSAL_ERR_TIMEOUT (0xfffffc02)
 
     def handle_stat_msgq(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x80000003 (__k_4u_stat_msgq).

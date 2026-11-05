@@ -1,5 +1,6 @@
 """ARM metadata layout, bounded copies and unknown-value consumption."""
 import struct
+import stat
 import unittest
 
 import unicorn
@@ -113,6 +114,19 @@ class Stat64Tests(unittest.TestCase):
                 with self.assertRaises(UnverifiedGuestData):
                     self.contract.assert_known_host_read(0x3120, 8)
                 self.contract.assert_known_host_read(0x3020, 8)
+
+    def test_character_device_rdev_written_and_not_guarded(self):
+        chr_meta = {**self.metadata, 'mode': stat.S_IFCHR | 0o666, 'device_number': {'major': 1, 'minor': 9}}
+        result = self.contract.request(chr_meta, 0x3000)
+        # major=1, minor=9 -> makedev = (1 << 8) | 9 = 0x109 = 265
+        self.assertEqual(result['source']['st_rdev'], 0x109)
+        self.assertNotIn('st_rdev', result['guarded_fields'])
+        rdev_val = struct.unpack('<Q', self.mu.mem_read(0x3020, 8))[0]
+        self.assertEqual(rdev_val, 0x109)
+        self.contract.assert_known_host_read(0x3020, 8)
+        self.instruction(0xe5910000, 0x3020)
+        self.assertEqual(self.mu.reg_read(arm.UC_ARM_REG_R0), 0x109)
+        self.assertFalse(self.stops)
 
     def readonly_metadata(self):
         return {**self.metadata, 'image_sha256': 'a' * 64,

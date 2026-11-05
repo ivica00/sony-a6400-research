@@ -26,6 +26,11 @@ from src.a6400.execution.guest_gpio import GuestGpio, UnsupportedGpio
 from src.a6400.execution.guest_usb_buspower import GuestUsbBusPower, UnsupportedUsbBusPower
 from src.a6400.execution.guest_usb_event import GuestUsbEvent, UnsupportedUsbEvent
 from src.a6400.execution.guest_usb_otgcore import GuestUsbOtgCore, UnsupportedUsbOtgCore
+from src.a6400.execution.guest_hdmi import GuestHdmi, UnsupportedHdmi
+from src.a6400.execution.guest_cec import GuestCec, UnsupportedCec
+from src.a6400.execution.guest_mmca_char import GuestMmcChar, UnsupportedMmcChar, MMC_CHAR_NODES
+from src.a6400.execution.guest_pipe import GuestPipe, UnsupportedPipe, POLLNVAL, POLLERR, POLLHUP
+from src.a6400.execution.guest_sem import GuestSem
 from src.a6400.execution.kernel_task_identity import UnsupportedKernelBinding
 
 
@@ -34,11 +39,14 @@ class InterpreterProbe:
                  madvise_policy='stop', backup_service_policy='unverified-ack',
                  graphics_service_policy='stop', null_page_policy='stop',
                  kmod_service_policy='stop',
-                 media_service_policy='stop',
+                 media_service_policy='stop', hook_mode='instruction',
                  mmap_base=None, mmap_ceiling=None, mmap_search_low=None):
         if null_page_policy not in ('stop', 'read-zero'):
             raise ValueError('Unknown null page policy')
         self.null_page_policy = null_page_policy
+        if hook_mode not in ('instruction', 'fast'):
+            raise ValueError('Unknown hook mode')
+        self.hook_mode = hook_mode
         if backup_service_policy not in ('stop', 'unverified-ack', 'preset-backed'):
             raise ValueError('Unknown backup service policy')
         if graphics_service_policy not in ('stop', 'authentic-grm'):
@@ -76,13 +84,20 @@ class InterpreterProbe:
                                        'No kernel, kuser helpers, VDSO, devices, IPC, or writable files are implemented.',
                                        'Optional brk contract: ASLR disabled; page-aligned initial break; 64 MiB growth ceiling, not recovered camera RLIMIT_DATA.']}
         self.instructions = 0
+        self._progress_interval = 0
+        self._on_progress = None
         if madvise_policy != 'stop':
             self.report['assumptions'].append('Optional MADV_DONTNEED: only owned private anonymous pages; eager zeroing models later zero-fill reads, not RSS, physical reclaim or timing.')
         self.prepared = False
         self.prepare_attempted = False
         self.tail = deque(maxlen=32)
         self.signal_handlers = {}
-        self.mu.hook_add(unicorn.UC_HOOK_CODE, self._code)
+        if self.hook_mode == 'fast':
+            self.mu.hook_add(unicorn.UC_HOOK_BLOCK, self._block)
+            for it_addr in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a):
+                self.mu.hook_add(unicorn.UC_HOOK_CODE, self._it_workaround, begin=it_addr, end=it_addr)
+        else:
+            self.mu.hook_add(unicorn.UC_HOOK_CODE, self._code)
         self.mu.hook_add(unicorn.UC_HOOK_INTR, self._interrupt)
         self.mu.hook_add(unicorn.UC_HOOK_MEM_INVALID, self._memory)
         self.mu.hook_add(unicorn.UC_HOOK_INSN_INVALID, self._invalid_insn)
@@ -157,6 +172,8 @@ class InterpreterProbe:
                 self.report['assumptions'].append('Backup service: historical unverified acknowledgement of queue 0x003e014d; no recipient executes and zero-initialized reply fields are not camera data.')
             self.stdio = GuestStdio()
             self.fb = GuestFramebuffer()
+            self.pipes = GuestPipe()
+            self.sem = GuestSem()
             if filesystem.get('stream_profile') is not None:
                 self.stream = GuestStream(self.mu, self.mmap, filesystem['stream_profile'],
                                           self._identity_boundary, self._after_host_write)
@@ -207,22 +224,45 @@ class InterpreterProbe:
         if hasattr(self, 'kuser'):
             self.kuser.map_page()
         if self.null_page_policy == 'read-zero':
-            self.mu.mem_map(0, 4096, unicorn.UC_PROT_READ | unicorn.UC_PROT_WRITE)
+            self.mu.mem_map(0, 4096, unicorn.UC_PROT_READ)
             self.mu.mem_write(0, bytes(4096))
 
             def _null_page_read_guard(uc, access, address, size, value, user_data):
                 if address < 16:
                     uc.mem_write(0, bytes(16))
             self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, _null_page_read_guard, begin=0, end=16)
+
+            def _null_page_write_guard(uc, access, address, size, value, user_data):
+                return True
+            self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE_PROT, _null_page_write_guard, begin=0, end=4095)
+
+            def _null_page_keep_zero(uc, access, address, size, value, user_data):
+                if address < 16:
+                    uc.mem_write(0, bytes(16))
+            self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, _null_page_keep_zero, begin=0, end=15)
         self.prepared = True
+
+    def _it_workaround(self, uc, address, size, user_data):
+        if self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
+            cpsr = uc.reg_read(arm.UC_ARM_REG_CPSR)
+            if cpsr & ((3 << 25) | (0x3f << 10)):
+                uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr & ~((3 << 25) | (0x3f << 10)))
+
+    def _block(self, uc, address, size, user_data):
+        insn_est = max(1, size // 2)
+        self.instructions += insn_est
+        if self._progress_interval and self.instructions % self._progress_interval < insn_est:
+            self._on_progress(self)
+        self.tail.append((address, size))
 
     def _code(self, uc, address, size, user_data):
         self.instructions += 1
-        self.tail.append({'address': address, 'size': size,
-                          'bytes': bytes(uc.mem_read(address, size)).hex()})
+        if self._progress_interval and self.instructions % self._progress_interval == 0:
+            self._on_progress(self)
+        self.tail.append((address, size))
         # Workaround for emulator bug where a Thumb-2 IT block with mixed 16/32-bit instructions
         # leaves leftover IT bits in CPSR, corrupting subsequent non-IT instructions.
-        if self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads') and address in (0x40004e4c, 0x50259c24):
+        if address in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a) and self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
             cpsr = uc.reg_read(arm.UC_ARM_REG_CPSR)
             if cpsr & ((3 << 25) | (0x3f << 10)):
                 uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr & ~((3 << 25) | (0x3f << 10)))
@@ -309,6 +349,100 @@ class InterpreterProbe:
                         self.report['syscall_responses_supplied'] += 1
                         uc.reg_write(arm.UC_ARM_REG_R0, ret)
                         return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'pipe':
+                    buf = uc.reg_read(arm.UC_ARM_REG_R1)
+                    count = uc.reg_read(arm.UC_ARM_REG_R2)
+                    entry = self.filesystem.fds[fd]
+                    pipe_id = entry.get('pipe_id')
+                    try:
+                        data = self.pipes.read(pipe_id, count)
+                    except UnsupportedPipe as error:
+                        self.report.update(status='unsupported_pipe_contract', boundary={
+                            **error.details, 'fd': fd, 'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    if data is None:
+                        if self.syscall_policy == 'threads':
+                            self.threads.save_context(uc)
+                            self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
+                            next_tid, event = self.threads.handle_fd_wait(fd, 'read', pc - size)
+                            event.update(pc=pc, instruction_address=pc - size, thumb=thumb, path=entry.get('path'))
+                            self.report['serviced_syscalls'].append(event)
+                            if next_tid is not None:
+                                self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+                            else:
+                                self.report.update(status='blocked_read', boundary=event)
+                                uc.emu_stop()
+                            return
+                        else:
+                            self.report.update(status='blocked_read', boundary={'fd': fd, 'path': entry.get('path'), 'pc': pc})
+                            uc.emu_stop()
+                            return
+                    if data:
+                        try:
+                            self._uipc_write(buf, data)
+                        except UnsupportedUipc as error:
+                            self.report.update(status='unsupported_pipe_contract', boundary={
+                                **error.details, 'fd': fd, 'pc': pc, 'r7': number})
+                            uc.emu_stop()
+                            return
+                    ret = len(data)
+                    event = {'syscall': 'read', 'r7': 3, 'fd': fd, 'count': count, 'returned': ret,
+                             'path': entry.get('path'), 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+            if number == 4:  # write on pipe fds
+                fd = uc.reg_read(arm.UC_ARM_REG_R0)
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'pipe':
+                    buf = uc.reg_read(arm.UC_ARM_REG_R1)
+                    count = uc.reg_read(arm.UC_ARM_REG_R2)
+                    entry = self.filesystem.fds[fd]
+                    pipe_id = entry.get('pipe_id')
+                    try:
+                        data = self._uipc_read(buf, count)
+                        ret = self.pipes.write(pipe_id, data)
+                    except (UnsupportedUipc, UnsupportedPipe) as error:
+                        self.report.update(status='unsupported_pipe_contract', boundary={
+                            **error.details, 'fd': fd, 'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    read_fd = entry.get('peer_fd')
+                    if read_fd is not None and hasattr(self, 'threads'):
+                        self.threads.handle_fd_wake(read_fd)
+                    event = {'syscall': 'write', 'r7': 4, 'fd': fd, 'count': count, 'returned': ret,
+                             'path': entry.get('path'), 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') in ('hdmi', 'cec'):
+                    buf = uc.reg_read(arm.UC_ARM_REG_R1)
+                    count = uc.reg_read(arm.UC_ARM_REG_R2)
+                    entry = self.filesystem.fds[fd]
+                    dev_name = entry.get('device')
+                    drv = self.hdmi if dev_name == 'hdmi' else self.cec
+                    try:
+                        data = self._uipc_read(buf, count)
+                        ret = drv.write(entry.get('owner_id'), data)
+                    except (UnsupportedUipc, UnsupportedHdmi, UnsupportedCec) as error:
+                        self.report.update(status=f'unsupported_{dev_name}_contract', boundary={
+                            **error.details, 'fd': fd, 'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    event = {'syscall': 'write', 'r7': 4, 'fd': fd, 'count': count, 'returned': ret,
+                             'path': entry.get('path'), 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
             if number in (4, 146):  # write / writev on stdio
                 fd = uc.reg_read(arm.UC_ARM_REG_R0)
                 if self.stdio.is_stdio_fd(fd):
@@ -528,6 +662,163 @@ class InterpreterProbe:
                                                    'owner_id': owner['owner_id'], 'device_number': [self.usb_otgcore.major, self.usb_otgcore.minor]}
                     event = {'syscall': 'open', 'r7': 5, 'path': '/dev/usb/otgcore', 'fd': fd, 'returned': ret,
                              'flags': flags, 'device_number': [self.usb_otgcore.major, self.usb_otgcore.minor],
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if preview.get('status') == 'terminated' and preview.get('value') == '/dev/hdmi':
+                    try:
+                        self._uipc_read(path_ptr, len(b'/dev/hdmi\0'))
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    except UnsupportedUipc as error:
+                        self.report.update(status='unsupported_hdmi_contract', boundary={
+                            **error.details, 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    if not hasattr(self, 'hdmi') or self.hdmi is None:
+                        self.report.update(status='unsupported_hdmi_contract', boundary={
+                            'reason': 'hdmi_device_not_supplied',
+                            'path': '/dev/hdmi', 'flags': flags, 'pc': pc, 'r7': number,
+                            'instruction_address': pc - size,
+                            'guest_tid': self.threads.current_tid if hasattr(self, 'threads') else None,
+                            'guest_tgid': self.threads.process_id if hasattr(self, 'threads') else None})
+                        uc.emu_stop()
+                        return
+                    caller_pid = self.threads.current_tid if hasattr(self, 'threads') else None
+                    caller_tgid = self.threads.process_id if hasattr(self, 'threads') else None
+                    try:
+                        owner = self.hdmi.open(flags, caller_pid, caller_tgid)
+                    except UnsupportedHdmi as error:
+                        self.report.update(status='unsupported_hdmi_contract', boundary={
+                            **error.details, 'path': '/dev/hdmi', 'flags': flags,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size,
+                            'guest_tid': caller_pid, 'guest_tgid': caller_tgid})
+                        uc.emu_stop()
+                        return
+                    fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
+                    if fd is None:
+                        ret = 0xffffffe8
+                    else:
+                        ret = fd
+                        self.filesystem.fds[fd] = {'path': '/dev/hdmi', 'device': 'hdmi', 'flags': flags,
+                                                   'owner_id': owner['owner_id'], 'device_number': [self.hdmi.major, self.hdmi.minor]}
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/hdmi', 'fd': fd, 'returned': ret,
+                             'flags': flags, 'device_number': [self.hdmi.major, self.hdmi.minor],
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if preview.get('status') == 'terminated' and preview.get('value') == '/dev/cec':
+                    try:
+                        self._uipc_read(path_ptr, len(b'/dev/cec\0'))
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    except UnsupportedUipc as error:
+                        self.report.update(status='unsupported_cec_contract', boundary={
+                            **error.details, 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    if not hasattr(self, 'cec') or self.cec is None:
+                        self.report.update(status='unsupported_cec_contract', boundary={
+                            'reason': 'cec_device_not_supplied',
+                            'path': '/dev/cec', 'flags': flags, 'pc': pc, 'r7': number,
+                            'instruction_address': pc - size,
+                            'guest_tid': self.threads.current_tid if hasattr(self, 'threads') else None,
+                            'guest_tgid': self.threads.process_id if hasattr(self, 'threads') else None})
+                        uc.emu_stop()
+                        return
+                    caller_pid = self.threads.current_tid if hasattr(self, 'threads') else None
+                    caller_tgid = self.threads.process_id if hasattr(self, 'threads') else None
+                    try:
+                        owner = self.cec.open(flags, caller_pid, caller_tgid)
+                    except UnsupportedCec as error:
+                        self.report.update(status='unsupported_cec_contract', boundary={
+                            **error.details, 'path': '/dev/cec', 'flags': flags,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size,
+                            'guest_tid': caller_pid, 'guest_tgid': caller_tgid})
+                        uc.emu_stop()
+                        return
+                    fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
+                    if fd is None:
+                        ret = 0xffffffe8
+                    else:
+                        ret = fd
+                        self.filesystem.fds[fd] = {'path': '/dev/cec', 'device': 'cec', 'flags': flags,
+                                                   'owner_id': owner['owner_id'], 'device_number': [self.cec.major, self.cec.minor]}
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/cec', 'fd': fd, 'returned': ret,
+                             'flags': flags, 'device_number': [self.cec.major, self.cec.minor],
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if preview.get('status') == 'terminated' and preview.get('value') in MMC_CHAR_NODES:
+                    node_path = preview['value']
+                    try:
+                        self._uipc_read(path_ptr, len(node_path.encode('ascii')) + 1)
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    except UnsupportedUipc as error:
+                        self.report.update(status='unsupported_mmca_char_contract', boundary={
+                            **error.details, 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    if not hasattr(self, 'mmca_char') or self.mmca_char is None:
+                        self.report.update(status='unsupported_mmca_char_contract', boundary={
+                            'reason': 'mmca_char_device_not_supplied',
+                            'path': node_path, 'flags': flags, 'pc': pc, 'r7': number,
+                            'instruction_address': pc - size,
+                            'guest_tid': self.threads.current_tid if hasattr(self, 'threads') else None,
+                            'guest_tgid': self.threads.process_id if hasattr(self, 'threads') else None})
+                        uc.emu_stop()
+                        return
+                    caller_pid = self.threads.current_tid if hasattr(self, 'threads') else None
+                    caller_tgid = self.threads.process_id if hasattr(self, 'threads') else None
+                    try:
+                        owner = self.mmca_char.open(flags, caller_pid, caller_tgid, path=node_path)
+                    except UnsupportedMmcChar as error:
+                        self.report.update(status='unsupported_mmca_char_contract', boundary={
+                            **error.details, 'path': node_path, 'flags': flags,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size,
+                            'guest_tid': caller_pid, 'guest_tgid': caller_tgid})
+                        uc.emu_stop()
+                        return
+                    fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
+                    dev_num = [owner['major'], owner['minor']]
+                    if fd is None:
+                        ret = 0xffffffe8
+                    else:
+                        ret = fd
+                        self.filesystem.fds[fd] = {'path': node_path, 'device': 'mmca_char', 'flags': flags,
+                                                   'owner_id': owner['owner_id'], 'device_number': dev_num}
+                    event = {'syscall': 'open', 'r7': 5, 'path': node_path, 'fd': fd, 'returned': ret,
+                             'flags': flags, 'device_number': dev_num,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if (preview.get('status') == 'terminated' and preview.get('value') == '/dev/sata'
+                        and hasattr(self, 'mmca_char') and self.mmca_char is not None):
+                    try:
+                        self._uipc_read(path_ptr, len(b'/dev/sata\0'))
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    except UnsupportedUipc as error:
+                        self.report.update(status='unsupported_mmca_char_contract', boundary={
+                            **error.details, 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    ret = 0xfffffffa  # -ENXIO: major 249 has no sata driver on ILCE-6400
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/sata', 'fd': None, 'returned': ret,
+                             'flags': flags, 'device_number': [249, 2],
                              'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
@@ -783,6 +1074,66 @@ class InterpreterProbe:
                         return
                     event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
                              'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'usb_otgcore'}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'hdmi':
+                    owner_id = self.filesystem.fds[fd].get('owner_id')
+                    try:
+                        ret = self.hdmi.ioctl(
+                            owner_id, cmd, arg,
+                            lambda addr, sz: bytes(uc.mem_read(addr, sz)),
+                            lambda addr, data: uc.mem_write(addr, data)
+                        )
+                    except UnsupportedHdmi as error:
+                        self.report.update(status='unsupported_hdmi_contract', boundary={
+                            **error.details, 'fd': fd, 'cmd': cmd, 'arg': arg,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'hdmi'}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'cec':
+                    owner_id = self.filesystem.fds[fd].get('owner_id')
+                    try:
+                        ret = self.cec.ioctl(
+                            owner_id, cmd, arg,
+                            lambda addr, sz: bytes(uc.mem_read(addr, sz)),
+                            lambda addr, data: uc.mem_write(addr, data)
+                        )
+                    except UnsupportedCec as error:
+                        self.report.update(status='unsupported_cec_contract', boundary={
+                            **error.details, 'fd': fd, 'cmd': cmd, 'arg': arg,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'cec'}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'mmca_char':
+                    owner_id = self.filesystem.fds[fd].get('owner_id')
+                    try:
+                        ret = self.mmca_char.ioctl(
+                            owner_id, cmd, arg,
+                            lambda addr, sz: bytes(uc.mem_read(addr, sz)),
+                            lambda addr, data: uc.mem_write(addr, data)
+                        )
+                    except UnsupportedMmcChar as error:
+                        self.report.update(status='unsupported_mmca_char_contract', boundary={
+                            **error.details, 'fd': fd, 'cmd': cmd, 'arg': arg,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'mmca_char'}
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
@@ -1292,11 +1643,189 @@ class InterpreterProbe:
                         self.usb_event.close(entry.get('owner_id'))
                     if entry.get('device') == 'usb_otgcore' and hasattr(self, 'usb_otgcore') and self.usb_otgcore:
                         self.usb_otgcore.close(entry.get('owner_id'))
+                    if entry.get('device') == 'hdmi' and hasattr(self, 'hdmi') and self.hdmi:
+                        self.hdmi.close(entry.get('owner_id'))
+                    if entry.get('device') == 'cec' and hasattr(self, 'cec') and self.cec:
+                        self.cec.close(entry.get('owner_id'))
+                    if entry.get('device') == 'mmca_char' and hasattr(self, 'mmca_char') and self.mmca_char:
+                        self.mmca_char.close(entry.get('owner_id'))
+                    if entry.get('device') == 'pipe' and hasattr(self, 'pipes') and self.pipes:
+                        self.pipes.close_end(entry.get('pipe_id'), entry.get('end'))
+                        peer_fd = entry.get('peer_fd')
+                        if peer_fd is not None and hasattr(self, 'threads'):
+                            self.threads.handle_fd_wake(peer_fd)
                     ret = 0
                 else:
                     ret = 0xfffffff7  # -EBADF
                 uc.reg_write(arm.UC_ARM_REG_R0, ret)
                 event = {'syscall': 'close', 'r7': 6, 'fd': fd, 'returned': ret,
+                         'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                self.report['serviced_syscalls'].append(event)
+                self.report['syscall_responses_supplied'] += 1
+                return
+            if number == 42:  # sys_pipe
+                pipefd_ptr = uc.reg_read(arm.UC_ARM_REG_R0)
+                if not accessible(uc, pipefd_ptr, 8, unicorn.UC_PROT_WRITE):
+                    self.report.update(status='unsupported_pipe_contract', boundary={
+                        'reason': 'pipefd_pointer_not_writable', 'address': pipefd_ptr,
+                        'pc': pc, 'r7': 42, 'instruction_address': pc - size})
+                    uc.emu_stop()
+                    return
+                avail = [cand for cand in range(3, 259) if cand not in self.filesystem.fds]
+                if len(avail) < 2:
+                    ret = 0xffffffe8  # -EMFILE
+                    event = {'syscall': 'pipe', 'r7': 42, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                else:
+                    read_fd, write_fd = avail[0], avail[1]
+                    caller_pid = self.threads.current_tid if hasattr(self, 'threads') else None
+                    caller_tgid = self.threads.process_id if hasattr(self, 'threads') else None
+                    channel = self.pipes.create(flags=0, pid=caller_pid, tgid=caller_tgid)
+                    pipe_id = channel['pipe_id']
+                    self.filesystem.fds[read_fd] = {
+                        'path': f'pipe:[{pipe_id}]', 'device': 'pipe', 'pipe_id': pipe_id,
+                        'end': 'read', 'peer_fd': write_fd, 'flags': 0
+                    }
+                    self.filesystem.fds[write_fd] = {
+                        'path': f'pipe:[{pipe_id}]', 'device': 'pipe', 'pipe_id': pipe_id,
+                        'end': 'write', 'peer_fd': read_fd, 'flags': 1
+                    }
+                    self._uipc_write(pipefd_ptr, struct.pack('<II', read_fd, write_fd))
+                    ret = 0
+                    event = {'syscall': 'pipe', 'r7': 42, 'pipe_id': pipe_id,
+                             'read_fd': read_fd, 'write_fd': write_fd, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                self.report['serviced_syscalls'].append(event)
+                self.report['syscall_responses_supplied'] += 1
+                uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                return
+            if number == 168:  # sys_poll
+                fds_ptr = uc.reg_read(arm.UC_ARM_REG_R0)
+                nfds = uc.reg_read(arm.UC_ARM_REG_R1)
+                timeout_raw = uc.reg_read(arm.UC_ARM_REG_R2)
+                timeout = struct.unpack('<i', struct.pack('<I', timeout_raw))[0]
+                if nfds > 256 or (nfds > 0 and not accessible(uc, fds_ptr, nfds * 8, unicorn.UC_PROT_READ | unicorn.UC_PROT_WRITE)):
+                    self.report.update(status='unsupported_poll_contract', boundary={
+                        'reason': 'pollfd_array_not_accessible', 'fds_ptr': fds_ptr, 'nfds': nfds,
+                        'pc': pc, 'r7': 168, 'instruction_address': pc - size})
+                    uc.emu_stop()
+                    return
+                try:
+                    raw_pollfds = self._uipc_read(fds_ptr, nfds * 8) if nfds > 0 else b''
+                except (UnsupportedUipc, UnverifiedGuestData) as error:
+                    self.report.update(status='unsupported_poll_contract', boundary={
+                        **(error.details if hasattr(error, 'details') else {'error': str(error)}),
+                        'pc': pc, 'r7': 168, 'instruction_address': pc - size})
+                    uc.emu_stop()
+                    return
+                out_pollfds = bytearray(raw_pollfds)
+                ready_count = 0
+                valid_fds = []
+                for idx in range(nfds):
+                    p_fd, p_events, _ = struct.unpack_from('<ihh', raw_pollfds, idx * 8)
+                    if p_fd < 0:
+                        revents = 0
+                    elif p_fd not in self.filesystem.fds:
+                        revents = POLLNVAL
+                    else:
+                        valid_fds.append(p_fd)
+                        entry = self.filesystem.fds[p_fd]
+                        dev_type = entry.get('device')
+                        if dev_type == 'hdmi' and hasattr(self, 'hdmi') and self.hdmi:
+                            mask = self.hdmi.poll(entry.get('owner_id'))
+                            revents = (p_events & mask) | (mask & (POLLERR | POLLHUP | POLLNVAL))
+                        elif dev_type == 'cec' and hasattr(self, 'cec') and self.cec:
+                            mask = self.cec.poll(entry.get('owner_id'))
+                            revents = (p_events & mask) | (mask & (POLLERR | POLLHUP | POLLNVAL))
+                        elif dev_type == 'pipe' and hasattr(self, 'pipes') and self.pipes:
+                            mask = self.pipes.poll(entry.get('pipe_id'), entry.get('end'))
+                            revents = (p_events & mask) | (mask & (POLLERR | POLLHUP | POLLNVAL))
+                        elif dev_type == 'usb_event' and hasattr(self, 'usb_event') and self.usb_event:
+                            mask = 0x0041 if self.usb_event.event_queue else 0
+                            revents = p_events & mask
+                        else:
+                            revents = p_events & 0x0005
+                    struct.pack_into('<h', out_pollfds, idx * 8 + 6, revents)
+                    if revents != 0:
+                        ready_count += 1
+                if nfds > 0:
+                    self._uipc_write(fds_ptr, bytes(out_pollfds))
+                if ready_count > 0 or timeout == 0:
+                    ret = ready_count
+                    event = {'syscall': 'poll', 'r7': 168, 'nfds': nfds, 'fds': valid_fds,
+                             'timeout': timeout, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if self.syscall_policy == 'threads' and valid_fds:
+                    self.threads.save_context(uc)
+                    self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
+                    next_tid, event = self.threads.handle_fd_wait(valid_fds[0], 'poll', pc - size, extra_fds=valid_fds[1:])
+                    event.update(pc=pc, instruction_address=pc - size, thumb=thumb, nfds=nfds, timeout=timeout)
+                    self.report['serviced_syscalls'].append(event)
+                    if next_tid is not None:
+                        self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+                    else:
+                        self.report.update(status='blocked_poll', boundary=event)
+                        uc.emu_stop()
+                    return
+                self.report.update(status='blocked_poll', boundary={'fds': valid_fds, 'timeout': timeout, 'pc': pc, 'r7': 168})
+                uc.emu_stop()
+                return
+            if number == 298:  # sys_semop
+                semid = uc.reg_read(arm.UC_ARM_REG_R0)
+                tsops = uc.reg_read(arm.UC_ARM_REG_R1)
+                nsops = uc.reg_read(arm.UC_ARM_REG_R2)
+                ret = self.sem.semop(semid, tsops, nsops,
+                                     memory_reader=lambda a, sz: bytes(uc.mem_read(a, sz)),
+                                     memory_writer=lambda a, d: uc.mem_write(a, d))
+                uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff if ret < 0 else ret)
+                event = {'syscall': 'semop', 'r7': 298, 'semid': semid, 'tsops': hex(tsops),
+                         'nsops': nsops, 'returned': ret,
+                         'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                self.report['serviced_syscalls'].append(event)
+                self.report['syscall_responses_supplied'] += 1
+                return
+            if number == 299:  # sys_semget
+                key = uc.reg_read(arm.UC_ARM_REG_R0)
+                nsems = uc.reg_read(arm.UC_ARM_REG_R1)
+                semflg = uc.reg_read(arm.UC_ARM_REG_R2)
+                semid = self.sem.semget(key, nsems, semflg)
+                uc.reg_write(arm.UC_ARM_REG_R0, semid & 0xffffffff if semid < 0 else semid)
+                event = {'syscall': 'semget', 'r7': 299, 'key': hex(key), 'nsems': nsems,
+                         'semflg': oct(semflg), 'returned': semid,
+                         'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                self.report['serviced_syscalls'].append(event)
+                self.report['syscall_responses_supplied'] += 1
+                return
+            if number == 300:  # sys_semctl
+                semid = uc.reg_read(arm.UC_ARM_REG_R0)
+                semnum = uc.reg_read(arm.UC_ARM_REG_R1)
+                cmd = uc.reg_read(arm.UC_ARM_REG_R2)
+                arg = uc.reg_read(arm.UC_ARM_REG_R3)
+                ret = self.sem.semctl(semid, semnum, cmd, arg,
+                                      memory_reader=lambda a, sz: bytes(uc.mem_read(a, sz)),
+                                      memory_writer=lambda a, d: uc.mem_write(a, d))
+                uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff if ret < 0 else ret)
+                event = {'syscall': 'semctl', 'r7': 300, 'semid': semid, 'semnum': semnum,
+                         'cmd': hex(cmd), 'arg': hex(arg), 'returned': ret,
+                         'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                self.report['serviced_syscalls'].append(event)
+                self.report['syscall_responses_supplied'] += 1
+                return
+            if number == 301:  # sys_semtimedop
+                semid = uc.reg_read(arm.UC_ARM_REG_R0)
+                tsops = uc.reg_read(arm.UC_ARM_REG_R1)
+                nsops = uc.reg_read(arm.UC_ARM_REG_R2)
+                timeout = uc.reg_read(arm.UC_ARM_REG_R3)
+                ret = self.sem.semtimedop(semid, tsops, nsops, timeout_ptr=timeout,
+                                          memory_reader=lambda a, sz: bytes(uc.mem_read(a, sz)),
+                                          memory_writer=lambda a, d: uc.mem_write(a, d))
+                uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff if ret < 0 else ret)
+                event = {'syscall': 'semtimedop', 'r7': 301, 'semid': semid, 'tsops': hex(tsops),
+                         'nsops': nsops, 'timeout': hex(timeout), 'returned': ret,
                          'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
@@ -1328,6 +1857,8 @@ class InterpreterProbe:
         uc.emu_stop()
 
     def _memory(self, uc, access, address, size, value, user_data):
+        if getattr(self, 'null_page_policy', None) == 'read-zero' and 0 <= address < 4096:
+            return True
         self.report.update(status='memory_boundary',
                            boundary={'access': access, 'address': address, 'size': size,
                                      'value': value, 'pc': uc.reg_read(arm.UC_ARM_REG_PC)})
@@ -1430,17 +1961,31 @@ class InterpreterProbe:
             raise ValueError('Use a fresh probe for each run')
         self.report.update(status='running', instruction_budget=instruction_budget, timeout_us=timeout_us,
                            madvise_policy=self.madvise_policy)
+        budget_remaining = instruction_budget - self.instructions if instruction_budget > self.instructions else instruction_budget
         try:
-            self.mu.emu_start(self.entry, 0, timeout=timeout_us, count=instruction_budget)
+            self.mu.emu_start(self.entry, 0, timeout=timeout_us, count=budget_remaining)
             if self.report['status'] == 'running':
                 self.report['status'] = ('timeout' if self.mu.query(unicorn.UC_QUERY_TIMEOUT)
-                                         else 'instruction_budget_exhausted' if self.instructions >= instruction_budget
+                                         else 'instruction_budget_exhausted' if (self.instructions >= instruction_budget or self.hook_mode == 'fast')
                                          else 'unexpected_stop')
+            if self.hook_mode == 'fast' and self.report['status'] == 'instruction_budget_exhausted':
+                self.instructions = max(self.instructions, instruction_budget)
         except unicorn.UcError as error:
             if self.report['status'] == 'running':
                 self.report['status'] = 'execution_fault'
             self.report['engine_error'] = str(error)
-        self.report.update(instructions_executed=self.instructions, last_instructions=list(self.tail),
+        last_insns = []
+        for item in self.tail:
+            if isinstance(item, tuple):
+                addr, sz = item
+                try:
+                    raw_hex = bytes(self.mu.mem_read(addr, sz)).hex()
+                except unicorn.UcError:
+                    raw_hex = ''
+                last_insns.append({'address': addr, 'size': sz, 'bytes': raw_hex})
+            else:
+                last_insns.append(item)
+        self.report.update(instructions_executed=self.instructions, last_instructions=last_insns,
                            pc=self.mu.reg_read(arm.UC_ARM_REG_PC))
         if self.syscall_policy in ('brk', 'brk-uname', 'files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads'):
             self.report['heap']['final'] = self.heap.current

@@ -278,6 +278,8 @@ class GuestFilesystem:
                             self.after_write(pointer, count)
                         return {**event, 'returned': count, 'reason': 'deterministic_urandom_read',
                                 'bytes_supplied': count, 'entropy_hex': entropy.hex()}
+                if number == 197 and self.stat_contract is not None:
+                    return {**event, **self._stat(self.nodes[descriptor['path']], args[1])}
                 raise UnsupportedFilesystem(
                     'urandom_operation_not_implemented',
                     path=descriptor['path'], source_sha256=descriptor['source_sha256'])

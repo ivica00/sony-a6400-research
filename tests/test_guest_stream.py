@@ -123,10 +123,20 @@ class StreamTests(unittest.TestCase):
 
     def test_open_flags_and_identity_fail_closed(self):
         self.stream.open(4098)
+        self.stream.open(0x21002)
         with self.assertRaises(UnsupportedStream):
             self.stream.open(0x102)
         with self.assertRaises(ValueError):
             GuestStream(self.mu, self.mapper, {**PROFILE, 'minor': 8}, self.stop, lambda a, n: None)
+
+    def test_disjoint_physical_mappings_succeed_while_overlapping_alias_fails_closed(self):
+        v1 = self.map(pgoff=0x202e0)
+        v2 = self.map(pgoff=0x20030)
+        self.assertNotEqual(v1, v2)
+        self.assertEqual(len(self.stream.mappings), 2)
+        with self.assertRaises(UnsupportedStream):
+            self.map(pgoff=0x20030)
+
 
 
 class StreamProbeTests(unittest.TestCase):

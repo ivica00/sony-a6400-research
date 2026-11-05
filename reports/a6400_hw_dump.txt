@@ -1,0 +1,1562 @@
+=== Sony ILCE-6400 Live Hardware Diagnostic Dump ===
+Date: Thu Jan  1 00:14:07 UTC 1970
+Kernel: Linux (none) 3.0.27_nl-rt106+ #1 SMP PREEMPT RT Tue Aug 10 13:03:39 JST 2021 armv7l GNU/Linux
+
+=== CMDLINE ===
+ ramdisk_size=8192 rw noatime noalign lpj=1757184 page_alloc.minkb=128 page_alloc.lokb=1024 page_alloc.hikb=1280 heap_profile.records=0 snsc_workqueue.kipid=130 manage.irqd=129 softirq.sirqd=128 adrs_conv.debug=1 adrs_conv.null=Y exception.reboot=1 exception.console_option=115200n8 wdt.timeout=500 warm.mode=2 warm.tmo=100000 warm.resume_drop=0 warm.boot_drop=0 warm.ignore_drop=1 basic.prof_path=/log/ssbi_prof.bin cache_l2x0.wait=3 snsc_boot_time.us=Y cfg.uart=9 error.led=0,0 cfg.poff=10,5 cmpr.path=/system/sabin/ssboot.bin cmpr.path2=/system/sabin/ssboot_any.bin cgroup_disable=memory console=ttynull xrstreq=1 wdt.mode=1 stack_usage=n cxd900x0.bam=N mmu.dac=Y exec.coremode=1 ip=off tmonitor.addr=0xF00000 tmonitor.size=0x8000 tmonitor.mask=0 rootfstype=ext2 root=/dev/ram0 init=/sbin/init initrd=0x700000,8M pm.resume=0x20021054 pm.sus_error=0x20021060 pm.ddr_ctrl=sref pm.ddr_ctrl2=sref pm.pasr1=0xff pm.pasr2=0xff pm.pasr3=0xff wbi_memclr=0x200210e8 em_console=0x200210ec wbimem=0x1000@0x20021000 wbimem=0xEC000@0x20028000 wbimem=0x8000@0x20145000 wbimem=0x500000@0x03085000 wbimem=0x96D000@0x10000000 wbimem=0x3916000@0x20200000 wbimem=0x200000@0x23E00000 cmpr.mem=0x8000@0x14000000 warm.mem_dst=0xC00000@0x14100000 warm.mem_work=0x600000@0x14D00000 wbi_cmpr.waddr=0x69A00000 wbi_cmpr.wsize=0x100000 wbi_cmpr.nbuf=12 boottime=0x20000@0x03585000 klog.addr=0x035A5000 klog.size=0x20000 alog.addr=0x03524FC0 alog.size=0x60040 alog.clock=cpu mem=1G@0 memrsv=1M@0 memrsv=0x8000@0xF00000 memrsv=0x1A5E000@0x02E68000 memrsv=0xA6EB000@0x09915000 memrsv=704M@0x14000000:uc mem=256M@0x80000000@1 memrsv=14M@0x80000000:uc memrsv=242M@0x80e00000:uc
+
+=== IOMEM (PHYSICAL HARDWARE MMIO RANGES) ===
+00000000-3fffffff : System RAM
+  00108000-0048d023 : Kernel text
+  004bc000-0051f613 : Kernel data
+80000000-8fffffff : System RAM
+f0200000-f02fffff : dwc3.0
+  f020c100-f02fffff : dwc3.0
+f2000000-f2000fff : uart0
+  f2000000-f2000fff : cxd900x0-uart
+f2003000-f2003fff : uart3
+  f2003000-f2003fff : cxd900x0-uart
+
+=== INTERRUPTS ===
+           CPU0       CPU1       CPU2       CPU3       
+ 35:          0          0      50100          0       GIC  liro-35
+ 36:          0          0       8206          0       GIC  liro-36
+ 37:          0          0          0          0       GIC  liro-37
+ 38:          0          0          0          0       GIC  liro-38
+ 40:          0       4103          0          0       GIC  liro-40
+ 41:          0       3948          0          0       GIC  liro-41
+ 42:          0       4103          0          0       GIC  liro-42
+ 43:          0       4103          0          0       GIC  liro-43
+ 44:          0          0          0          0       GIC  liro-44
+ 45:          0          0          0          0       GIC  liro-45
+ 46:          0         24          0          0       GIC  liro-46
+ 47:          0        433          0          0       GIC  liro-47
+ 48:          0          0          0          0       GIC  liro-48
+ 49:          0          0          0          0       GIC  liro-49
+ 50:          0          0          0          0       GIC  liro-50
+ 51:          0         56          0          0       GIC  liro-51
+ 52:          0          0          0          0       GIC  liro-52
+ 53:          0          0          0          0       GIC  liro-53
+ 54:          0         42          0          0       GIC  liro-54
+ 55:          0         18          0          0       GIC  liro-55
+ 56:          0          0          0          0       GIC  liro-56
+ 58:          0          0          0          0       GIC  liro-58
+ 61:          0         28          0          0       GIC  liro-61
+ 62:          0          0          0          0       GIC  liro-62
+ 63:          0          0          0          0       GIC  liro-63
+ 64:          0       3630          0          0       GIC  liro-64
+ 65:          0          0          0          0       GIC  liro-65
+ 66:          0          0          0          0       GIC  liro-66
+ 67:          0          0          0          0       GIC  liro-67
+ 68:          0          0          0          0       GIC  liro-68
+ 69:          0          0          0          0       GIC  liro-69
+ 70:          0          0       8206          0       GIC  liro-70
+ 71:          0          0          0          0       GIC  liro-71
+ 72:          0          0          0          0       GIC  liro-72
+ 73:          0          0       3665          0       GIC  liro-73
+ 74:          0          0          0          0       GIC  liro-74
+ 75:          0          0          0          0       GIC  liro-75
+ 76:      32663          0          0          0       GIC  dmpgles2
+ 77:          0          0          0          0       GIC  liro-77
+ 78:          0          0          0          0       GIC  liro-78
+ 79:          0          0          0          0       GIC  liro-79
+ 81:          0          0          0          0       GIC  liro-81
+ 82:          0          0          0          0       GIC  liro-82
+ 83:     103637          0          0          0       GIC  liro-83
+ 84:     597202          0          0          0       GIC  liro-84
+ 88:          0          0       5502          0       GIC  liro-88
+ 89:          0          0       1913          0       GIC  liro-89
+ 90:          0          0          6          0       GIC  liro-90
+ 91:          0          0          0          0       GIC  liro-91
+ 92:          0          0          0          0       GIC  liro-92
+ 93:          0          0          0          0       GIC  liro-93
+ 94:          0          0          0          0       GIC  liro-94
+ 98:          0      50097          0          0       GIC  liro-98
+ 99:          0      50097          0          0       GIC  liro-99
+101:          0      50115          0          0       GIC  liro-101
+102:          0      41814          0          0       GIC  liro-102
+110:          0          0          0          0       GIC  liro-110
+115:          0          0          0          0       GIC  dm330_0
+116:          0          0          0          0       GIC  dm330_1
+117:          0          0          0          0       GIC  dm330_2
+118:          0          0          0          0       GIC  dm330_3
+119:          0          0          0          0       GIC  dm330_abort
+120:      25253          0          0          0       GIC  cxd900x0-uart
+122:          0          0          4          0       GIC  liro-122
+126:          0          0          0          0       GIC  nfc_rsrc_irq
+127:          0          0          0          0       GIC  nfc_rsrc_rfdet
+129:          0      49739          0          0       GIC  liro-129
+130:          0         30          0          0       GIC  liro-130
+133:         58          0          0          0       GIC  liro-133
+135:          0          0          0          0       GIC  liro-135
+136:          0          0      21657          0       GIC  liro-136
+139:          0          0          0          0       GIC  liro-139
+141:          0          0          0          0       GIC  liro-141
+142:          0          0          0          0       GIC  liro-142
+143:          0          0      17170          0       GIC  liro-143
+146:          0          0          0          0       GIC  pmn
+147:          0          0          0          0       GIC  pmn
+148:          0          0          0          0       GIC  pmn
+149:          0          0          0          0       GIC  pmn
+150:          0          0          0          0       GIC  liro-150
+151:          0          0      34252          0       GIC  liro-151
+153:      84751          0          0          0       GIC  tick0
+155:          0      84705          0          0       GIC  tick1
+156:          0          0      84707          0       GIC  tick2
+157:          0          0          0      84721       GIC  tick3
+158:     298557          0          0          0       GIC  hwtimer0
+159:          0     100257          0          0       GIC  hwtimer1
+160:          0          0      62525          0       GIC  hwtimer2
+161:          0          0          0       7730       GIC  hwtimer3
+163:          0          0      34333          0       GIC  liro-163
+164:          0          0         69          0       GIC  liro-164
+165:          0          0          0          0       GIC  liro-165
+166:          0          0          0          0       GIC  liro-166
+167:          0          0          0          0       GIC  liro-167
+168:          0          0          2          0       GIC  liro-168
+171:        127          0          0          0       GIC  ldec
+173:          0          0          0          0       GIC  liro-173
+174:          0          0      17151          0       GIC  liro-174
+177:          0          0          0          0       GIC  liro-177
+178:          0          0          0          0       GIC  liro-178
+179:          0          0          0          0       GIC  liro-179
+180:          0          0          0          0       GIC  liro-180
+181:          0          0          0          0       GIC  liro-181
+182:          0          0          0          0       GIC  liro-182
+183:          0          0          0          0       GIC  liro-183
+184:          0          0          0          0       GIC  liro-184
+185:          0          0          0          0       GIC  liro-185
+186:          0          0          0          0       GIC  liro-186
+187:          0          0          0          0       GIC  liro-187
+188:          0          0          0          0       GIC  liro-188
+189:          0          0          0          0       GIC  xdmac0
+190:          0          0          0          0       GIC  xdmac1
+191:          0          0          0          0       GIC  xdmac2
+192:        184          0          0          0       GIC  xdmac3
+193:          0          0          0          0       GIC  xdmac4
+194:       2256          0          0          0       GIC  xdmac5
+195:          0          0          0          0       GIC  xdmac6
+196:          0          0          0          0       GIC  xdmac7
+197:          0          0          0          0       GIC  sircs_overun
+198:          7          0          0          0       GIC  sircs
+199:      35763          0          0          0       GIC  i2c0
+200:          0          0          0          0       GIC  i2c1
+201:          0          0          0          0       GIC  liro-201
+202:      74206          0          0          0       GIC  liro-202
+203:          0          0          0          0       GIC  liro-203
+204:          0     149276          0          0       GIC  liro-204
+205:          0          0          0          0       GIC  liro-205
+206:          0          0          0          0       GIC  ms
+215:     199058          0          0          0       GIC  liro-215
+216:          0      83465          0          0       GIC  liro-216
+218:       3318          0          0          0       GIC  mmc0
+227:      26541          0          0          0       GIC  emmc0
+229:       1460          0          0          0       GIC  dwc3
+230:          5          0          0          0       GIC  fusb_usb_vbus
+231:          0          0          0          0       GIC  fusb_usb_id
+254:          0          0          0          0       GIC  rstreq
+255:          0          0          0          0       GIC  L2
+IPI0:          0          0          0          0  Timer broadcast interrupts
+IPI1:    1276301    1327549     851112    1320480  Rescheduling interrupts
+IPI2:         45         43         64         61  Function call interrupts
+IPI3:          0          0          0          0  Single function call interrupts
+IPI4:          0          0          0          0  CPU stop interrupts
+IPI5:          0          0          0          0  Trigger all cpu backtrace
+LOC:          0          0          0          0  Local timer interrupts
+Err:          0
+
+=== DEVICES ===
+Character devices:
+  1 mem
+  5 /dev/tty
+  5 /dev/console
+  5 /dev/ptmx
+ 10 misc
+ 13 input
+128 ptm
+136 pts
+204 ttyAM
+240 gpio
+241 ttynull
+242 usb/event
+242 usb/gadgetcore
+242 usb/otgcore
+248 usb/massstorage
+248 usb/sicd_core
+248 usb/sicd_data
+248 usb/sicd_event
+248 usb/sen
+248 usb/ter
+248 usb/usb_extcmd
+248 usb/kikilog
+248 usb/portmon
+248 usb/buspwric
+248 usb/buspwr
+248 usb/usbg_bspwr
+248 hdmi
+248 cec
+249 ms-char
+249 mcmn
+249 stream
+249 stream2
+250 mmca-char
+250 mmcb-char
+250 mmcc-char
+251 ldec
+251 dmac
+251 uipc
+251 backup
+251 dma330
+253 uio
+254 rtc
+
+Block devices:
+  1 ramdisk
+259 blkext
+  7 loop
+252 nflasha
+254 compswap
+
+=== MOUNTS & FILESYSTEMS ===
+rootfs / rootfs rw 0 0
+proc /proc proc rw,relatime 0 0
+/dev/nflasha7 / ext2 ro,relatime,errors=continue 0 0
+/dev/nflasha15 /usr ext2 ro,relatime,errors=continue 0 0
+/dev/nflasha10 /tmp vfat rw,sync,dirsync,noatime,fmask=0022,dmask=0022,codepage=cp437,iocharset=ascii,shortname=mixed,posix_attr,avoid_dlink,errors=remount-ro 0 0
+/dev/nflasha10 /etc vfat rw,sync,dirsync,noatime,fmask=0022,dmask=0022,codepage=cp437,iocharset=ascii,shortname=mixed,posix_attr,avoid_dlink,errors=remount-ro 0 0
+/dev/nflasha3 /system vfat rw,sync,dirsync,noatime,fmask=0022,dmask=0022,codepage=cp437,iocharset=ascii,shortname=mixed,posix_attr,avoid_dlink,errors=remount-ro 0 0
+/dev/nflasha2 /setting vfat rw,sync,dirsync,noatime,fmask=0022,dmask=0022,codepage=cp437,iocharset=ascii,shortname=mixed,posix_attr,avoid_dlink,errors=remount-ro 0 0
+/dev/nflasha18 /lens vfat rw,sync,dirsync,noatime,fmask=0022,dmask=0022,codepage=cp437,iocharset=ascii,shortname=mixed,posix_attr,avoid_dlink,errors=remount-ro 0 0
+/dev/nflasha12 /cert vfat rw,dirsync,noatime,fmask=0022,dmask=0022,codepage=cp437,iocharset=ascii,shortname=mixed,batch_sync,posix_attr,avoid_dlink,errors=remount-ro 0 0
+/dev/nflasha11 /log vfat rw,dirsync,noatime,fmask=0022,dmask=0022,codepage=cp437,iocharset=ascii,shortname=mixed,batch_sync,posix_attr,avoid_dlink,errors=remount-ro 0 0
+none /sys sysfs rw,relatime 0 0
+none /dev/pts devpts rw,relatime,mode=600 0 0
+none /tmp_bt tmpfs rw,sync,dirsync,noatime,size=1024k 0 0
+
+/tmp/autoexec.sh: line 39: df: not found
+
+=== LOADED KERNEL MODULES (LSMOD) ===
+Module                  Size  Used by    Tainted: P  
+devno                   2161 23 usbg_stillimage,usbg_storage,cec,hdmi,usb_buspwr,usb_darwin,usbg_buspower,dma330,mmc_drv,ms_drv,mcmn_drv,grm_gles,kikilog,usb_extcmd,usbg_sen,usb_portMonitor,stream2,stream,backup,osal_uipc,emmc,ldec,dmac
+dmac                   12460  3 liro,emmc,ldec
+ldec                   10134  1 emmc
+emmc                  171059 11 
+osal_utm                2139 16 cec,hdmi,liro,codec_drv,ms_drv,mcmn_drv,accel,nfc,upm,dmm,kikilog,usb_portMonitor,i2c,osal_ulogio,utimer,osal_uipc
+osal_uipc              37181 34 usbg_stillimage,usbg_storage,cec,hdmi,usb_buspwr,usb_darwin,usbg_buspower,liro,codec_drv,dma330,mmc_drv,ms_drv,mcmn_drv,compass,mag,accel,grm_gles,grm_ma,nfc,upm,dmm,kikilog,usbg_sen,usb_portMonitor,sircs,i2c,indctr,udate,input,osal_ulogio,backup,utimer
+utimer                 21490  0 
+backup                 61073 17 hdmi,usb_buspwr,usb_darwin,liro,mcmn_drv,mag,accel,nfc,upm,dmm,usbg_sen,usb_portMonitor,i2c,indctr,udate,input,osal_ulogio
+osal_ulogio            29859  0 
+input                  22826  0 
+udate                   9116  0 
+indctr                  7911  0 
+i2c                    10265  0 
+sircs                  15346  0 
+stream                  1077  9 
+stream2                 1629  3 
+usb_portMonitor        11648  0 
+usbg_sen               30337  0 
+usb_extcmd              9511  0 
+kikilog                25020  1 
+dmm                  3148818  2 liro,upm
+upm                   110055  0 
+nfc                    10006  0 
+grm_ma                 19680  0 
+grm_gles                9348  2 
+accel                   9024  0 
+mag                     6757  0 
+compass                 2734  0 
+mcmn_drv               91324  2 mmc_drv,ms_drv
+ms_drv                162876  0 
+usbg_stillimage        19213  0 
+mmc_drv               185090  3 
+dma330                248111  1 liro
+codec_drv              12644  0 
+liro                   51420  0 
+usbg_buspower           9293  0 
+usb_darwin             21440  1 usb_buspwr
+usb_buspwr              8195  1 
+hdmi                  154375  4 cec
+cec                    53250  3 
+wlanMemoryAllocator     3569  0 
+usbg_storage           53865  0 
+
+=== GRAPHICS & DISPLAY DEVICES (/dev) ===
+crwxrwxrwx    1 0        0         248,  29 Feb 23  2018 /dev/dmpgles2
+crw-r--r--    1 0        0          29,   0 May 28  2013 /dev/fb0
+crw-r--r--    1 0        0          29,   1 May 28  2013 /dev/fb1
+crwxrwxrwx    1 0        0         240,   0 Feb 23  2018 /dev/gpio
+crwxrwxrwx    1 0        0         248,  25 Feb 23  2018 /dev/hdmi
+crwxrwxrwx    1 0        0         248,  26 Feb 23  2018 /dev/hdmi_external_tx
+crwxrwxrwx    1 0        0         248,  30 Feb 23  2018 /dev/hdmi_input
+brwxrwxrwx    1 0        0         250,  10 Feb 23  2018 /dev/mmca
+crwxrwxrwx    1 0        0         250,   0 Feb 23  2018 /dev/mmca-char
+brwxrwxrwx    1 0        0         250,  11 Feb 23  2018 /dev/mmca1
+brwxrwxrwx    1 0        0         250,  12 Feb 23  2018 /dev/mmca2
+brwxrwxrwx    1 0        0         250,  13 Feb 23  2018 /dev/mmca3
+brwxrwxrwx    1 0        0         250,  14 Feb 23  2018 /dev/mmca4
+brwxrwxrwx    1 0        0         250,  15 Feb 23  2018 /dev/mmcaa
+brwxrwxrwx    1 0        0         250,  16 Feb 23  2018 /dev/mmcaa1
+brwxrwxrwx    1 0        0         250,  17 Feb 23  2018 /dev/mmcab
+brwxrwxrwx    1 0        0         250,  18 Feb 23  2018 /dev/mmcab1
+brwxrwxrwx    1 0        0         250,  19 Feb 23  2018 /dev/mmcac
+brwxrwxrwx    1 0        0         250,  20 Feb 23  2018 /dev/mmcac1
+brwxrwxrwx    1 0        0         250,  21 Feb 23  2018 /dev/mmcad
+brwxrwxrwx    1 0        0         250,  22 Feb 23  2018 /dev/mmcad1
+brwxrwxrwx    1 0        0         250,  30 Feb 23  2018 /dev/mmcb
+crwxrwxrwx    1 0        0         250,   1 Feb 23  2018 /dev/mmcb-char
+brwxrwxrwx    1 0        0         250,  31 Feb 23  2018 /dev/mmcb1
+brwxrwxrwx    1 0        0         250,  32 Feb 23  2018 /dev/mmcb2
+brwxrwxrwx    1 0        0         250,  33 Feb 23  2018 /dev/mmcb3
+brwxrwxrwx    1 0        0         250,  34 Feb 23  2018 /dev/mmcb4
+brwxrwxrwx    1 0        0         250,  35 Feb 23  2018 /dev/mmcba
+brwxrwxrwx    1 0        0         250,  36 Feb 23  2018 /dev/mmcba1
+brwxrwxrwx    1 0        0         250,  37 Feb 23  2018 /dev/mmcbb
+brwxrwxrwx    1 0        0         250,  38 Feb 23  2018 /dev/mmcbb1
+brwxrwxrwx    1 0        0         250,  39 Feb 23  2018 /dev/mmcbc
+brwxrwxrwx    1 0        0         250,  40 Feb 23  2018 /dev/mmcbc1
+brwxrwxrwx    1 0        0         250,  41 Feb 23  2018 /dev/mmcbd
+brwxrwxrwx    1 0        0         250,  42 Feb 23  2018 /dev/mmcbd1
+brwxrwxrwx    1 0        0         250,  50 Feb 23  2018 /dev/mmcc
+crwxrwxrwx    1 0        0         250,   2 Feb 23  2018 /dev/mmcc-char
+brwxrwxrwx    1 0        0         250,  51 Feb 23  2018 /dev/mmcc1
+brwxrwxrwx    1 0        0         250,  52 Feb 23  2018 /dev/mmcc2
+brwxrwxrwx    1 0        0         250,  53 Feb 23  2018 /dev/mmcc3
+brwxrwxrwx    1 0        0         250,  54 Feb 23  2018 /dev/mmcc4
+brwxrwxrwx    1 0        0         250,  55 Feb 23  2018 /dev/mmcca
+brwxrwxrwx    1 0        0         250,  56 Feb 23  2018 /dev/mmcca1
+brwxrwxrwx    1 0        0         250,  57 Feb 23  2018 /dev/mmccb
+brwxrwxrwx    1 0        0         250,  58 Feb 23  2018 /dev/mmccb1
+brwxrwxrwx    1 0        0         250,  59 Feb 23  2018 /dev/mmccc
+brwxrwxrwx    1 0        0         250,  60 Feb 23  2018 /dev/mmccc1
+brwxrwxrwx    1 0        0         250,  61 Feb 23  2018 /dev/mmccd
+brwxrwxrwx    1 0        0         250,  62 Feb 23  2018 /dev/mmccd1
+brwxrwxrwx    1 0        0         250,  70 Feb 23  2018 /dev/mmcd
+crwxrwxrwx    1 0        0         250,   3 Feb 23  2018 /dev/mmcd-char
+brwxrwxrwx    1 0        0         250,  71 Feb 23  2018 /dev/mmcd1
+brwxrwxrwx    1 0        0         250,  72 Feb 23  2018 /dev/mmcd2
+brwxrwxrwx    1 0        0         250,  73 Feb 23  2018 /dev/mmcd3
+brwxrwxrwx    1 0        0         250,  74 Feb 23  2018 /dev/mmcd4
+brwxrwxrwx    1 0        0         250,  75 Feb 23  2018 /dev/mmcda
+brwxrwxrwx    1 0        0         250,  76 Feb 23  2018 /dev/mmcda1
+brwxrwxrwx    1 0        0         250,  77 Feb 23  2018 /dev/mmcdb
+brwxrwxrwx    1 0        0         250,  78 Feb 23  2018 /dev/mmcdb1
+brwxrwxrwx    1 0        0         250,  79 Feb 23  2018 /dev/mmcdc
+brwxrwxrwx    1 0        0         250,  80 Feb 23  2018 /dev/mmcdc1
+brwxrwxrwx    1 0        0         250,  81 Feb 23  2018 /dev/mmcdd
+brwxrwxrwx    1 0        0         250,  82 Feb 23  2018 /dev/mmcdd1
+brwxrwxrwx    1 0        0         250,  90 Feb 23  2018 /dev/mmce
+crwxrwxrwx    1 0        0         250,   4 Feb 23  2018 /dev/mmce-char
+brwxrwxrwx    1 0        0         250,  91 Feb 23  2018 /dev/mmce1
+brwxrwxrwx    1 0        0         250,  92 Feb 23  2018 /dev/mmce2
+brwxrwxrwx    1 0        0         250,  93 Feb 23  2018 /dev/mmce3
+brwxrwxrwx    1 0        0         250,  94 Feb 23  2018 /dev/mmce4
+brwxrwxrwx    1 0        0         250,  95 Feb 23  2018 /dev/mmcea
+brwxrwxrwx    1 0        0         250,  96 Feb 23  2018 /dev/mmcea1
+brwxrwxrwx    1 0        0         250,  97 Feb 23  2018 /dev/mmceb
+brwxrwxrwx    1 0        0         250,  98 Feb 23  2018 /dev/mmceb1
+brwxrwxrwx    1 0        0         250,  99 Feb 23  2018 /dev/mmcec
+brwxrwxrwx    1 0        0         250, 100 Feb 23  2018 /dev/mmcec1
+brwxrwxrwx    1 0        0         250, 101 Feb 23  2018 /dev/mmced
+brwxrwxrwx    1 0        0         250, 102 Feb 23  2018 /dev/mmced1
+crwxrwxrwx    1 0        0         249,   7 Feb 23  2018 /dev/stream
+crwxrwxrwx    1 0        0         249,   8 Feb 23  2018 /dev/stream2
+
+/dev/usb:
+drwxr-xr-x    2 0        0             1024 Feb 23  2018 .
+drwxr-xr-x    9 57285    1000          6144 Aug 10  2021 ..
+crwxrwxrwx    1 0        0         248,  16 Feb 23  2018 adb
+crwxrwxrwx    1 0        0         248,  13 Feb 23  2018 buspwr
+crwxrwxrwx    1 0        0         248,  12 Feb 23  2018 buspwric
+crwxrwxrwx    1 0        0         248,   8 Feb 23  2018 cur
+crwxrwxrwx    1 0        0         242,   0 Feb 23  2018 event
+crwxrwxrwx    1 0        0         242,   1 Feb 23  2018 gadgetcore
+crwxrwxrwx    1 0        0         248,  10 Feb 23  2018 kikilog
+crwxrwxrwx    1 0        0         248,   0 Feb 23  2018 massstorage
+crwxrwxrwx    1 0        0         242,   2 Feb 23  2018 otgcore
+crwxrwxrwx    1 0        0         248,  11 Feb 23  2018 portmon
+crwxrwxrwx    1 0        0         242,   4 Feb 23  2018 scsi
+crwxrwxrwx    1 0        0         248,   4 Feb 23  2018 sen
+crwxrwxrwx    1 0        0         248,   1 Feb 23  2018 sicd_core
+crwxrwxrwx    1 0        0         248,   2 Feb 23  2018 sicd_data
+crwxrwxrwx    1 0        0         248,   3 Feb 23  2018 sicd_event
+crwxrwxrwx    1 0        0         248,   9 Feb 23  2018 std
+crwxrwxrwx    1 0        0         248,  15 Feb 23  2018 swic
+crwxrwxrwx    1 0        0         248,   5 Feb 23  2018 ter
+crwxrwxrwx    1 0        0         248,   7 Feb 23  2018 usb_extcmd
+crwxrwxrwx    1 0        0         242,   3 Feb 23  2018 usbcore
+crwxrwxrwx    1 0        0         248,  14 Feb 23  2018 usbg_bspwr
+crwxrwxrwx    1 0        0         248,   6 Feb 23  2018 vspe
+
+=== RUNNING PROCESSES (PS) ===
+UID       PID PPID  C STIME TTY          TIME CMD
+0           1    0  0 00:00 ?        00:00:00 /usr/bin/launch_shell.elf 0 1
+0           2    0  0 00:00 ?        00:00:00 [kthreadd]
+0           3    2  0 00:00 ?        00:00:00 [irq/254-rstreq]
+0           4    2  1 00:00 ?        00:00:09 [ksoftirqd/0]
+0           5    2  0 00:00 ?        00:00:00 [kworker/0:0]
+0           6    2  0 00:00 ?        00:00:00 [kworker/u:0]
+0           7    2  0 00:00 ?        00:00:00 [posixcputmr/0]
+0           8    2  0 00:00 ?        00:00:00 [migration/0]
+0           9    2  0 00:00 ?        00:00:00 [kipid_wq/0]
+0          10    2  0 00:00 ?        00:00:00 [posixcputmr/1]
+0          15    2  0 00:00 ?        00:00:00 [posixcputmr/2]
+0          20    2  0 00:00 ?        00:00:00 [posixcputmr/3]
+0          25    2  0 00:00 ?        00:00:00 [khelper]
+0          27    2  0 00:00 ?        00:00:00 [sync_supers]
+0          28    2  0 00:00 ?        00:00:00 [bdi-default]
+0          29    2  0 00:00 ?        00:00:00 [kblockd]
+0          31    2  0 00:00 ?        00:00:00 [errind]
+0          33    2  0 00:00 ?        00:00:00 [irq/146-pmn]
+0          34    2  0 00:00 ?        00:00:00 [irq/147-pmn]
+0          35    2  0 00:00 ?        00:00:00 [irq/148-pmn]
+0          36    2  0 00:00 ?        00:00:00 [irq/149-pmn]
+0          37    2  0 00:00 ?        00:00:00 [irq/255-L2]
+0          38    2  0 00:00 ?        00:00:00 [rmond]
+0          39    2  0 00:00 ?        00:00:00 [kswapd0]
+0          40    2  0 00:00 ?        00:00:00 [fsnotify_mark]
+0          41    2  0 00:00 ?        00:00:00 [crypto]
+0          51    2  0 00:00 ?        00:00:00 [irq/230-fusb_us]
+0          52    2  0 00:00 ?        00:00:00 [irq/231-fusb_us]
+0          53    2  0 00:00 ?        00:00:00 [kworker/0:1]
+0          54    2  0 00:00 ?        00:00:00 [binder]
+0          55    2  0 00:00 ?        00:00:00 [irq/229-dwc3]
+0          57    2  0 00:00 ?        00:00:00 [irq/189-xdmac0]
+0          58    2  0 00:00 ?        00:00:00 [irq/190-xdmac1]
+0          59    2  0 00:00 ?        00:00:00 [irq/191-xdmac2]
+0          60    2  0 00:00 ?        00:00:00 [irq/192-xdmac3]
+0          61    2  0 00:00 ?        00:00:00 [irq/193-xdmac4]
+0          63    2  0 00:00 ?        00:00:00 [irq/195-xdmac6]
+0          64    2  0 00:00 ?        00:00:00 [irq/196-xdmac7]
+0          66    2  0 00:00 ?        00:00:00 [irq/171-ldec]
+0          68    2  0 00:00 ?        00:00:00 [irq/227-emmc0]
+0          69    2  0 00:00 ?        00:00:02 [kalnflasha]
+0          70    2  0 00:00 ?        00:00:00 [kalnflashaB0]
+0          71    2  0 00:00 ?        00:00:00 [kalnflashaB1]
+0          72    2  0 00:00 ?        00:00:00 [kworker/u:1]
+0          81    2  0 00:00 ?        00:00:00 [uipc_dumper]
+0          83    2  0 00:00 ?        00:00:01 [UTIMER0]
+0          84    2  0 00:00 ?        00:00:01 [UTIMER1]
+0          85    2  0 00:00 ?        00:00:01 [UTIMER2]
+0          86    2  0 00:00 ?        00:00:01 [UTIMER3]
+0          96    2  0 00:00 ?        00:00:01 [i2c_uipc]
+0          97    2  0 00:00 ?        00:00:00 [i2c_uipc_ch1]
+0          99    2  0 00:00 ?        00:00:00 [evq(sircs)]
+0         100    2  0 00:00 ?        00:00:00 [irq/198-sircs]
+0         101    2  0 00:00 ?        00:00:00 [irq/197-sircs_o]
+0         105    2  0 00:00 ?        00:00:00 [UsbPortMonitor]
+0         108    2  0 00:00 ?        00:00:02 [memmgr]
+0         110    2  0 00:00 ?        00:00:00 [UPM_TSK_NML]
+0         111    2  0 00:00 ?        00:00:00 [UPM_TSK_HIGH]
+0         112    2  0 00:00 ?        00:00:00 [UPM_DFS]
+0         113    2  0 00:00 ?        00:00:00 [UPM_TMO]
+0         116    2  0 00:00 ?        00:00:00 [irq/126-nfc_rsr]
+0         117    2  0 00:00 ?        00:00:00 [irq/127-nfc_rsr]
+0         119    2  0 00:00 ?        00:00:00 [irq/76-dmpgles2]
+0         124    2  0 00:00 ?        00:00:00 [RMCMND-UIPC]
+0         129    2  0 00:00 ?        00:00:00 [irq/119-dm330_a]
+0         130    2  0 00:00 ?        00:00:00 [irq/115-dm330_0]
+0         131    2  0 00:00 ?        00:00:00 [irq/116-dm330_1]
+0         132    2  0 00:00 ?        00:00:00 [irq/117-dm330_2]
+0         133    2  0 00:00 ?        00:00:00 [irq/118-dm330_3]
+0         134    2  0 00:00 ?        00:00:00 [EXTERNAL_CODEC_]
+0         136    2  0 00:00 ?        00:00:00 [flush-252:0]
+0         142    1  0 00:00 ?        00:00:00 /usr/bin/bootin.elf
+0         148    1  0 00:00 ?        00:00:00 /bin/ash --login
+0         149    1 15 00:00 ?        00:02:15 im.elf debug s g r u l i a lazy-global
+0         304    2  0 00:00 ?        00:00:00 [irq/194-xdmac5]
+0         338    2  0 00:00 ?        00:00:00 [hdmi_state]
+0         342    2  0 00:00 ?        00:00:00 [cec_state]
+0         636    2  0 00:00 ?        00:00:02 [ULOGIO_LOGREC]
+0         637    2  0 00:00 ?        00:00:02 [ULOGIO_LOGREC]
+0         639    2  0 00:00 ?        00:00:00 [RMCMND-UIPC]
+0         698    2  0 00:00 ?        00:00:00 [bdev_mmca]
+0        2275    2  0 00:14 ?        00:00:00 [liro-kliro_1]
+0        2276    2  0 00:14 ?        00:00:00 [liro-kliro_8]
+0        2277    2  0 00:14 ?        00:00:00 [liro-kliro_3]
+0        2278    2  0 00:14 ?        00:00:00 [liro-kliro_9]
+0        2279    2  0 00:14 ?        00:00:00 [liro-kliro_2]
+0        2280    2  0 00:14 ?        00:00:00 [liro-kliro_4]
+0        2281    2  0 00:14 ?        00:00:00 [liro-kliro_140]
+0        2282    2  1 00:14 ?        00:00:00 [liro-kliro_5]
+0        2283    2  0 00:14 ?        00:00:00 [liro-kliro_6]
+0        2284    2  4 00:14 ?        00:00:00 [liro-kliro_10]
+0        2285    2  0 00:14 ?        00:00:00 [liro-kliro_11]
+0        2286    2  0 00:14 ?        00:00:00 [liro-kliro_12]
+0        2287    2  1 00:14 ?        00:00:00 [liro-kliro_13]
+0        2288    2  0 00:14 ?        00:00:00 [liro-kliro_17]
+0        2289    2  0 00:14 ?        00:00:00 [liro-kliro_19]
+0        2290    2  0 00:14 ?        00:00:00 [liro-kliro_20]
+0        2291    2  0 00:14 ?        00:00:00 [liro-kliro_21]
+0        2292    2  0 00:14 ?        00:00:00 [liro-kliro_22]
+0        2293    2  0 00:14 ?        00:00:00 [liro-kliro_23]
+0        2294    2  0 00:14 ?        00:00:00 [liro-kliro_24]
+0        2295    2  0 00:14 ?        00:00:00 [liro-kliro_25]
+0        2296    2  0 00:14 ?        00:00:00 [liro-kliro_26]
+0        2297    2  0 00:14 ?        00:00:00 [liro-kliro_27]
+0        2298    2  0 00:14 ?        00:00:00 [liro-kliro_28]
+0        2299    2  0 00:14 ?        00:00:00 [liro-kliro_30]
+0        2300    2  0 00:14 ?        00:00:00 [liro-kliro_31]
+0        2301    2  0 00:14 ?        00:00:00 [liro-kliro_32]
+0        2302    2  0 00:14 ?        00:00:00 [liro-kliro_33]
+0        2303    2  0 00:14 ?        00:00:00 [liro-kliro_35]
+0        2304    2  0 00:14 ?        00:00:00 [liro-kliro_36]
+0        2305    2  0 00:14 ?        00:00:00 [liro-kliro_37]
+0        2306    2  0 00:14 ?        00:00:00 [liro-kliro_38]
+0        2307    2  0 00:14 ?        00:00:00 [liro-kliro_39]
+0        2308    2  0 00:14 ?        00:00:00 [liro-kliro_40]
+0        2309    2  0 00:14 ?        00:00:00 [liro-kliro_41]
+0        2310    2  0 00:14 ?        00:00:00 [liro-kliro_42]
+0        2311    2  4 00:14 ?        00:00:00 [liro-kliro_43]
+0        2312    2  0 00:14 ?        00:00:00 [liro-kliro_44]
+0        2313    2  0 00:14 ?        00:00:00 [liro-kliro_45]
+0        2314    2  0 00:14 ?        00:00:00 [liro-kliro_46]
+0        2315    2  0 00:14 ?        00:00:00 [liro-kliro_47]
+0        2316    2  1 00:14 ?        00:00:00 [liro-kliro_50]
+0        2317    2  0 00:14 ?        00:00:00 [liro-kliro_51]
+0        2318    2  0 00:14 ?        00:00:00 [liro-kliro_52]
+0        2319    2  0 00:14 ?        00:00:00 [liro-kliro_57]
+0        2320    2  0 00:14 ?        00:00:00 [liro-kliro_55]
+0        2321    2  0 00:14 ?        00:00:00 [liro-kliro_60]
+0        2322    2  0 00:14 ?        00:00:00 [liro-kliro_7]
+0        2323    2  0 00:14 ?        00:00:00 [liro-kliro_62]
+0        2324    2  0 00:14 ?        00:00:00 [liro-kliro_63]
+0        2325    2  0 00:14 ?        00:00:00 [liro-kliro_56]
+0        2326    2  0 00:14 ?        00:00:00 [liro-kliro_124]
+0        2327    2  0 00:14 ?        00:00:00 [liro-kliro_125]
+0        2328    2  0 00:14 ?        00:00:00 [liro-kliro_126]
+0        2329    2  0 00:14 ?        00:00:00 [liro-kliro_127]
+0        2330    2  0 00:14 ?        00:00:00 [liro-kliro_128]
+0        2331    2  0 00:14 ?        00:00:00 [liro-kliro_129]
+0        2332    2  0 00:14 ?        00:00:00 [liro-kliro_130]
+0        2333    2  0 00:14 ?        00:00:00 [liro-kliro_65]
+0        2334    2 18 00:14 ?        00:00:00 [liro-kliro_66]
+0        2335    2  0 00:14 ?        00:00:00 [liro-kliro_67]
+0        2336    2  4 00:14 ?        00:00:00 [liro-kliro_100]
+0        2337    2  3 00:14 ?        00:00:00 [liro-kliro_101]
+0        2338    2  0 00:14 ?        00:00:00 [liro-kliro_68]
+0        2339    2  0 00:14 ?        00:00:00 [liro-kliro_69]
+0        2340    2  0 00:14 ?        00:00:00 [liro-kliro_70]
+0        2341    2  0 00:14 ?        00:00:00 [liro-kliro_71]
+0        2342    2  0 00:14 ?        00:00:00 [liro-kliro_72]
+0        2343    2  0 00:14 ?        00:00:00 [liro-kliro_73]
+0        2344    2  0 00:14 ?        00:00:00 [liro-kliro_74]
+0        2345    2  0 00:14 ?        00:00:00 [liro-kliro_75]
+0        2346    2  0 00:14 ?        00:00:00 [liro-kliro_76]
+0        2347    2  0 00:14 ?        00:00:00 [liro-kliro_77]
+0        2348    2  1 00:14 ?        00:00:00 [liro-kliro_78]
+0        2349    2 12 00:14 ?        00:00:00 [liro-kliro_79]
+0        2350    2  7 00:14 ?        00:00:00 [liro-kliro_80]
+0        2351    2  5 00:14 ?        00:00:00 [liro-kliro_81]
+0        2352    2  1 00:14 ?        00:00:00 [liro-kliro_82]
+0        2353    2  4 00:14 ?        00:00:00 [liro-kliro_84]
+0        2354    2  0 00:14 ?        00:00:00 [liro-kliro_85]
+0        2355    2  2 00:14 ?        00:00:00 [liro-kliro_83]
+0        2356    2  0 00:14 ?        00:00:00 [liro-kliro_86]
+0        2357    2  1 00:14 ?        00:00:00 [liro-kliro_90]
+0        2358    2  0 00:14 ?        00:00:00 [liro-kliro_91]
+0        2359    2  0 00:14 ?        00:00:00 [liro-kliro_92]
+0        2360    2  0 00:14 ?        00:00:00 [liro-kliro_110]
+0        2361    2  0 00:14 ?        00:00:00 [liro-kliro_94]
+0        2362    2  0 00:14 ?        00:00:00 [liro-kliro_95]
+0        2363    2  0 00:14 ?        00:00:00 [liro-kliro_96]
+0        2364    2  0 00:14 ?        00:00:00 [liro-kliro_97]
+0        2365    2  2 00:14 ?        00:00:00 [liro-kliro_98]
+0        2366    2  2 00:14 ?        00:00:00 [liro-kliro_99]
+0        2367    2  0 00:14 ?        00:00:00 [liro-kliro_105]
+0        2368    2  0 00:14 ?        00:00:00 [liro-kliro_111]
+0        2369    2  0 00:14 ?        00:00:00 [liro-kliro_112]
+0        2370    2  0 00:14 ?        00:00:00 [liro-kliro_107]
+0        2371    2  0 00:14 ?        00:00:00 [liro-kliro_108]
+0        2372    2  0 00:14 ?        00:00:00 [liro-kliro_109]
+0        2373    2  0 00:14 ?        00:00:00 [liro-kliro_106]
+0        2374    2  0 00:14 ?        00:00:00 [liro-kliro_114]
+0        2375    2  0 00:14 ?        00:00:00 [liro-kliro_102]
+0        2376    2  0 00:14 ?        00:00:00 [liro-kliro_103]
+0        2377    2  4 00:14 ?        00:00:00 [liro-kliro_113]
+0        2378    2  0 00:14 ?        00:00:00 [liro-kliro_115]
+0        2379    2  0 00:14 ?        00:00:00 [liro-kliro_116]
+0        2380    2  0 00:14 ?        00:00:00 [liro-kliro_118]
+0        2381    2  0 00:14 ?        00:00:00 [liro-kliro_119]
+0        2382    2  0 00:14 ?        00:00:00 [liro-kliro_120]
+0        2383    2  2 00:14 ?        00:00:00 [liro-kliro_121]
+0        2384    2  0 00:14 ?        00:00:00 [liro-kliro_122]
+0        2385    2  9 00:14 ?        00:00:00 [liro-kliro_123]
+0        2386    2  0 00:14 ?        00:00:00 [liro-kliro_87]
+0        2387    2  1 00:14 ?        00:00:00 [liro-kliro_88]
+0        2388    2  2 00:14 ?        00:00:00 [liro-kliro_89]
+0        2389    2  0 00:14 ?        00:00:00 [liro-kliro_93]
+0        2390    2  1 00:14 ?        00:00:00 [liro-kliro_104]
+0        2391    2  0 00:14 ?        00:00:00 [liro-kliro_117]
+0        2392    2  4 00:14 ?        00:00:00 [liro-kliro_192]
+0        2393    2  0 00:14 ?        00:00:00 [liro-kliro_193]
+0        2394    2  0 00:14 ?        00:00:00 [liro-kliro_197]
+0        2395    2  0 00:14 ?        00:00:00 [liro-kliro_143]
+0        2396    2  0 00:14 ?        00:00:00 [liro-kliro_198]
+0        2397    2  0 00:14 ?        00:00:00 [liro-kliro_199]
+0        2398    2  0 00:14 ?        00:00:00 [liro-kliro_200]
+0        2399    2  0 00:14 ?        00:00:00 [liro-kliro_201]
+0        2400    2  4 00:14 ?        00:00:00 [liro-kliro_15]
+0        2401    2  0 00:14 ?        00:00:00 [liro-kliro_14]
+0        2402    2  2 00:14 ?        00:00:00 [liro-kliro_48]
+0        2403    2  0 00:14 ?        00:00:00 [liro-kliro_49]
+0        2404    2  0 00:14 ?        00:00:00 [liro-kliro_131]
+0        2405    2  0 00:14 ?        00:00:00 [liro-kliro_132]
+0        2406    2  0 00:14 ?        00:00:00 [liro-kliro_133]
+0        2407    2  0 00:14 ?        00:00:00 [liro-kliro_134]
+0        2408    2  0 00:14 ?        00:00:00 [liro-kliro_61]
+0        2409    2  0 00:14 ?        00:00:00 [liro-kliro_54]
+0        2410    2  0 00:14 ?        00:00:00 [liro-kliro_139]
+0        2411    2  0 00:14 ?        00:00:00 [liro-kliro_16]
+0        2422    2  0 00:14 ?        00:00:00 [migration/1]
+0        2423    2  0 00:14 ?        00:00:00 [kworker/1:1]
+0        2424    2  0 00:14 ?        00:00:00 [ksoftirqd/1]
+0        2425    2  0 00:14 ?        00:00:00 [kipid_wq/1]
+0        2426    2  0 00:14 ?        00:00:00 [migration/2]
+0        2427    2  0 00:14 ?        00:00:00 [kworker/2:1]
+0        2428    2  0 00:14 ?        00:00:00 [ksoftirqd/2]
+0        2429    2  0 00:14 ?        00:00:00 [kipid_wq/2]
+0        2430    2  0 00:14 ?        00:00:00 [migration/3]
+0        2431    2  0 00:14 ?        00:00:00 [kworker/3:1]
+0        2432    2  0 00:14 ?        00:00:00 [ksoftirqd/3]
+0        2433    2  0 00:14 ?        00:00:00 [kipid_wq/3]
+0        2434    2  0 00:14 ?        00:00:00 [nfc_rsrc_event_]
+0        2435    2  0 00:14 ?        00:00:00 [irq/206-ms]
+0        2437    2  0 00:14 ?        00:00:00 [hdmi_inter_req_]
+0        2438    2  0 00:14 ?        00:00:00 [hdmi_workqueue]
+0        2440    2  0 00:14 ?        00:00:00 [irq/218-mmc0]
+0        2442    2  0 00:14 ?        00:00:00 [KIKILOG_MAIN]
+0        2491    2  0 00:14 ?        00:00:00 [KIKILOG_NOTIFY]
+0        2495    1  2 00:14 ?        00:00:00 /bin/sh /tmp/autoexec.sh
+0        2497    1 21 00:14 ?        00:00:00 /usr/bin/bsa_server -k /tmp_bt/ble_local_keys -u /tmp_bt/ -d /dev/ttyBT -p /usr/bin/bt_firm.hcd -all=0
+0        2506    2  0 00:14 ?        00:00:00 [kworker/3:0]
+0        2507    2 10 00:14 ?        00:00:00 [irq/120-cxd900x]
+0        2514    2  0 00:14 ?        00:00:00 [kworker/1:0]
+0        2526    2  0 00:14 ?        00:00:00 [kworker/2:0]
+0        2527 2495  0 00:14 ?        00:00:00 ps -ef
+
+=== IM.ELF PROCESS MEMORY MAPS ===
+Found im.elf with PID: 149
+00008000-0000d000 r-xp 00000000 fc:0f 16268      /usr/bin/im.elf
+00014000-00015000 rw-p 00004000 fc:0f 16268      /usr/bin/im.elf
+00015000-0033f000 rw-p 00000000 00:00 0          [heap]
+04001000-04006000 r-xp 00000000 fc:07 477        /lib/librt-2.11.2.so
+04006000-0400d000 ---p 00005000 fc:07 477        /lib/librt-2.11.2.so
+0400d000-0400e000 r--p 00004000 fc:07 477        /lib/librt-2.11.2.so
+0400e000-0400f000 rw-p 00005000 fc:07 477        /lib/librt-2.11.2.so
+0400f000-04015000 r-xp 00000000 fc:0f 22355      /usr/lib/libosal_uipc.so
+04015000-0401d000 ---p 00006000 fc:0f 22355      /usr/lib/libosal_uipc.so
+0401d000-0401e000 rw-p 00006000 fc:0f 22355      /usr/lib/libosal_uipc.so
+0401e000-04020000 r-xp 00000000 fc:0f 22394      /usr/lib/libbackup.so
+04020000-04027000 ---p 00002000 fc:0f 22394      /usr/lib/libbackup.so
+04027000-04028000 rw-p 00001000 fc:0f 22394      /usr/lib/libbackup.so
+04028000-0402b000 r-xp 00000000 fc:07 587        /lib/libdl-2.11.2.so
+0402b000-04032000 ---p 00003000 fc:07 587        /lib/libdl-2.11.2.so
+04032000-04033000 r--p 00002000 fc:07 587        /lib/libdl-2.11.2.so
+04033000-04034000 rw-p 00003000 fc:07 587        /lib/libdl-2.11.2.so
+04034000-0403a000 r-xp 00000000 fc:0f 22391      /usr/lib/libIMDB.so
+0403a000-04041000 ---p 00006000 fc:0f 22391      /usr/lib/libIMDB.so
+04041000-04044000 rw-p 00005000 fc:0f 22391      /usr/lib/libIMDB.so
+04044000-04057000 r-xp 00000000 fc:0f 22468      /usr/lib/libz.so.1.2.11
+04057000-0405e000 ---p 00013000 fc:0f 22468      /usr/lib/libz.so.1.2.11
+0405e000-0405f000 rw-p 00012000 fc:0f 22468      /usr/lib/libz.so.1.2.11
+0405f000-04061000 r--p 00000000 fc:0f 8362       /usr/share/app/viewUsbMassStorage.uxc
+04061000-04062000 rw-p 00000000 00:00 0 
+04063000-04066000 -w-s 03103000 fc:07 136        /dev/mem
+04066000-04068000 r-xp 00000000 fc:0f 22448      /usr/lib/libInfraKikiLogGenerator.so
+04068000-0406f000 ---p 00002000 fc:0f 22448      /usr/lib/libInfraKikiLogGenerator.so
+0406f000-04070000 rw-p 00001000 fc:0f 22448      /usr/lib/libInfraKikiLogGenerator.so
+04070000-04074000 rw-s f1000000 fc:07 136        /dev/mem
+04078000-04079000 rw-p 00000000 00:00 0 
+04079000-04089000 r-xp 00000000 fc:07 479        /lib/libpthread-2.11.2.so
+04089000-04090000 ---p 00010000 fc:07 479        /lib/libpthread-2.11.2.so
+04090000-04091000 r--p 0000f000 fc:07 479        /lib/libpthread-2.11.2.so
+04091000-04092000 rw-p 00010000 fc:07 479        /lib/libpthread-2.11.2.so
+04092000-04095000 rw-p 00000000 00:00 0 
+04095000-0409c000 r-xp 00000000 fc:0f 22416      /usr/lib/libpwinfo.so
+0409c000-040a3000 ---p 00007000 fc:0f 22416      /usr/lib/libpwinfo.so
+040a3000-040a4000 rw-p 00006000 fc:0f 22416      /usr/lib/libpwinfo.so
+040a4000-040a5000 r-xp 00000000 fc:0f 22482      /usr/lib/libpro00.so
+040a5000-040ac000 ---p 00001000 fc:0f 22482      /usr/lib/libpro00.so
+040ac000-040ad000 rw-p 00000000 fc:0f 22482      /usr/lib/libpro00.so
+040ae000-040af000 rw-p 00000000 00:00 0 
+040af000-040b4000 r-xp 00000000 fc:0f 22410      /usr/lib/libNetRemote.so
+040b4000-040bb000 ---p 00005000 fc:0f 22410      /usr/lib/libNetRemote.so
+040bb000-040bc000 rw-p 00004000 fc:0f 22410      /usr/lib/libNetRemote.so
+040bc000-040d4000 r-xp 00000000 fc:07 582        /lib/ld-2.11.2.so
+040d4000-040d5000 rw-p 00000000 00:00 0 
+040d5000-040d6000 r--p 00000000 fc:0f 8327       /usr/share/app/color_cmn.uxc
+040d6000-040d7000 rw-p 00000000 00:00 0 
+040d7000-040d8000 r--p 00000000 fc:0f 8350       /usr/share/app/lang.uxb
+040d8000-040d9000 r--p 00000000 fc:0f 8203       /usr/share/app/lang_cmn.uxc
+040d9000-040da000 rw-p 00000000 00:00 0 
+040db000-040dc000 r--p 00017000 fc:07 582        /lib/ld-2.11.2.so
+040dc000-040dd000 rw-p 00018000 fc:07 582        /lib/ld-2.11.2.so
+040dd000-040e7000 r-xp 00000000 fc:0f 22412      /usr/lib/libOnDemandLoader.so
+040e7000-040ee000 ---p 0000a000 fc:0f 22412      /usr/lib/libOnDemandLoader.so
+040ee000-040ef000 rw-p 00009000 fc:0f 22412      /usr/lib/libOnDemandLoader.so
+040ef000-040f7000 rw-s 034fd000 fc:07 136        /dev/mem
+040f7000-04130000 r-xp 00000000 fc:0f 22405      /usr/lib/libMWF.so
+04130000-04137000 ---p 00039000 fc:0f 22405      /usr/lib/libMWF.so
+04137000-04139000 rw-p 00038000 fc:0f 22405      /usr/lib/libMWF.so
+04139000-0413d000 rw-p 00000000 00:00 0 
+0413d000-04140000 r--p 00000000 fc:0f 8334       /usr/share/app/global.xdb
+04140000-04141000 r--p 00000000 fc:0f 8218       /usr/share/app/style_cmn.uxc
+04141000-04142000 rw-s 1096b000 fc:07 136        /dev/mem
+04144000-04145000 rw-p 00000000 00:00 0 
+04145000-04146000 r-xp 00000000 fc:0f 22465      /usr/lib/libutil_date.so
+04146000-0414d000 ---p 00001000 fc:0f 22465      /usr/lib/libutil_date.so
+0414d000-0414e000 rw-p 00000000 fc:0f 22465      /usr/lib/libutil_date.so
+0414e000-04150000 r-xp 00000000 fc:0f 22368      /usr/lib/libcompassutil.so
+04150000-04157000 ---p 00002000 fc:0f 22368      /usr/lib/libcompassutil.so
+04157000-04158000 rw-p 00001000 fc:0f 22368      /usr/lib/libcompassutil.so
+04158000-04159000 r-xp 00000000 fc:0f 22354      /usr/lib/libosal_utm.so
+04159000-04160000 ---p 00001000 fc:0f 22354      /usr/lib/libosal_utm.so
+04160000-04161000 rw-p 00000000 fc:0f 22354      /usr/lib/libosal_utm.so
+04161000-04174000 r-xp 00000000 fc:0f 22399      /usr/lib/libInfraUsbCmn.so
+04174000-0417b000 ---p 00013000 fc:0f 22399      /usr/lib/libInfraUsbCmn.so
+0417b000-0417e000 rw-p 00012000 fc:0f 22399      /usr/lib/libInfraUsbCmn.so
+0417e000-0417f000 rw-p 00000000 00:00 0 
+0417f000-04184000 rw-s 20028000 fc:07 136        /dev/mem
+04184000-04185000 r-xp 00000000 fc:0f 22462      /usr/lib/libjemalloc_ds.so.1
+04185000-0418c000 ---p 00001000 fc:0f 22462      /usr/lib/libjemalloc_ds.so.1
+0418c000-0418d000 rw-p 00000000 fc:0f 22462      /usr/lib/libjemalloc_ds.so.1
+0418d000-0422c000 r-xp 00000000 fc:0f 22527      /usr/lib/libstdc++.so.6.0.14
+0422c000-04234000 ---p 0009f000 fc:0f 22527      /usr/lib/libstdc++.so.6.0.14
+04234000-04237000 r--p 0009f000 fc:0f 22527      /usr/lib/libstdc++.so.6.0.14
+04237000-04239000 rw-p 000a2000 fc:0f 22527      /usr/lib/libstdc++.so.6.0.14
+04239000-0423f000 rw-p 00000000 00:00 0 
+0423f000-042a7000 r-xp 00000000 fc:07 463        /lib/libm-2.11.2.so
+042a7000-042ae000 ---p 00068000 fc:07 463        /lib/libm-2.11.2.so
+042ae000-042af000 r--p 00067000 fc:07 463        /lib/libm-2.11.2.so
+042af000-042b0000 rw-p 00068000 fc:07 463        /lib/libm-2.11.2.so
+042b0000-042b9000 r-xp 00000000 fc:07 583        /lib/libgcc_s.so.1
+042b9000-042c0000 ---p 00009000 fc:07 583        /lib/libgcc_s.so.1
+042c0000-042c1000 rw-p 00008000 fc:07 583        /lib/libgcc_s.so.1
+042c1000-043ae000 r-xp 00000000 fc:07 467        /lib/libc-2.11.2.so
+043ae000-043b5000 ---p 000ed000 fc:07 467        /lib/libc-2.11.2.so
+043b5000-043b7000 r--p 000ec000 fc:07 467        /lib/libc-2.11.2.so
+043b7000-043b8000 rw-p 000ee000 fc:07 467        /lib/libc-2.11.2.so
+043b8000-043bb000 rw-p 00000000 00:00 0 
+043bb000-044bb000 rw-s 08800000 fc:07 223        /dev/uipc
+044bb000-04537000 rw-s 20098000 fc:07 136        /dev/mem
+04537000-04549000 r-xp 00000000 fc:0f 22431      /usr/lib/libNetContUtil.so
+04549000-04550000 ---p 00012000 fc:0f 22431      /usr/lib/libNetContUtil.so
+04550000-04551000 rw-p 00011000 fc:0f 22431      /usr/lib/libNetContUtil.so
+04551000-04561000 r-xp 00000000 fc:0f 22435      /usr/lib/libGOConnectionManager.so
+04561000-04568000 ---p 00010000 fc:0f 22435      /usr/lib/libGOConnectionManager.so
+04568000-0456a000 rw-p 0000f000 fc:0f 22435      /usr/lib/libGOConnectionManager.so
+0456a000-0456b000 rw-s 1096b000 fc:07 136        /dev/mem
+0456b000-045ab000 rw-p 00000000 00:00 0 
+045ab000-045e5000 r-xp 00000000 fc:0f 22428      /usr/lib/libmprctrl.so
+045e5000-045ed000 ---p 0003a000 fc:0f 22428      /usr/lib/libmprctrl.so
+045ed000-045f2000 rw-p 0003a000 fc:0f 22428      /usr/lib/libmprctrl.so
+045f2000-045fa000 r-xp 00000000 fc:0f 22372      /usr/lib/libInfraMediaMount.so
+045fa000-045fb000 rw-p 00008000 fc:0f 22372      /usr/lib/libInfraMediaMount.so
+045fb000-045fc000 ---p 00000000 00:00 0 
+045fc000-047fb000 rw-p 00000000 00:00 0 
+047fb000-0484e000 r-xp 00000000 fc:0f 22452      /usr/lib/libsencore.so
+0484e000-04855000 ---p 00053000 fc:0f 22452      /usr/lib/libsencore.so
+04855000-04857000 rw-p 00052000 fc:0f 22452      /usr/lib/libsencore.so
+04857000-0486d000 r-xp 00000000 fc:0f 22356      /usr/lib/libUsbControl.so
+0486d000-04875000 ---p 00016000 fc:0f 22356      /usr/lib/libUsbControl.so
+04875000-04876000 rw-p 00016000 fc:0f 22356      /usr/lib/libUsbControl.so
+04876000-04877000 ---p 00000000 00:00 0 
+04877000-0487e000 rw-p 00000000 00:00 0 
+0487e000-0487f000 rw-s 1096b000 fc:07 136        /dev/mem
+0487f000-04880000 ---p 00000000 00:00 0 
+04880000-04a7f000 rw-p 00000000 00:00 0 
+04a7f000-04acb000 r-xp 00000000 fc:0f 22478      /usr/lib/libBizFw.so
+04acb000-04ad2000 ---p 0004c000 fc:0f 22478      /usr/lib/libBizFw.so
+04ad2000-04ad5000 rw-p 0004b000 fc:0f 22478      /usr/lib/libBizFw.so
+04ad5000-04ad6000 ---p 00000000 00:00 0 
+04ad6000-04add000 rw-p 00000000 00:00 0 
+04add000-04ade000 rw-s 1096b000 fc:07 136        /dev/mem
+04ade000-04adf000 ---p 00000000 00:00 0 
+04adf000-04cde000 rw-p 00000000 00:00 0 
+04cde000-04d40000 r-xp 00000000 fc:0f 22422      /usr/lib/libInfraFsys.so
+04d40000-04d48000 ---p 00062000 fc:0f 22422      /usr/lib/libInfraFsys.so
+04d48000-04d4b000 rw-p 00062000 fc:0f 22422      /usr/lib/libInfraFsys.so
+04d4b000-04d90000 rw-p 00000000 00:00 0 
+04d90000-04d9b000 r-xp 00000000 fc:0f 22496      /usr/lib/libAK8975.so
+04d9b000-04da2000 ---p 0000b000 fc:0f 22496      /usr/lib/libAK8975.so
+04da2000-04da3000 rw-p 0000a000 fc:0f 22496      /usr/lib/libAK8975.so
+04da3000-04da8000 rw-s 20028000 fc:07 136        /dev/mem
+04da8000-04daf000 r-xp 00000000 fc:0f 22491      /usr/lib/libosal_ulogio.so
+04daf000-04db7000 ---p 00007000 fc:0f 22491      /usr/lib/libosal_ulogio.so
+04db7000-04db8000 rw-p 00007000 fc:0f 22491      /usr/lib/libosal_ulogio.so
+04db8000-04db9000 ---p 00000000 00:00 0 
+04db9000-04fb8000 rw-p 00000000 00:00 0 
+04fb8000-04fb9000 ---p 00000000 00:00 0 
+04fb9000-051b8000 rw-p 00000000 00:00 0 
+051b8000-051b9000 ---p 00000000 00:00 0 
+051b9000-053b8000 rw-p 00000000 00:00 0 
+053b8000-053b9000 ---p 00000000 00:00 0 
+053b9000-055b8000 rw-p 00000000 00:00 0 
+055b8000-055f3000 r-xp 00000000 fc:0f 22477      /usr/lib/libBizFw2.so
+055f3000-055fb000 ---p 0003b000 fc:0f 22477      /usr/lib/libBizFw2.so
+055fb000-055fd000 rw-p 0003b000 fc:0f 22477      /usr/lib/libBizFw2.so
+055fd000-05619000 r-xp 00000000 fc:0f 22403      /usr/lib/libNetCommon.so
+05619000-05620000 ---p 0001c000 fc:0f 22403      /usr/lib/libNetCommon.so
+05620000-05623000 rw-p 0001b000 fc:0f 22403      /usr/lib/libNetCommon.so
+05623000-0563c000 r-xp 00000000 fc:0f 22510      /usr/lib/libexpat.so.1.6.11
+0563c000-05643000 ---p 00019000 fc:0f 22510      /usr/lib/libexpat.so.1.6.11
+05643000-05645000 rw-p 00018000 fc:0f 22510      /usr/lib/libexpat.so.1.6.11
+05645000-05657000 r-xp 00000000 fc:0f 22455      /usr/lib/libInfraMediaDetect.so
+05657000-0565f000 ---p 00012000 fc:0f 22455      /usr/lib/libInfraMediaDetect.so
+0565f000-05660000 rw-p 00012000 fc:0f 22455      /usr/lib/libInfraMediaDetect.so
+05660000-05663000 r-xp 00000000 fc:0f 22470      /usr/lib/libtestcmd.so
+05663000-0566a000 ---p 00003000 fc:0f 22470      /usr/lib/libtestcmd.so
+0566a000-0566b000 rw-p 00002000 fc:0f 22470      /usr/lib/libtestcmd.so
+0566b000-05670000 rw-s 20028000 fc:07 136        /dev/mem
+05670000-05671000 rw-s f2910000 fc:07 136        /dev/mem
+05671000-0568a000 r-xp 00000000 fc:0f 22411      /usr/lib/libSysDef.so
+0568a000-05691000 ---p 00019000 fc:0f 22411      /usr/lib/libSysDef.so
+05691000-057e8000 rw-p 00018000 fc:0f 22411      /usr/lib/libSysDef.so
+057e8000-057e9000 ---p 00000000 00:00 0 
+057e9000-059e8000 rw-p 00000000 00:00 0 
+059e8000-05a32000 r-xp 00000000 fc:0f 22430      /usr/lib/libInfraMediaCommon.so
+05a32000-05a39000 ---p 0004a000 fc:0f 22430      /usr/lib/libInfraMediaCommon.so
+05a39000-05a3d000 rw-p 00049000 fc:0f 22430      /usr/lib/libInfraMediaCommon.so
+05a3d000-05a3e000 rw-p 00000000 00:00 0 
+05a3e000-05a51000 r-xp 00000000 fc:0f 22484      /usr/lib/libclema.so
+05a51000-05a58000 ---p 00013000 fc:0f 22484      /usr/lib/libclema.so
+05a58000-05a59000 rw-p 00012000 fc:0f 22484      /usr/lib/libclema.so
+05a59000-05aaa000 r-xp 00000000 fc:0f 22535      /usr/lib/libssl.so.1.1
+05aaa000-05ab2000 ---p 00051000 fc:0f 22535      /usr/lib/libssl.so.1.1
+05ab2000-05aba000 rw-p 00051000 fc:0f 22535      /usr/lib/libssl.so.1.1
+05aba000-05abc000 r-xp 00000000 fc:0f 22363      /usr/lib/libResourceBluetooth.so
+05abc000-05ac3000 ---p 00002000 fc:0f 22363      /usr/lib/libResourceBluetooth.so
+05ac3000-05ac4000 rw-p 00001000 fc:0f 22363      /usr/lib/libResourceBluetooth.so
+05ac4000-05c1b000 rw-p 00000000 00:00 0 
+05c1b000-05c44000 r-xp 00000000 fc:0f 22520      /usr/lib/dataflowInfraFramework.so
+05c44000-05c4c000 ---p 00029000 fc:0f 22520      /usr/lib/dataflowInfraFramework.so
+05c4c000-05c4d000 rw-p 00029000 fc:0f 22520      /usr/lib/dataflowInfraFramework.so
+05c4d000-05c74000 r-xp 00000000 fc:0f 22476      /usr/lib/libJiritsu.so
+05c74000-05c7c000 ---p 00027000 fc:0f 22476      /usr/lib/libJiritsu.so
+05c7c000-05c7d000 rw-p 00027000 fc:0f 22476      /usr/lib/libJiritsu.so
+05c7d000-05c7e000 ---p 00000000 00:00 0 
+05c7e000-05cbd000 rw-p 00000000 00:00 0 
+05cbd000-05cc1000 r-xp 00000000 fc:0f 22461      /usr/lib/libBTUtils.so
+05cc1000-05cc8000 ---p 00004000 fc:0f 22461      /usr/lib/libBTUtils.so
+05cc8000-05cc9000 rw-p 00003000 fc:0f 22461      /usr/lib/libBTUtils.so
+05cc9000-05ccc000 r-xp 00000000 fc:0f 22513      /usr/lib/CameraOnDemandSaver.so
+05ccc000-05cd3000 ---p 00003000 fc:0f 22513      /usr/lib/CameraOnDemandSaver.so
+05cd3000-05cd4000 rw-p 00002000 fc:0f 22513      /usr/lib/CameraOnDemandSaver.so
+05cd4000-05cd9000 r-xp 00000000 fc:0f 22536      /usr/lib/libUsbBusPower.so
+05cd9000-05ce0000 ---p 00005000 fc:0f 22536      /usr/lib/libUsbBusPower.so
+05ce0000-05ce1000 rw-p 00004000 fc:0f 22536      /usr/lib/libUsbBusPower.so
+05ce1000-05ce9000 r-xp 00000000 fc:0f 22423      /usr/lib/libBusPower.so
+05ce9000-05cf0000 ---p 00008000 fc:0f 22423      /usr/lib/libBusPower.so
+05cf0000-05cf1000 rw-p 00007000 fc:0f 22423      /usr/lib/libBusPower.so
+05cf1000-05cf2000 r-xp 00000000 fc:0f 22498      /usr/lib/libmprdummy.so
+05cf2000-05cfa000 ---p 00001000 fc:0f 22498      /usr/lib/libmprdummy.so
+05cfa000-05cfb000 rw-p 00001000 fc:0f 22498      /usr/lib/libmprdummy.so
+05cfb000-05cfd000 r-xp 00000000 fc:0f 22533      /usr/lib/libInfraAirplaneMode.so
+05cfd000-05d04000 ---p 00002000 fc:0f 22533      /usr/lib/libInfraAirplaneMode.so
+05d04000-05d05000 rw-p 00001000 fc:0f 22533      /usr/lib/libInfraAirplaneMode.so
+05d05000-05d0c000 r-xp 00000000 fc:0f 22508      /usr/lib/libInfraNfc.so
+05d0c000-05d13000 ---p 00007000 fc:0f 22508      /usr/lib/libInfraNfc.so
+05d13000-05d14000 rw-p 00006000 fc:0f 22508      /usr/lib/libInfraNfc.so
+05d14000-05d15000 rw-s f2912000 fc:07 136        /dev/mem
+05d18000-0700e000 r-xp 00000000 fc:0f 22409      /usr/lib/libObj.so
+0700e000-07016000 ---p 012f6000 fc:0f 22409      /usr/lib/libObj.so
+07016000-07106000 rw-p 012f6000 fc:0f 22409      /usr/lib/libObj.so
+07106000-07144000 rw-p 00000000 00:00 0 
+07144000-07d32000 r-xp 00000000 fc:0f 22451      /usr/lib/libmpr.so
+07d32000-07d39000 ---p 00bee000 fc:0f 22451      /usr/lib/libmpr.so
+07d39000-07d60000 rw-p 00bed000 fc:0f 22451      /usr/lib/libmpr.so
+07d60000-07e2c000 rw-p 00000000 00:00 0 
+07e2c000-07fe2000 r-xp 00000000 fc:0f 22458      /usr/lib/libcrypto.so.1.1
+07fe2000-07fea000 ---p 001b6000 fc:0f 22458      /usr/lib/libcrypto.so.1.1
+07fea000-08003000 rw-p 001b6000 fc:0f 22458      /usr/lib/libcrypto.so.1.1
+08003000-08006000 rw-p 00000000 00:00 0 
+08006000-0816d000 r-xp 00000000 fc:0f 22390      /usr/lib/libmintx.so
+0816d000-08174000 ---p 00167000 fc:0f 22390      /usr/lib/libmintx.so
+08174000-08184000 rw-p 00166000 fc:0f 22390      /usr/lib/libmintx.so
+08184000-08185000 ---p 00000000 00:00 0 
+08185000-08384000 rw-p 00000000 00:00 0 
+08384000-08385000 ---p 00000000 00:00 0 
+08385000-083c4000 rw-p 00000000 00:00 0 
+083c4000-083d7000 r-xp 00000000 fc:0f 22440      /usr/lib/libInfraBluetooth.so
+083d7000-083df000 ---p 00013000 fc:0f 22440      /usr/lib/libInfraBluetooth.so
+083df000-083e1000 rw-p 00013000 fc:0f 22440      /usr/lib/libInfraBluetooth.so
+083e1000-083e9000 r-xp 00000000 fc:0f 22400      /usr/lib/libWlanResource.so
+083e9000-083ea000 rw-p 00008000 fc:0f 22400      /usr/lib/libWlanResource.so
+083ea000-083eb000 ---p 00000000 00:00 0 
+083eb000-085ea000 rw-p 00000000 00:00 0 
+085ea000-085ed000 r-xp 00000000 fc:0f 22358      /usr/lib/libBTAdjust.so
+085ed000-085f4000 ---p 00003000 fc:0f 22358      /usr/lib/libBTAdjust.so
+085f4000-085f5000 rw-p 00002000 fc:0f 22358      /usr/lib/libBTAdjust.so
+085f5000-08608000 r-xp 00000000 fc:0f 22387      /usr/lib/libnl-3.so.200.17.0
+08608000-0860f000 ---p 00013000 fc:0f 22387      /usr/lib/libnl-3.so.200.17.0
+0860f000-08610000 rw-p 00012000 fc:0f 22387      /usr/lib/libnl-3.so.200.17.0
+08610000-08611000 ---p 00000000 00:00 0 
+08611000-08810000 rw-p 00000000 00:00 0 
+08810000-08825000 r-xp 00000000 fc:0f 22515      /usr/lib/iw.so
+08825000-0882c000 ---p 00015000 fc:0f 22515      /usr/lib/iw.so
+0882c000-0882f000 rw-p 00014000 fc:0f 22515      /usr/lib/iw.so
+0882f000-08832000 r-xp 00000000 fc:0f 22436      /usr/lib/libnl-genl-3.so.200.17.0
+08832000-08839000 ---p 00003000 fc:0f 22436      /usr/lib/libnl-genl-3.so.200.17.0
+08839000-0883a000 rw-p 00002000 fc:0f 22436      /usr/lib/libnl-genl-3.so.200.17.0
+0883a000-08847000 r-xp 00000000 fc:0f 22374      /usr/lib/libnl-nf-3.so.200.17.0
+08847000-0884e000 ---p 0000d000 fc:0f 22374      /usr/lib/libnl-nf-3.so.200.17.0
+0884e000-08850000 rw-p 0000c000 fc:0f 22374      /usr/lib/libnl-nf-3.so.200.17.0
+08850000-08857000 r-xp 00000000 fc:0f 22446      /usr/lib/libnl-cli-3.so.200.17.0
+08857000-0885e000 ---p 00007000 fc:0f 22446      /usr/lib/libnl-cli-3.so.200.17.0
+0885e000-0885f000 rw-p 00006000 fc:0f 22446      /usr/lib/libnl-cli-3.so.200.17.0
+0885f000-08860000 ---p 00000000 00:00 0 
+08860000-08a5f000 rw-p 00000000 00:00 0 
+08a5f000-0aa5f000 rw-s 202e0000 fc:07 287        /dev/stream
+0aa5f000-0aa60000 ---p 00000000 00:00 0 
+0aa60000-0ac5f000 rw-p 00000000 00:00 0 
+0ac5f000-0ac8d000 r-xp 00000000 fc:0f 22512      /usr/lib/libnl-route-3.so.200.17.0
+0ac8d000-0ac95000 ---p 0002e000 fc:0f 22512      /usr/lib/libnl-route-3.so.200.17.0
+0ac95000-0ac98000 rw-p 0002e000 fc:0f 22512      /usr/lib/libnl-route-3.so.200.17.0
+0ac98000-0ac99000 rw-p 00000000 00:00 0 
+0ac99000-0aca6000 r-xp 00000000 fc:0f 22370      /usr/lib/libWlanAdjust.so
+0aca6000-0acae000 ---p 0000d000 fc:0f 22370      /usr/lib/libWlanAdjust.so
+0acae000-0acaf000 rw-p 0000d000 fc:0f 22370      /usr/lib/libWlanAdjust.so
+0acaf000-0acb0000 r-xp 00000000 fc:0f 22460      /usr/lib/libExternalCommand.so
+0acb0000-0acb7000 ---p 00001000 fc:0f 22460      /usr/lib/libExternalCommand.so
+0acb7000-0acb8000 rw-p 00000000 fc:0f 22460      /usr/lib/libExternalCommand.so
+0acb8000-0acb9000 ---p 00000000 00:00 0 
+0acb9000-0aeb8000 rw-p 00000000 00:00 0 
+0aeb8000-0af20000 rw-s 20030000 fc:07 287        /dev/stream
+0af20000-0af3a000 rw-p 00000000 00:00 0 
+0af3a000-0af42000 rw-s 20145000 fc:07 136        /dev/mem
+0af42000-0af43000 r-xp 00000000 fc:0f 22393      /usr/lib/libupdatertalk.so
+0af43000-0af4a000 ---p 00001000 fc:0f 22393      /usr/lib/libupdatertalk.so
+0af4a000-0af4b000 rw-p 00000000 fc:0f 22393      /usr/lib/libupdatertalk.so
+0af4b000-0af4c000 ---p 00000000 00:00 0 
+0af4c000-0b14b000 rw-p 00000000 00:00 0 
+0b14b000-0b1ab000 r-xp 00000000 fc:0f 22489      /usr/lib/libInfraHdmi.so
+0b1ab000-0b1b2000 ---p 00060000 fc:0f 22489      /usr/lib/libInfraHdmi.so
+0b1b2000-0b1b5000 rw-p 0005f000 fc:0f 22489      /usr/lib/libInfraHdmi.so
+0b1b5000-0b1b9000 r-xp 00000000 fc:0f 22501      /usr/lib/libWlanControlCommon.so
+0b1b9000-0b1c0000 ---p 00004000 fc:0f 22501      /usr/lib/libWlanControlCommon.so
+0b1c0000-0b1c1000 rw-p 00003000 fc:0f 22501      /usr/lib/libWlanControlCommon.so
+0b1c1000-0b1f2000 rw-p 00000000 00:00 0 
+0b1f2000-0b1f4000 r-xp 00000000 fc:0f 22492      /usr/lib/libInfraNetDeviceInfo.so
+0b1f4000-0b1fb000 ---p 00002000 fc:0f 22492      /usr/lib/libInfraNetDeviceInfo.so
+0b1fb000-0b1fc000 rw-p 00001000 fc:0f 22492      /usr/lib/libInfraNetDeviceInfo.so
+0b1fc000-0b200000 r--p 00000000 fc:0f 8313       /usr/share/app/master_other.uxc
+0b200000-0b300000 rw-p 00000000 00:00 0 
+0b300000-0b301000 ---p 00000000 00:00 0 
+0b301000-0b500000 rw-p 00000000 00:00 0 
+0b500000-0b523000 r-xp 00000000 fc:0f 22375      /usr/lib/libInfraBluetoothCore.so
+0b523000-0b52a000 ---p 00023000 fc:0f 22375      /usr/lib/libInfraBluetoothCore.so
+0b52a000-0b52b000 rw-p 00022000 fc:0f 22375      /usr/lib/libInfraBluetoothCore.so
+0b52b000-0b5a2000 rw-p 00000000 00:00 0 
+0b5a2000-0b5c2000 rw-s 00000000 fc:07 177        /dev/dmpgles2
+0b5c2000-0b5c5000 r-xp 00000000 fc:0f 22449      /usr/lib/libupdaterufp.so
+0b5c5000-0b5cc000 ---p 00003000 fc:0f 22449      /usr/lib/libupdaterufp.so
+0b5cc000-0b5cd000 rw-p 00002000 fc:0f 22449      /usr/lib/libupdaterufp.so
+0b5cd000-0b5dd000 rw-p 00000000 00:00 0 
+0b5dd000-0b5e1000 r-xp 00000000 fc:0f 22493      /usr/lib/libgps_rsrc.so
+0b5e1000-0b5e8000 ---p 00004000 fc:0f 22493      /usr/lib/libgps_rsrc.so
+0b5e8000-0b5e9000 rw-p 00003000 fc:0f 22493      /usr/lib/libgps_rsrc.so
+0b5e9000-0b5ee000 rw-s 20028000 fc:07 136        /dev/mem
+0b5f1000-0b5f2000 ---p 00000000 00:00 0 
+0b5f2000-0b7f1000 rw-p 00000000 00:00 0 
+0b7f1000-0b86d000 rw-s 20098000 fc:07 136        /dev/mem
+0b86d000-0b870000 r-xp 00000000 fc:0f 22473      /usr/lib/libRsrcHotshoe.so
+0b870000-0b878000 ---p 00003000 fc:0f 22473      /usr/lib/libRsrcHotshoe.so
+0b878000-0b879000 rw-p 00003000 fc:0f 22473      /usr/lib/libRsrcHotshoe.so
+0b879000-0b892000 r-xp 00000000 fc:0f 22456      /usr/lib/libInfraIPTC.so
+0b892000-0b899000 ---p 00019000 fc:0f 22456      /usr/lib/libInfraIPTC.so
+0b899000-0b89b000 rw-p 00018000 fc:0f 22456      /usr/lib/libInfraIPTC.so
+0b89b000-0b8bc000 rw-p 00000000 00:00 0 
+0b8bd000-0b8be000 ---p 00000000 00:00 0 
+0b8be000-0babd000 rw-p 00000000 00:00 0 
+0babd000-0babe000 ---p 00000000 00:00 0 
+0babe000-0bcbd000 rw-p 00000000 00:00 0 
+0bcbd000-0bd5c000 r-xp 00000000 fc:0f 22537      /usr/lib/libNetService.so
+0bd5c000-0bd64000 ---p 0009f000 fc:0f 22537      /usr/lib/libNetService.so
+0bd64000-0bd6c000 rw-p 0009f000 fc:0f 22537      /usr/lib/libNetService.so
+0bd6c000-0bd71000 rw-p 00000000 00:00 0 
+0bd71000-0bd77000 r-xp 00000000 fc:0f 22517      /usr/lib/libdig_level.so
+0bd77000-0bd7f000 ---p 00006000 fc:0f 22517      /usr/lib/libdig_level.so
+0bd7f000-0bd80000 rw-p 00006000 fc:0f 22517      /usr/lib/libdig_level.so
+0bd80000-0bd82000 r-xp 00000000 fc:0f 22475      /usr/lib/ModelCautionConfig.so
+0bd82000-0bd89000 ---p 00002000 fc:0f 22475      /usr/lib/ModelCautionConfig.so
+0bd89000-0bd8a000 rw-p 00001000 fc:0f 22475      /usr/lib/ModelCautionConfig.so
+0bd8a000-0bd94000 rw-p 00000000 00:00 0 
+0bd94000-0bd9c000 r--p 00000000 fc:0f 8353       /usr/share/app/viewStlrec.uxc
+0bd9f000-0bda0000 ---p 00000000 00:00 0 
+0bda0000-0bf9f000 rw-p 00000000 00:00 0 
+0bf9f000-0bfc6000 r-xp 00000000 fc:0f 22414      /usr/lib/libInfraCacheMgr.so
+0bfc6000-0bfce000 ---p 00027000 fc:0f 22414      /usr/lib/libInfraCacheMgr.so
+0bfce000-0bfd0000 rw-p 00027000 fc:0f 22414      /usr/lib/libInfraCacheMgr.so
+0bfd0000-0c066000 rw-s 23a80000 fc:07 287        /dev/stream
+0c06c000-0c06d000 ---p 00000000 00:00 0 
+0c06d000-0c26c000 rw-p 00000000 00:00 0 
+0c26c000-0c26d000 ---p 00000000 00:00 0 
+0c26d000-0c46c000 rw-p 00000000 00:00 0 
+0c46c000-0c482000 r-xp 00000000 fc:0f 22485      /usr/lib/CautionRsrcConfig.so
+0c482000-0c48a000 ---p 00016000 fc:0f 22485      /usr/lib/CautionRsrcConfig.so
+0c48a000-0c493000 rw-p 00016000 fc:0f 22485      /usr/lib/CautionRsrcConfig.so
+0c493000-0c49d000 rw-p 00000000 00:00 0 
+0c4a5000-0c4a6000 ---p 00000000 00:00 0 
+0c4a6000-0c6d5000 rw-p 00000000 00:00 0 
+0c6d5000-0c6df000 r-xp 00000000 fc:0f 22507      /usr/lib/libInfraMscServer.so
+0c6df000-0c6e7000 ---p 0000a000 fc:0f 22507      /usr/lib/libInfraMscServer.so
+0c6e7000-0c6e8000 rw-p 0000a000 fc:0f 22507      /usr/lib/libInfraMscServer.so
+0c6f0000-0c6f1000 ---p 00000000 00:00 0 
+0c6f1000-0c8f0000 rw-p 00000000 00:00 0 
+0c8f0000-0c94c000 r--p 00000000 fc:0f 8162       /usr/share/app/string_english.uxc
+0c94c000-0c98d000 rw-p 00000000 00:00 0 
+0c98e000-0c98f000 ---p 00000000 00:00 0 
+0c98f000-0cbc3000 rw-p 00000000 00:00 0 
+0cbc3000-0cbdc000 r--p 00000000 fc:0f 8321       /usr/share/app/master_camera.uxc
+0cbdd000-0cbde000 ---p 00000000 00:00 0 
+0cbde000-0cddd000 rw-p 00000000 00:00 0 
+0cddd000-0cdde000 ---p 00000000 00:00 0 
+0cdde000-0cfdd000 rw-p 00000000 00:00 0 
+0cfdd000-0d073000 rw-s 23b16000 fc:07 287        /dev/stream
+0d074000-0d075000 ---p 00000000 00:00 0 
+0d075000-0d274000 rw-p 00000000 00:00 0 
+0d274000-0d27a000 r-xp 00000000 fc:0f 22362      /usr/lib/libInfraNetConnectionManager.so
+0d27a000-0d281000 ---p 00006000 fc:0f 22362      /usr/lib/libInfraNetConnectionManager.so
+0d281000-0d282000 rw-p 00005000 fc:0f 22362      /usr/lib/libInfraNetConnectionManager.so
+0d283000-0d284000 ---p 00000000 00:00 0 
+0d284000-0d483000 rw-p 00000000 00:00 0 
+0d483000-0d484000 ---p 00000000 00:00 0 
+0d484000-0d6d7000 rw-p 00000000 00:00 0 
+0d6d7000-0d6d8000 ---p 00000000 00:00 0 
+0d6d8000-0d90c000 rw-p 00000000 00:00 0 
+0d90c000-0d942000 r-xp 00000000 fc:0f 22388      /usr/lib/libInfraBluetoothLowEnergy.so
+0d942000-0d94a000 ---p 00036000 fc:0f 22388      /usr/lib/libInfraBluetoothLowEnergy.so
+0d94a000-0d94e000 rw-p 00036000 fc:0f 22388      /usr/lib/libInfraBluetoothLowEnergy.so
+0d94e000-0d98e000 rw-p 00000000 00:00 0 
+0d98e000-0d99f000 rw-s 10b1c000 fc:07 136        /dev/mem
+0d9a8000-0d9a9000 ---p 00000000 00:00 0 
+0d9a9000-0dba8000 rw-p 00000000 00:00 0 
+0dba8000-0dc29000 rw-s 23cb0000 fc:07 287        /dev/stream
+0dc29000-0dc7b000 rw-p 00000000 00:00 0 
+0dc7b000-0dc8c000 rw-s 10b2c000 fc:07 136        /dev/mem
+0dc97000-0dc98000 ---p 00000000 00:00 0 
+0dc98000-0de97000 rw-p 00000000 00:00 0 
+0de97000-0df18000 rw-s 23c30000 fc:07 287        /dev/stream
+0df24000-0df28000 r-xp 00000000 fc:0f 22434      /usr/lib/libInfraExtCmdSvc.so
+0df28000-0df2f000 ---p 00004000 fc:0f 22434      /usr/lib/libInfraExtCmdSvc.so
+0df2f000-0df30000 rw-p 00003000 fc:0f 22434      /usr/lib/libInfraExtCmdSvc.so
+0df31000-0df32000 ---p 00000000 00:00 0 
+0df32000-0e1c4000 rw-p 00000000 00:00 0 
+0e1ca000-0e1cb000 ---p 00000000 00:00 0 
+0e1cb000-0e3ca000 rw-p 00000000 00:00 0 
+0e3ca000-0e3cb000 ---p 00000000 00:00 0 
+0e3cb000-0e5ca000 rw-p 00000000 00:00 0 
+0e5ca000-0e5cb000 ---p 00000000 00:00 0 
+0e5cb000-0e844000 rw-p 00000000 00:00 0 
+0e850000-0e853000 r-xp 00000000 fc:0f 22521      /usr/lib/libInfraDevInfoSender.so
+0e853000-0e85a000 ---p 00003000 fc:0f 22521      /usr/lib/libInfraDevInfoSender.so
+0e85a000-0e85b000 rw-p 00002000 fc:0f 22521      /usr/lib/libInfraDevInfoSender.so
+0e85b000-0e85c000 ---p 00000000 00:00 0 
+0e85c000-0ea5b000 rw-p 00000000 00:00 0 
+0ea5b000-0ea5c000 ---p 00000000 00:00 0 
+0ea5c000-0ec8d000 rw-p 00000000 00:00 0 
+0ec9b000-0eccd000 rw-p 00000000 00:00 0 
+0ecd9000-0ece0000 r-xp 00000000 fc:0f 22481      /usr/lib/libInfraPtpControl.so
+0ece0000-0ece8000 ---p 00007000 fc:0f 22481      /usr/lib/libInfraPtpControl.so
+0ece8000-0ece9000 rw-p 00007000 fc:0f 22481      /usr/lib/libInfraPtpControl.so
+0ece9000-0eced000 r-xp 00000000 fc:0f 22502      /usr/lib/libusbcmd.so
+0eced000-0ecf4000 ---p 00004000 fc:0f 22502      /usr/lib/libusbcmd.so
+0ecf4000-0ecf5000 rw-p 00003000 fc:0f 22502      /usr/lib/libusbcmd.so
+0ecf7000-0ecf8000 ---p 00000000 00:00 0 
+0ecf8000-0eef7000 rw-p 00000000 00:00 0 
+0eef7000-0eef8000 ---p 00000000 00:00 0 
+0eef8000-0f0f7000 rw-p 00000000 00:00 0 
+0f0f7000-0f0f8000 ---p 00000000 00:00 0 
+0f0f8000-0f2f7000 rw-p 00000000 00:00 0 
+0f2f7000-0f2f8000 ---p 00000000 00:00 0 
+0f2f8000-0f538000 rw-p 00000000 00:00 0 
+0f541000-0f542000 ---p 00000000 00:00 0 
+0f542000-0fbc2000 rw-p 00000000 00:00 0 
+0fbc2000-0fbc3000 ---p 00000000 00:00 0 
+0fbc3000-0fdc2000 rw-p 00000000 00:00 0 
+0fdc2000-0fdc3000 ---p 00000000 00:00 0 
+0fdc3000-0ffc2000 rw-p 00000000 00:00 0 
+0ffc2000-0ffc3000 ---p 00000000 00:00 0 
+0ffc3000-1020a000 rw-p 00000000 00:00 0 
+10228000-10229000 ---p 00000000 00:00 0 
+10229000-10428000 rw-p 00000000 00:00 0 
+10428000-10429000 ---p 00000000 00:00 0 
+10429000-10628000 rw-p 00000000 00:00 0 
+10628000-10629000 ---p 00000000 00:00 0 
+10629000-10828000 rw-p 00000000 00:00 0 
+10828000-10829000 ---p 00000000 00:00 0 
+10829000-10a28000 rw-p 00000000 00:00 0 
+10a68000-10a8e000 r-xp 00000000 fc:0f 22486      /usr/lib/libInfraMtpServer.so
+10a8e000-10a95000 ---p 00026000 fc:0f 22486      /usr/lib/libInfraMtpServer.so
+10a95000-10a97000 rw-p 00025000 fc:0f 22486      /usr/lib/libInfraMtpServer.so
+10a97000-10a99000 rw-p 00000000 00:00 0 
+10a99000-10aa1000 r-xp 00000000 fc:0f 22429      /usr/lib/libInfraPtpExtCmd.so
+10aa1000-10aa8000 ---p 00008000 fc:0f 22429      /usr/lib/libInfraPtpExtCmd.so
+10aa8000-10aa9000 rw-p 00007000 fc:0f 22429      /usr/lib/libInfraPtpExtCmd.so
+10ab0000-10ab1000 ---p 00000000 00:00 0 
+10ab1000-10cb0000 rw-p 00000000 00:00 0 
+10cb0000-10cb1000 ---p 00000000 00:00 0 
+10cb1000-10f61000 rw-p 00000000 00:00 0 
+10f6b000-10f6d000 r-xp 00000000 fc:0f 22406      /usr/lib/libInfraKikiLogSender.so
+10f6d000-10f74000 ---p 00002000 fc:0f 22406      /usr/lib/libInfraKikiLogSender.so
+10f74000-10f75000 rw-p 00001000 fc:0f 22406      /usr/lib/libInfraKikiLogSender.so
+10f75000-10f78000 r-xp 00000000 fc:0f 22528      /usr/lib/libInfraExtBackupCommunicator.so
+10f78000-10f80000 ---p 00003000 fc:0f 22528      /usr/lib/libInfraExtBackupCommunicator.so
+10f80000-10f81000 rw-p 00003000 fc:0f 22528      /usr/lib/libInfraExtBackupCommunicator.so
+10f89000-10f8a000 ---p 00000000 00:00 0 
+10f8a000-11189000 rw-p 00000000 00:00 0 
+11189000-1118a000 ---p 00000000 00:00 0 
+1118a000-11389000 rw-p 00000000 00:00 0 
+11389000-113ff000 r-xp 00000000 fc:0f 22419      /usr/lib/viewUnified6.so
+113ff000-11407000 ---p 00076000 fc:0f 22419      /usr/lib/viewUnified6.so
+11407000-11416000 rw-p 00076000 fc:0f 22419      /usr/lib/viewUnified6.so
+11416000-11435000 r-xp 00000000 fc:0f 22504      /usr/lib/libptp.so
+11435000-1143d000 ---p 0001f000 fc:0f 22504      /usr/lib/libptp.so
+1143d000-11441000 rw-p 0001f000 fc:0f 22504      /usr/lib/libptp.so
+11441000-11463000 rw-p 00000000 00:00 0 
+11463000-11465000 r-xp 00000000 fc:0f 22488      /usr/lib/libInfraLensCommunicator.so
+11465000-1146c000 ---p 00002000 fc:0f 22488      /usr/lib/libInfraLensCommunicator.so
+1146c000-1146d000 rw-p 00001000 fc:0f 22488      /usr/lib/libInfraLensCommunicator.so
+11486000-11487000 ---p 00000000 00:00 0 
+11487000-11686000 rw-p 00000000 00:00 0 
+11686000-11687000 ---p 00000000 00:00 0 
+11687000-11886000 rw-p 00000000 00:00 0 
+11886000-11887000 ---p 00000000 00:00 0 
+11887000-11a86000 rw-p 00000000 00:00 0 
+11aa4000-11aa5000 ---p 00000000 00:00 0 
+11aa5000-11ca4000 rw-p 00000000 00:00 0 
+11ca4000-11ca5000 ---p 00000000 00:00 0 
+11ca5000-11ea4000 rw-p 00000000 00:00 0 
+11f58000-11f59000 ---p 00000000 00:00 0 
+11f59000-12158000 rw-p 00000000 00:00 0 
+12158000-12159000 ---p 00000000 00:00 0 
+12159000-12358000 rw-p 00000000 00:00 0 
+1239b000-1239c000 ---p 00000000 00:00 0 
+1239c000-1259b000 rw-p 00000000 00:00 0 
+12654000-12655000 ---p 00000000 00:00 0 
+12655000-12854000 rw-p 00000000 00:00 0 
+12871000-12872000 ---p 00000000 00:00 0 
+12872000-12a71000 rw-p 00000000 00:00 0 
+12a71000-12a72000 ---p 00000000 00:00 0 
+12a72000-12c71000 rw-p 00000000 00:00 0 
+12c71000-12c72000 ---p 00000000 00:00 0 
+12c72000-12e71000 rw-p 00000000 00:00 0 
+12f42000-12f43000 ---p 00000000 00:00 0 
+12f43000-13142000 rw-p 00000000 00:00 0 
+1319c000-1319d000 ---p 00000000 00:00 0 
+1319d000-1339c000 rw-p 00000000 00:00 0 
+13461000-13462000 ---p 00000000 00:00 0 
+13462000-13661000 rw-p 00000000 00:00 0 
+13694000-13695000 ---p 00000000 00:00 0 
+13695000-13894000 rw-p 00000000 00:00 0 
+138c7000-138c8000 ---p 00000000 00:00 0 
+138c8000-13ac7000 rw-p 00000000 00:00 0 
+13b9b000-13b9c000 ---p 00000000 00:00 0 
+13b9c000-13d9b000 rw-p 00000000 00:00 0 
+13e03000-13e04000 ---p 00000000 00:00 0 
+13e04000-14003000 rw-p 00000000 00:00 0 
+140e6000-140e7000 ---p 00000000 00:00 0 
+140e7000-142e6000 rw-p 00000000 00:00 0 
+14353000-14354000 ---p 00000000 00:00 0 
+14354000-14553000 rw-p 00000000 00:00 0 
+145f1000-145f2000 ---p 00000000 00:00 0 
+145f2000-147f1000 rw-p 00000000 00:00 0 
+148dc000-148dd000 ---p 00000000 00:00 0 
+148dd000-14adc000 rw-p 00000000 00:00 0 
+14b6e000-14b6f000 ---p 00000000 00:00 0 
+14b6f000-14d6e000 rw-p 00000000 00:00 0 
+14d6e000-14d6f000 ---p 00000000 00:00 0 
+14d6f000-14f6e000 rw-p 00000000 00:00 0 
+14fe6000-14fe7000 ---p 00000000 00:00 0 
+14fe7000-151e6000 rw-p 00000000 00:00 0 
+151e6000-151e7000 ---p 00000000 00:00 0 
+151e7000-153e6000 rw-p 00000000 00:00 0 
+153e6000-153e7000 ---p 00000000 00:00 0 
+153e7000-155e6000 rw-p 00000000 00:00 0 
+155e6000-15e92000 r-xp 00000000 fc:0f 22532      /usr/lib/viewUnified2.so
+15e92000-15e9a000 ---p 008ac000 fc:0f 22532      /usr/lib/viewUnified2.so
+15e9a000-160ed000 rw-p 008ac000 fc:0f 22532      /usr/lib/viewUnified2.so
+160ed000-1615f000 rw-p 00000000 00:00 0 
+1615f000-16bfe000 r-xp 00000000 fc:0f 22443      /usr/lib/CautionConfig.so
+16bfe000-16c05000 ---p 00a9f000 fc:0f 22443      /usr/lib/CautionConfig.so
+16c05000-16cea000 rw-p 00a9e000 fc:0f 22443      /usr/lib/CautionConfig.so
+16cea000-16dbb000 rw-p 00000000 00:00 0 
+16dbb000-16dbc000 ---p 00000000 00:00 0 
+16dbc000-16fbb000 rw-p 00000000 00:00 0 
+16fbb000-173bb000 rw-s 222e0000 fc:07 287        /dev/stream
+173ea000-175ea000 rw-s 22880000 fc:07 287        /dev/stream
+175f7000-17797000 rw-s 226e0000 fc:07 287        /dev/stream
+17797000-17a35000 r--p 00000000 fc:0f 8369       /usr/share/app/image_DSLR_Only_169.uxc
+17a99000-17d65000 r--p 00000000 fc:0f 8337       /usr/share/app/image_EVF.uxc
+17dec000-196f0000 r--p 00000000 fc:0f 8140       /usr/share/app/image_cmn_169.uxc
+1974f000-19750000 ---p 00000000 00:00 0 
+19750000-1994f000 rw-p 00000000 00:00 0 
+19a1d000-19a1e000 ---p 00000000 00:00 0 
+19a1e000-19c1d000 rw-p 00000000 00:00 0 
+19d0b000-19d0c000 ---p 00000000 00:00 0 
+19d0c000-19f0b000 rw-p 00000000 00:00 0 
+19f0b000-19f0c000 ---p 00000000 00:00 0 
+19f0c000-1a10b000 rw-p 00000000 00:00 0 
+1a200000-1a300000 rw-p 00000000 00:00 0 
+1a300000-1a301000 ---p 00000000 00:00 0 
+1a301000-1a500000 rw-p 00000000 00:00 0 
+1a500000-1a501000 ---p 00000000 00:00 0 
+1a501000-1a979000 rw-p 00000000 00:00 0 
+1a979000-1a97a000 ---p 00000000 00:00 0 
+1a97a000-1ab79000 rw-p 00000000 00:00 0 
+1ab79000-1ab7a000 ---p 00000000 00:00 0 
+1ab7a000-1ad79000 rw-p 00000000 00:00 0 
+1ad8c000-1ad8d000 ---p 00000000 00:00 0 
+1ad8d000-1af8c000 rw-p 00000000 00:00 0 
+1af8c000-1af8d000 ---p 00000000 00:00 0 
+1af8d000-1b18c000 rw-p 00000000 00:00 0 
+1b1ba000-1b1bb000 ---p 00000000 00:00 0 
+1b1bb000-1b3ba000 rw-p 00000000 00:00 0 
+1b3ba000-1b3bb000 ---p 00000000 00:00 0 
+1b3bb000-1b5ba000 rw-p 00000000 00:00 0 
+1b5ba000-1b5bb000 ---p 00000000 00:00 0 
+1b5bb000-1b7ba000 rw-p 00000000 00:00 0 
+1b7ba000-1b7bb000 ---p 00000000 00:00 0 
+1b7bb000-1b9ba000 rw-p 00000000 00:00 0 
+1b9ba000-1b9bb000 ---p 00000000 00:00 0 
+1b9bb000-1bbba000 rw-p 00000000 00:00 0 
+1bbc8000-1bbc9000 ---p 00000000 00:00 0 
+1bbc9000-1bdc8000 rw-p 00000000 00:00 0 
+1bdd4000-1bdd5000 ---p 00000000 00:00 0 
+1bdd5000-1bfd4000 rw-p 00000000 00:00 0 
+1bfd4000-1bfd5000 ---p 00000000 00:00 0 
+1bfd5000-1c1d4000 rw-p 00000000 00:00 0 
+1c2cb000-1c2cc000 ---p 00000000 00:00 0 
+1c2cc000-1c4cb000 rw-p 00000000 00:00 0 
+1c4cb000-1c4cc000 ---p 00000000 00:00 0 
+1c4cc000-1c6cb000 rw-p 00000000 00:00 0 
+1c6cb000-1c6cc000 ---p 00000000 00:00 0 
+1c6cc000-1c8cb000 rw-p 00000000 00:00 0 
+1c8cb000-1c8cc000 ---p 00000000 00:00 0 
+1c8cc000-1cacb000 rw-p 00000000 00:00 0 
+1cb38000-1cb39000 ---p 00000000 00:00 0 
+1cb39000-1cd38000 rw-p 00000000 00:00 0 
+1ce14000-1ce15000 ---p 00000000 00:00 0 
+1ce15000-1d014000 rw-p 00000000 00:00 0 
+1d050000-1d051000 ---p 00000000 00:00 0 
+1d051000-1d250000 rw-p 00000000 00:00 0 
+1d2bf000-1d2c0000 ---p 00000000 00:00 0 
+1d2c0000-1d4bf000 rw-p 00000000 00:00 0 
+1d55c000-1d55d000 ---p 00000000 00:00 0 
+1d55d000-1d75c000 rw-p 00000000 00:00 0 
+1d75c000-1d75d000 ---p 00000000 00:00 0 
+1d75d000-1d95c000 rw-p 00000000 00:00 0 
+1d95c000-1d95d000 ---p 00000000 00:00 0 
+1d95d000-1db5c000 rw-p 00000000 00:00 0 
+1db5d000-1db5e000 ---p 00000000 00:00 0 
+1db5e000-1dd5d000 rw-p 00000000 00:00 0 
+1dde1000-1dde2000 ---p 00000000 00:00 0 
+1dde2000-1dfe1000 rw-p 00000000 00:00 0 
+1e00b000-1e00c000 ---p 00000000 00:00 0 
+1e00c000-1e20b000 rw-p 00000000 00:00 0 
+1e24a000-1e24b000 ---p 00000000 00:00 0 
+1e24b000-1e44a000 rw-p 00000000 00:00 0 
+1e511000-1e512000 ---p 00000000 00:00 0 
+1e512000-1e711000 rw-p 00000000 00:00 0 
+1e711000-1e712000 ---p 00000000 00:00 0 
+1e712000-1e911000 rw-p 00000000 00:00 0 
+1e911000-1e912000 ---p 00000000 00:00 0 
+1e912000-1eb11000 rw-p 00000000 00:00 0 
+1eb11000-1eb12000 ---p 00000000 00:00 0 
+1eb12000-1ed11000 rw-p 00000000 00:00 0 
+1edb4000-1edb5000 ---p 00000000 00:00 0 
+1edb5000-1efb4000 rw-p 00000000 00:00 0 
+1efb4000-1efb5000 ---p 00000000 00:00 0 
+1efb5000-1f1b4000 rw-p 00000000 00:00 0 
+1f20e000-1f20f000 ---p 00000000 00:00 0 
+1f20f000-1f40e000 rw-p 00000000 00:00 0 
+1f41c000-1f41d000 ---p 00000000 00:00 0 
+1f41d000-1f61c000 rw-p 00000000 00:00 0 
+1f68a000-1f68b000 ---p 00000000 00:00 0 
+1f68b000-1f88a000 rw-p 00000000 00:00 0 
+1f987000-1f988000 ---p 00000000 00:00 0 
+1f988000-1fb87000 rw-p 00000000 00:00 0 
+1fba6000-1fba7000 ---p 00000000 00:00 0 
+1fba7000-1fda6000 rw-p 00000000 00:00 0 
+1fdc4000-1fdc5000 ---p 00000000 00:00 0 
+1fdc5000-1ffc4000 rw-p 00000000 00:00 0 
+1ffc4000-1ffc5000 ---p 00000000 00:00 0 
+1ffc5000-201c4000 rw-p 00000000 00:00 0 
+201c4000-201c5000 ---p 00000000 00:00 0 
+201c5000-204c5000 rw-p 00000000 00:00 0 
+20582000-20583000 ---p 00000000 00:00 0 
+20583000-20782000 rw-p 00000000 00:00 0 
+20782000-20783000 ---p 00000000 00:00 0 
+20783000-20982000 rw-p 00000000 00:00 0 
+20982000-20983000 ---p 00000000 00:00 0 
+20983000-20b82000 rw-p 00000000 00:00 0 
+20c39000-20c3a000 ---p 00000000 00:00 0 
+20c3a000-20e39000 rw-p 00000000 00:00 0 
+20e39000-20e3a000 ---p 00000000 00:00 0 
+20e3a000-21039000 rw-p 00000000 00:00 0 
+2120c000-2120d000 ---p 00000000 00:00 0 
+2120d000-2140c000 rw-p 00000000 00:00 0 
+21506000-21507000 ---p 00000000 00:00 0 
+21507000-21706000 rw-p 00000000 00:00 0 
+21706000-21707000 ---p 00000000 00:00 0 
+21707000-21906000 rw-p 00000000 00:00 0 
+21951000-21952000 ---p 00000000 00:00 0 
+21952000-21b51000 rw-p 00000000 00:00 0 
+21b85000-21b86000 ---p 00000000 00:00 0 
+21b86000-21d85000 rw-p 00000000 00:00 0 
+21db3000-21db4000 ---p 00000000 00:00 0 
+21db4000-21fb3000 rw-p 00000000 00:00 0 
+21fce000-21fcf000 ---p 00000000 00:00 0 
+21fcf000-221ce000 rw-p 00000000 00:00 0 
+22204000-22205000 ---p 00000000 00:00 0 
+22205000-22404000 rw-p 00000000 00:00 0 
+22427000-22428000 ---p 00000000 00:00 0 
+22428000-22627000 rw-p 00000000 00:00 0 
+2270f000-22710000 ---p 00000000 00:00 0 
+22710000-2290f000 rw-p 00000000 00:00 0 
+2290f000-22910000 ---p 00000000 00:00 0 
+22910000-22b0f000 rw-p 00000000 00:00 0 
+22b0f000-22b10000 ---p 00000000 00:00 0 
+22b10000-22d0f000 rw-p 00000000 00:00 0 
+22d72000-22d73000 ---p 00000000 00:00 0 
+22d73000-22f72000 rw-p 00000000 00:00 0 
+23027000-23028000 ---p 00000000 00:00 0 
+23028000-23227000 rw-p 00000000 00:00 0 
+2337a000-2337b000 ---p 00000000 00:00 0 
+2337b000-2357a000 rw-p 00000000 00:00 0 
+23627000-23628000 ---p 00000000 00:00 0 
+23628000-23827000 rw-p 00000000 00:00 0 
+23827000-23828000 ---p 00000000 00:00 0 
+23828000-23a27000 rw-p 00000000 00:00 0 
+23a27000-23a28000 ---p 00000000 00:00 0 
+23a28000-23c27000 rw-p 00000000 00:00 0 
+23e15000-23e16000 ---p 00000000 00:00 0 
+23e16000-24015000 rw-p 00000000 00:00 0 
+24107000-24108000 ---p 00000000 00:00 0 
+24108000-24307000 rw-p 00000000 00:00 0 
+243de000-243df000 ---p 00000000 00:00 0 
+243df000-245de000 rw-p 00000000 00:00 0 
+2461c000-2461d000 ---p 00000000 00:00 0 
+2461d000-2481c000 rw-p 00000000 00:00 0 
+24900000-24961000 rw-p 00000000 00:00 0 
+24961000-24a00000 ---p 00000000 00:00 0 
+24a00000-24a01000 ---p 00000000 00:00 0 
+24a01000-24c00000 rw-p 00000000 00:00 0 
+24d00000-24d41000 rw-p 00000000 00:00 0 
+24d41000-24e00000 ---p 00000000 00:00 0 
+24e00000-24e01000 ---p 00000000 00:00 0 
+24e01000-25000000 rw-p 00000000 00:00 0 
+25200000-25222000 rw-p 00000000 00:00 0 
+25222000-25300000 ---p 00000000 00:00 0 
+25300000-25301000 ---p 00000000 00:00 0 
+25301000-25500000 rw-p 00000000 00:00 0 
+25500000-25501000 ---p 00000000 00:00 0 
+25501000-25700000 rw-p 00000000 00:00 0 
+25800000-25900000 rw-p 00000000 00:00 0 
+25900000-25901000 ---p 00000000 00:00 0 
+25901000-25b00000 rw-p 00000000 00:00 0 
+25b00000-25b01000 ---p 00000000 00:00 0 
+25b01000-25d00000 rw-p 00000000 00:00 0 
+25e75000-26a0a000 r--p 00000000 fc:0f 8338       /usr/share/app/image_DSC_Only_169.uxc
+26a30000-26a31000 ---p 00000000 00:00 0 
+26a31000-26c30000 rw-p 00000000 00:00 0 
+26f00000-27000000 rw-p 00000000 00:00 0 
+27000000-270fd000 rw-p 00000000 00:00 0 
+270fd000-27100000 ---p 00000000 00:00 0 
+27201000-27202000 ---p 00000000 00:00 0 
+27202000-27401000 rw-p 00000000 00:00 0 
+27401000-27402000 ---p 00000000 00:00 0 
+27402000-27601000 rw-p 00000000 00:00 0 
+2762f000-27630000 ---p 00000000 00:00 0 
+27630000-2782f000 rw-p 00000000 00:00 0 
+2782f000-27830000 ---p 00000000 00:00 0 
+27830000-27a2f000 rw-p 00000000 00:00 0 
+27a2f000-27a30000 ---p 00000000 00:00 0 
+27a30000-27c2f000 rw-p 00000000 00:00 0 
+27cb9000-27cba000 ---p 00000000 00:00 0 
+27cba000-27eb9000 rw-p 00000000 00:00 0 
+5ec15000-5ec36000 rw-p 00000000 00:00 0          [stack]
+ffff0000-ffff1000 r-xp 00000000 00:00 0          [vectors]
+
+=== KERNEL DMESG BOOT LOG ===
+end:635c6068(0)
+[  382.937906] [LIRO]: liro suspend complete!
+[  382.937929] UDIF: suspend end:   liro
+[  382.937956] UDIF: suspend start: dma330
+[  382.938015] UDIF: suspend end:   dma330
+[  382.938038] UDIF: suspend start: mmc_drv
+[  382.938068] mmc_hwip_system_off START
+[  383.068265] err 0x0
+[  383.068279] mmc_hwip_system_off END
+[  383.068400] UDIF: suspend end:   mmc_drv
+[  383.068426] UDIF: suspend start: ms_drv
+[  383.068698] UDIF: suspend end:   ms_drv
+[  383.068724] UDIF: suspend start: mcmn_drv
+[  383.068765] UDIF: suspend end:   mcmn_drv
+[  383.068789] UDIF: suspend start: compass_rsrc1.0
+[  383.068816] UDIF: suspend end:   compass_rsrc1.0
+[  383.068839] UDIF: suspend start: mag
+[  383.068880] UDIF: suspend end:   mag
+[  383.068902] UDIF: suspend start: accel
+[  383.075321] UDIF: suspend end:   accel
+[  383.075347] UDIF: suspend start: grm_ma
+[  383.075370] UDIF: suspend end:   grm_ma
+[  383.075392] UDIF: suspend start: nfc_rsrc
+[  383.075516] UDIF: suspend end:   nfc_rsrc
+[  383.075541] UDIF: suspend start: UPM
+[  383.075761] UDIF: suspend end:   UPM
+[  383.075785] UDIF: suspend start: dmm
+[  383.076204] UDIF: suspend end:   dmm
+[  383.076228] UDIF: suspend start: kikilog
+[  383.076250] UDIF: suspend end:   kikilog
+[  383.076272] UDIF: suspend start: usbprtm
+[  383.076331] UDIF: suspend end:   usbprtm
+[  383.076354] UDIF: suspend start: stream2
+[  383.076376] UDIF: suspend end:   stream2
+[  383.076398] UDIF: suspend start: stream
+[  383.076420] UDIF: suspend end:   stream
+[  383.076442] UDIF: suspend start: sircs
+[  383.076475] UDIF: suspend end:   sircs
+[  383.076496] UDIF: suspend start: i2c_uipc
+[  383.076521] UDIF: suspend end:   i2c_uipc
+[  383.076543] UDIF: suspend start: indctr
+[  383.076625] UDIF: suspend end:   indctr
+[  383.076649] UDIF: suspend start: udate
+[  383.076693] UDIF: suspend end:   udate
+[  383.076715] UDIF: suspend start: input
+[  383.076754] UDIF: suspend end:   input
+[  383.076776] UDIF: suspend start: ulogio
+[  383.076798] UDIF: suspend end:   ulogio
+[  383.076819] UDIF: suspend start: backup
+[  383.137488] UDIF: suspend end:   backup
+[  383.137520] UDIF: suspend start: utimer
+[  383.137634] UDIF: suspend end:   utimer
+[  383.137659] UDIF: suspend start: uipc
+[  383.137682] UDIF: suspend end:   uipc
+[  383.137704] UDIF: suspend start: utm
+[  383.137725] UDIF: suspend end:   utm
+[  383.137746] UDIF: suspend start: emmc
+[  383.138407] UDIF: suspend end:   emmc
+[  383.138434] UDIF: suspend start: ldec
+[  383.138463] UDIF: suspend end:   ldec
+[  383.138484] UDIF: suspend start: dmac
+[  383.138523] UDIF: suspend end:   dmac
+[  383.138544] UDIF: suspend start: fusb_otg
+[  383.138569] UDIF: suspend end:   fusb_otg
+[  383.138591] UDIF: suspend start: hwtimer
+[  383.138628] UDIF: suspend end:   hwtimer
+[  383.138650] UDIF: suspend start: wdt
+[  383.138671] UDIF: suspend end:   wdt
+[  383.138692] UDIF: suspend start: gpio
+[  383.138755] UDIF: suspend end:   gpio
+[  383.138777] UDIF: suspend end:   unified drivers
+[  383.139299] PM: late suspend of devices complete after 0.487 msecs
+[  383.139629] Disabling non-boot CPUs ...
+[  383.140798] CPU1: shutdown
+[  383.140814] CPU1: shutdown
+[  383.143769] CPU2: shutdown
+[  383.143785] CPU2: shutdown
+[  383.180210] CPU3: shutdown
+[  383.180227] CPU3: shutdown
+[    0.049456] PM: Low-level resume complete.
+[    0.049623] Enabling non-boot CPUs ...
+[    0.053231] CPU1: Booted secondary processor
+[    0.054216] CPU1 is up
+[    0.057430] CPU2: Booted secondary processor
+[    0.058275] CPU2 is up
+[    0.061737] CPU3: Booted secondary processor
+[    0.062608] CPU3 is up
+[    0.062623] PM: Waking up from system sleep.
+[    0.062914] PM: early resume of devices complete after 0.265 msecs
+[    0.063118] UDIF: resume start: unified drivers
+[    0.063145] UDIF: resume start: gpio
+[    0.063206] UDIF: resume end: gpio
+[    0.063228] UDIF: resume start: wdt
+[    0.063248] UDIF: resume end: wdt
+[    0.063268] UDIF: resume start: hwtimer
+[    0.063303] UDIF: resume end: hwtimer
+[    0.063324] UDIF: resume start: fusb_otg
+[    0.064373] UDIF: resume end: fusb_otg
+[    0.064394] UDIF: resume start: dmac
+[    0.064420] UDIF: resume end: dmac
+[    0.064440] UDIF: resume start: ldec
+[    0.064462] UDIF: resume end: ldec
+[    0.064482] UDIF: resume start: emmc
+[    0.064519] eMMC: HS200 mode
+[    0.065236] AL_EMMC_SEQ     (1967[set_emmc_spec   ]) : Warning : Unsupported new version of device: 8
+[    0.065264] AL_EMMC_SEQ     (1969[set_emmc_spec   ]) : Warning : Trying to use this device as possible, but may cause some problem...
+[    0.065388] UDIF: resume end: emmc
+[    0.065413] UDIF: resume start: utm
+[    0.065434] UDIF: resume end: utm
+[    0.065455] UDIF: resume start: uipc
+[    0.065476] UDIF: resume end: uipc
+[    0.065497] UDIF: resume start: utimer
+[    0.065653] system counter: 844105460[us], sched clock: 65636[us]
+[    0.065672] UDIF: resume end: utimer
+[    0.065694] UDIF: resume start: backup
+[    0.066247] UDIF: resume end: backup
+[    0.066272] UDIF: resume start: ulogio
+[    0.066295] UDIF: resume end: ulogio
+[    0.066316] UDIF: resume start: input
+[    0.066370] UDIF: resume end: input
+[    0.066391] UDIF: resume start: udate
+[    0.066460] UDIF: resume end: udate
+[    0.066482] UDIF: resume start: indctr
+[    0.066507] UDIF: resume end: indctr
+[    0.066528] UDIF: resume start: i2c_uipc
+[    0.066555] UDIF: resume end: i2c_uipc
+[    0.066576] UDIF: resume start: sircs
+[    0.066597] UDIF: resume end: sircs
+[    0.066617] UDIF: resume start: stream
+[    0.066638] UDIF: resume end: stream
+[    0.066659] UDIF: resume start: stream2
+[    0.066680] UDIF: resume end: stream2
+[    0.066701] UDIF: resume start: usbprtm
+[    0.066749] UDIF: resume end: usbprtm
+[    0.066772] UDIF: resume start: kikilog
+[    0.066794] UDIF: resume end: kikilog
+[    0.066815] UDIF: resume start: dmm
+[    0.066838] UDIF: resume end: dmm
+[    0.066858] UDIF: resume start: UPM
+[    0.067319] UDIF: resume end: UPM
+[    0.067344] UDIF: resume start: nfc_rsrc
+[    0.067724] UDIF: resume end: nfc_rsrc
+[    0.067751] UDIF: resume start: grm_ma
+[    0.067773] UDIF: resume end: grm_ma
+[    0.067794] UDIF: resume start: accel
+[    0.067895] UDIF: resume end: accel
+[    0.067917] UDIF: resume start: mag
+[    0.067979] UDIF: resume end: mag
+[    0.068001] UDIF: resume start: compass_rsrc1.0
+[    0.068027] UDIF: resume end: compass_rsrc1.0
+[    0.068049] UDIF: resume start: mcmn_drv
+[    0.068089] UDIF: resume end: mcmn_drv
+[    0.068111] UDIF: resume start: ms_drv
+[    0.068356] UDIF: resume end: ms_drv
+[    0.068382] UDIF: resume start: mmc_drv
+[    0.089697] UDIF: resume end: mmc_drv
+[    0.089724] UDIF: resume start: dma330
+[    0.089758] UDIF: resume end: dma330
+[    0.089779] UDIF: resume start: liro
+[    0.089799] [LIRO]: liro resume
+[    0.089821] [LIRO]: entry_resume:635c6078(0) 
+[    0.106831] [LIRO]: liro resume complete
+[    0.106857] UDIF: resume end: liro
+[    0.106883] UDIF: resume start: usb_darwin
+[    0.106965] UDIF: resume end: usb_darwin
+[    0.106989] UDIF: resume start: buspwr
+[    0.107011] UDIF: resume end: buspwr
+[    0.107032] UDIF: resume start: hdmi
+[    0.107942] UDIF: resume end: hdmi
+[    0.107970] UDIF: resume start: cec
+[    0.107998] UDIF: resume end: cec
+[    0.108018] UDIF: resume start: b-250
+[    0.108041] UDIF: resume end: b-250
+[    0.108063] UDIF: resume end:   unified drivers
+[    0.109246] PM: resume of devices complete after 1.142 msecs
+[    0.128224] Restarting tasks ... done.
+[    0.368394] [HW_WRAPPER] UHS2 FuncTable is NULL!! USH2 unsupported Controller
+[    0.369037] [SD] isUSH2 = 0
+[    0.826569] [MMCP][mmc_mmcp_exec_tuning] For F_SDH30
+
+=== DUMP COMPLETED ===

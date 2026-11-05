@@ -1,0 +1,234 @@
+"""High-speed checkpointing and state restoration for InterpreterProbe.
+
+Enables instant (<0.5s) resume from arbitrary execution milestones (e.g. 50M, 88M, 100M)
+instead of re-executing tens of millions of instructions from scratch.
+"""
+
+import pickle
+import zlib
+from pathlib import Path
+from typing import Any, Dict
+
+import unicorn
+from unicorn import arm_const as arm
+
+ARM_CHECKPOINT_REGS = (
+    arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2, arm.UC_ARM_REG_R3,
+    arm.UC_ARM_REG_R4, arm.UC_ARM_REG_R5, arm.UC_ARM_REG_R6, arm.UC_ARM_REG_R7,
+    arm.UC_ARM_REG_R8, arm.UC_ARM_REG_R9, arm.UC_ARM_REG_R10, arm.UC_ARM_REG_R11,
+    arm.UC_ARM_REG_R12, arm.UC_ARM_REG_SP, arm.UC_ARM_REG_LR, arm.UC_ARM_REG_PC,
+    arm.UC_ARM_REG_CPSR, arm.UC_ARM_REG_FPEXC, arm.UC_ARM_REG_C13_C0_3
+)
+
+
+def save_checkpoint(probe, filepath: Path) -> int:
+    """Serializes the exact Unicorn memory mappings, CPU context, and Python subsystem state."""
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    # 1. Sync active thread registers and capture all ARM registers
+    if hasattr(probe, 'threads') and probe.threads:
+        probe.threads.save_context(probe.mu)
+    regs = {r: probe.mu.reg_read(r) for r in ARM_CHECKPOINT_REGS}
+    ctx_bytes = pickle.dumps(probe.mu.context_save())
+
+    # 2. Unicorn Memory Mappings & Page Contents (compressed with zlib level 1)
+    regions = []
+    for begin, end, perms in probe.mu.mem_regions():
+        size = end - begin + 1
+        data = bytes(probe.mu.mem_read(begin, size))
+        compressed = zlib.compress(data, level=1)
+        regions.append({
+            'begin': begin,
+            'end': end,
+            'perms': perms,
+            'size': size,
+            'data': compressed,
+        })
+
+    uipc_bytes = None
+    if hasattr(probe, 'uipc') and probe.uipc:
+        # Temporarily detach any dynamically patched local wrapper (e.g. patched_rcv_msg_tmo in experiment_ui_boot)
+        patched_fn = probe.uipc.__dict__.pop('handle_rcv_msg_tmo', None)
+        try:
+            uipc_bytes = pickle.dumps(probe.uipc)
+        finally:
+            if patched_fn is not None:
+                probe.uipc.handle_rcv_msg_tmo = patched_fn
+
+    # 3. Python Subsystem State
+    subsystems: Dict[str, Any] = {
+        'instructions': probe.instructions,
+        'signal_handlers': dict(probe.signal_handlers),
+        'serviced_syscalls': list(probe.report.get('serviced_syscalls', [])),
+        'syscall_responses_supplied': probe.report.get('syscall_responses_supplied', 0),
+        'loaded_modules': list(probe.report.get('loaded_modules', [])),
+        'filesystem_fds': dict(probe.filesystem.fds),
+        'filesystem_cache': dict(probe.filesystem.cache),
+        'threads': pickle.dumps(probe.threads) if hasattr(probe, 'threads') and probe.threads else None,
+        'sem': pickle.dumps(probe.sem) if hasattr(probe, 'sem') and probe.sem else None,
+        'uipc': uipc_bytes,
+        'heap': {
+            'current': probe.heap.current,
+            'start': probe.heap.start,
+            'ceiling': probe.heap.ceiling,
+        } if hasattr(probe, 'heap') and probe.heap else None,
+        'mmap': {
+            'next_address': probe.mmap.next_address,
+            'mapped_pages': set(probe.mmap.mapped_pages),
+            'page_backing': dict(probe.mmap.page_backing),
+            'mappings': list(probe.mmap.mappings),
+            'base_address': probe.mmap.base_address,
+            'ceiling_address': probe.mmap.ceiling_address,
+            'search_low_base': probe.mmap.search_low_base,
+        } if hasattr(probe, 'mmap') and probe.mmap else None,
+        'stream_mappings': list(probe.stream.mappings) if hasattr(probe, 'stream') and hasattr(probe.stream, 'mappings') else None,
+        'stat64': {
+            'bytes': dict(probe.stat64.bytes),
+            'read_fields': dict(probe.stat64.read_fields),
+        } if hasattr(probe, 'stat64') else None,
+        'uname': {
+            'bytes': dict(probe.uname.bytes),
+            'read_fields': dict(probe.uname.read_fields),
+        } if hasattr(probe, 'uname') else None,
+    }
+
+    devices = {}
+    for dev_attr in ('gpio', 'usb_buspower', 'usb_event', 'usb_otgcore', 'hdmi', 'cec', 'mmca_char', 'pipes', 'fb', 'gles'):
+        if hasattr(probe, dev_attr):
+            val = getattr(probe, dev_attr)
+            if val is not None:
+                devices[dev_attr] = pickle.dumps(val)
+    subsystems['devices'] = devices
+
+    payload = {
+        'version': 1,
+        'context': ctx_bytes,
+        'registers': regs,
+        'regions': regions,
+        'subsystems': subsystems,
+    }
+
+    raw_bundle = pickle.dumps(payload)
+    filepath.write_bytes(raw_bundle)
+    return len(raw_bundle)
+
+
+def restore_checkpoint(probe, filepath: Path) -> None:
+    """Restores Unicorn memory mappings, CPU context, and subsystem states into an initialized probe."""
+    filepath = Path(filepath)
+    raw_bundle = filepath.read_bytes()
+    payload = pickle.loads(raw_bundle)
+
+    if payload.get('version') != 1:
+        raise ValueError(f"Unsupported checkpoint version: {payload.get('version')}")
+
+    # 1. Unmap all current regions in probe.mu (if any)
+    for begin, end, _ in list(probe.mu.mem_regions()):
+        try:
+            probe.mu.mem_unmap(begin, end - begin + 1)
+        except unicorn.UcError:
+            pass
+
+    # 2. Restore memory regions and contents
+    for reg in payload['regions']:
+        begin = reg['begin']
+        size = reg['size']
+        perms = reg['perms']
+        data = zlib.decompress(reg['data'])
+        probe.mu.mem_map(begin, size, perms)
+        probe.mu.mem_write(begin, data)
+
+    if getattr(probe, 'null_page_policy', None) == 'read-zero':
+        try:
+            probe.mu.mem_protect(0, 4096, unicorn.UC_PROT_READ)
+            probe.mu.mem_write(0, bytes(4096))
+        except unicorn.UcError:
+            pass
+
+    # 3. Restore Unicorn CPU context and explicit ARM register state (with Thumb/CPSR handling)
+    ctx = pickle.loads(payload['context'])
+    probe.mu.context_restore(ctx)
+
+    if 'registers' in payload:
+        regs = payload['registers']
+        for r in ARM_CHECKPOINT_REGS:
+            if r not in (arm.UC_ARM_REG_PC, arm.UC_ARM_REG_CPSR):
+                probe.mu.reg_write(r, regs[r])
+        cpsr = regs[arm.UC_ARM_REG_CPSR]
+        probe.mu.reg_write(arm.UC_ARM_REG_CPSR, cpsr)
+        pc = regs[arm.UC_ARM_REG_PC]
+        if cpsr & 0x20:  # Thumb mode requires LSB set when writing PC in Unicorn
+            entry_pc = pc | 1
+            probe.mu.reg_write(arm.UC_ARM_REG_PC, entry_pc)
+        else:
+            entry_pc = pc & ~1
+            probe.mu.reg_write(arm.UC_ARM_REG_PC, entry_pc)
+        probe.entry = entry_pc
+
+    # 4. Restore Python Subsystem State
+    sub = payload['subsystems']
+    probe.instructions = sub['instructions']
+    probe.signal_handlers = sub['signal_handlers']
+    probe.report['serviced_syscalls'] = sub['serviced_syscalls']
+    probe.report['syscall_responses_supplied'] = sub['syscall_responses_supplied']
+    if 'loaded_modules' in sub:
+        probe.report['loaded_modules'] = sub['loaded_modules']
+
+    probe.filesystem.fds = sub['filesystem_fds']
+    probe.filesystem.cache = sub['filesystem_cache']
+
+    if sub.get('threads') and hasattr(probe, 'threads'):
+        probe.threads = pickle.loads(sub['threads'])
+    if sub.get('uipc') and hasattr(probe, 'uipc'):
+        probe.uipc = pickle.loads(sub['uipc'])
+    if sub.get('sem') and hasattr(probe, 'sem'):
+        probe.sem = pickle.loads(sub['sem'])
+    elif hasattr(probe, 'sem') and not getattr(probe, 'sem', None):
+        probe.sem = GuestSem()
+
+    if sub.get('heap') and hasattr(probe, 'heap'):
+        probe.heap.current = sub['heap']['current']
+        probe.heap.start = sub['heap']['start']
+        probe.heap.ceiling = sub['heap']['ceiling']
+
+    if sub.get('mmap') and hasattr(probe, 'mmap'):
+        probe.mmap.next_address = sub['mmap']['next_address']
+        probe.mmap.mapped_pages = set(sub['mmap']['mapped_pages'])
+        probe.mmap.page_backing = dict(sub['mmap']['page_backing'])
+        probe.mmap.mappings = list(sub['mmap']['mappings'])
+        probe.mmap.base_address = sub['mmap']['base_address']
+        probe.mmap.ceiling_address = sub['mmap']['ceiling_address']
+        probe.mmap.search_low_base = sub['mmap']['search_low_base']
+
+    if sub.get('stream_mappings') and hasattr(probe, 'stream') and hasattr(probe.stream, 'mappings'):
+        probe.stream.mappings = sub['stream_mappings']
+
+    if sub.get('stat64') and hasattr(probe, 'stat64'):
+        probe.stat64.bytes = sub['stat64']['bytes']
+        probe.stat64.read_fields = sub['stat64']['read_fields']
+
+    if sub.get('uname') and hasattr(probe, 'uname'):
+        probe.uname.bytes = sub['uname']['bytes']
+        probe.uname.read_fields = sub['uname']['read_fields']
+
+    for dev_attr, dev_bytes in sub.get('devices', {}).items():
+        setattr(probe, dev_attr, pickle.loads(dev_bytes))
+
+    if getattr(probe, 'null_page_policy', None) == 'read-zero':
+        try:
+            probe.mu.mem_protect(0, 4096, unicorn.UC_PROT_READ)
+        except unicorn.UcError:
+            pass
+        probe.mu.mem_write(0, bytes(4096))
+        def _null_page_read_guard(uc, access, address, size, value, user_data):
+            if address < 16:
+                uc.mem_write(0, bytes(16))
+        probe.mu.hook_add(unicorn.UC_HOOK_MEM_READ, _null_page_read_guard, begin=0, end=16)
+        def _null_page_write_guard(uc, access, address, size, value, user_data):
+            return True
+        probe.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE_PROT, _null_page_write_guard, begin=0, end=4095)
+        def _null_page_keep_zero(uc, access, address, size, value, user_data):
+            if address < 16:
+                uc.mem_write(0, bytes(16))
+        probe.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, _null_page_keep_zero, begin=0, end=15)

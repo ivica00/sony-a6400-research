@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--timeout-us', type=int, default=60000000)
     parser.add_argument('--trace-library-activation', action='store_true', help='passively record original im.elf dlopen call/return arguments')
     parser.add_argument('--madvise-dontneed', action='store_true', help='discard verified private anonymous pages on MADV_DONTNEED')
+    parser.add_argument('--fast-hooks', action='store_true', help='accelerate emulation using block hooks and address-filtered IT workarounds (~100x speedup)')
     parser.add_argument('--stop-worker-main-stack', action='store_true', help='diagnostic stop when a scheduled worker enters the initial main-stack mapping')
     parser.add_argument('--watch-word', action='append', type=lambda value: int(value, 0), default=[], help='record bounded passive writes to a guest diagnostic word')
     parser.add_argument('--argument', action='append', default=[], help='explicit im.elf argument; bootin phase commands use s/g/r/u/l/i/a')
@@ -59,10 +60,22 @@ def main():
                         help='stop on /dev/usb/event (default); driver-bound binds /dev/usb/event (242:0) with verified ioctl/read contracts')
     parser.add_argument('--usb-otgcore-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/usb/otgcore (default); driver-bound binds /dev/usb/otgcore (242:2) with verified ioctl contracts')
+    parser.add_argument('--hdmi-device', choices=('stop', 'driver-bound'), default='stop',
+                        help='stop on /dev/hdmi (default); driver-bound binds /dev/hdmi (248:25) with verified ioctl contracts')
+    parser.add_argument('--cec-device', choices=('stop', 'driver-bound'), default='stop',
+                        help='stop on /dev/cec (default); driver-bound binds /dev/cec (248:27) with verified ioctl contracts')
+    parser.add_argument('--mmca-char-device', choices=('stop', 'driver-bound'), default='stop',
+                        help='stop on /dev/mmca-char (default); driver-bound binds /dev/mmca-char (250:0..2) and /dev/ms-char (249:0)')
     parser.add_argument('--gles-device', choices=('stop', 'kernel-bound'), default='stop',
                         help='stop on /dev/dmpgles2 (default); kernel-bound binds /dev/dmpgles2 with verified TASK_SIZE 0x5f000000')
     parser.add_argument('--mmap-base', type=lambda x: int(x, 0), default=None,
                         help='explicit mmap allocation base; defaults to 0x04000000 when gles-device is kernel-bound')
+    parser.add_argument('--log-interval', type=int, default=5000000,
+                        help='real-time boot progress heartbeat interval in instructions (0 to disable periodic heartbeats)')
+    parser.add_argument('--quiet-boot', action='store_true',
+                        help='disable real-time BootLogger milestone streaming and automatic boundary diagnosis')
+    parser.add_argument('--save-checkpoint', type=Path, default=None, help='save emulator snapshot to file upon completion')
+    parser.add_argument('--load-checkpoint', type=Path, default=None, help='load emulator snapshot from file before execution')
     parser.add_argument('--report', type=Path, default=PROJECT_ROOT / 'artifacts/execution/interpreter-ui-boot-test.json')
     args = parser.parse_args()
     if args.instructions <= 0 or args.timeout_us <= 0:
@@ -94,7 +107,16 @@ def main():
                   'readonly_image_times': args.readonly_image_times}
     if args.stream_device == 'image-driver':
         from tools.research.stream_contract import load_stream_profile
-        filesystem['stream_profile'] = load_stream_profile()
+        stream_profile = load_stream_profile()
+        if args.media_service == 'authentic-sd':
+            from tools.research.wbi_memory import IMAGE as WBI_IMAGE, parse_sections, decode_section
+            wbi_raw = checked_input(PROJECT_ROOT, WBI_IMAGE, expected_inputs[WBI_IMAGE])
+            _, wbi_secs = parse_sections(wbi_raw)
+            s555, _, _ = decode_section(wbi_raw, wbi_secs[555])
+            stream_profile['backed_physical_ranges'] = {
+                (0x20030000, 0x68000): s555[0x8000:0x70000]
+            }
+        filesystem['stream_profile'] = stream_profile
         stream_node = manifest['nodes'].get('/dev/stream', {})
         if stream_node.get('kind') != 'special' or stream_node.get('mode', 0) & 0o170000 != 0o020000:
             raise ValueError('Expected original stream character node')
@@ -144,6 +166,7 @@ def main():
                              backup_service_policy=args.backup_service,
                              graphics_service_policy=args.graphics_service,
                              null_page_policy=args.null_page,
+                             hook_mode='fast' if args.fast_hooks else 'instruction',
                              kmod_service_policy=args.kmod_service,
                              media_service_policy=args.media_service,
                              mmap_base=mmap_base,
@@ -172,6 +195,15 @@ def main():
     if args.usb_otgcore_device == 'driver-bound':
         from src.a6400.execution.guest_usb_otgcore import GuestUsbOtgCore
         probe.usb_otgcore = GuestUsbOtgCore()
+    if args.hdmi_device == 'driver-bound':
+        from src.a6400.execution.guest_hdmi import GuestHdmi
+        probe.hdmi = GuestHdmi()
+    if args.cec_device == 'driver-bound':
+        from src.a6400.execution.guest_cec import GuestCec
+        probe.cec = GuestCec()
+    if args.mmca_char_device == 'driver-bound':
+        from src.a6400.execution.guest_mmca_char import GuestMmcChar
+        probe.mmca_char = GuestMmcChar()
     if args.readonly_image_times:
         probe.report['readonly_image_mount_selection'] = readonly_mounts
 
@@ -248,8 +280,23 @@ def main():
 
     probe.uipc.handle_rcv_msg_tmo = patched_rcv_msg_tmo
 
+    if not args.quiet_boot:
+        from tools.camera_link import BootLogger
+        BootLogger(log_interval=args.log_interval).attach(probe)
+
+    from src.a6400.execution.guest_checkpoint import restore_checkpoint, save_checkpoint
+    if args.load_checkpoint and args.load_checkpoint.exists():
+        print(f'[*] Restoring checkpoint from: {args.load_checkpoint}...')
+        restore_checkpoint(probe, args.load_checkpoint)
+        probe.uipc.handle_rcv_msg_tmo = patched_rcv_msg_tmo
+        active_tid = probe.threads.current_tid if hasattr(probe, 'threads') else 1000
+        print(f'[*] Checkpoint restored! Resuming at instruction {probe.instructions:,} (active TID {active_tid}).')
     print(f"[*] Running probe (budget: {args.instructions} instructions)...")
     report = probe.run(instruction_budget=args.instructions, timeout_us=args.timeout_us)
+    if args.save_checkpoint:
+        print(f'[*] Saving checkpoint to: {args.save_checkpoint}...')
+        sz = save_checkpoint(probe, args.save_checkpoint)
+        print(f'[*] Checkpoint saved successfully ({sz:,} bytes) at instruction {probe.instructions:,}!')
     report['boot_stimulus'] = {
         'queue': '0x0094016a', 'injected': injected, 'deliveries': injection_records,
         'pending': [hex(event) for event in boot_events_to_inject],
@@ -334,6 +381,11 @@ def main():
     print(f"[*] Open files count: {len(opens)}")
     for o in opens:
         print(f"    fd={o.get('returned')}: {o.get('path')}")
+
+    if not args.quiet_boot:
+        from tools.camera_link import BoundaryAnalyzer, format_boundary_report
+        analyzer = BoundaryAnalyzer()
+        print(format_boundary_report(analyzer.analyze_report(report)))
 
 
 if __name__ == '__main__':

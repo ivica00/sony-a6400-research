@@ -36,3 +36,27 @@ tools/*.exe
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Temporary mod deployment, sysroot, and simulation tools
+dist/
+devcrashday_a6400/
+src/mods/
+tools/sony_sysroot/
+tools/deploy_*.py
+tools/simulate_*.py
+tools/clean_camera.py
+tools/convert_phantom_luts.py
+tools/emergency_rescue.py
+tools/fix_lock_and_deploy.py
+tools/kill_mod_and_reboot.py
+tools/restore_clean_camera.py
+tools/setup_sysroot.py
+tools/build_mod_sysroot.py
+tools/build.sh
+tools/check_mod_logs.py
+tools/*read_dump.py
+tools/read_*_dump.py
+reports/*.png
+reports/*.bin
+docs/modern_menu_overhaul_design.md
+
