@@ -58,5 +58,6 @@ tools/*read_dump.py
 tools/read_*_dump.py
 reports/*.png
 reports/*.bin
+tests/test_modern_menu_*.py
 docs/modern_menu_overhaul_design.md
 
