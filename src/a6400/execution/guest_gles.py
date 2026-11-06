@@ -12,6 +12,7 @@ GLES_IOCTL_MAGIC = 0x82
 GLES_GET_VERSION = 0x80048200
 GLES_GET_CONTEXT = 0xc0048201
 GLES_QUERY_RESOURCE = 0xc0048202
+GLES_RELEASE_RESOURCE = 0xc0048203
 GLES_RESET = 0x40048204
 GLES_SET_POWER_ON = 0xc0048204
 GLES_GET_SUBDEVICE_ID = 0x80048205
@@ -132,6 +133,15 @@ class GuestGles:
             mem_write(arg, struct.pack('<I', pwr))
             self.transactions.append({'operation': 'ioctl', 'cmd': cmd, 'arg': arg, 'returned': 0,
                                      'power_state': pwr})
+            return 0
+
+        if cmd == GLES_RELEASE_RESOURCE:
+            # Verified in grm_gles.ko at 0xad0: release resource mask, returns 0
+            if arg >= self.binding.task.address_limit:
+                raise UnsupportedGles('user_pointer_outside_task_limit', address=arg)
+            raw_mask = mem_read(arg, 4)
+            mask = struct.unpack('<I', raw_mask)[0]
+            self.transactions.append({'operation': 'ioctl', 'cmd': cmd, 'arg': arg, 'returned': 0, 'mask': mask})
             return 0
 
         if cmd == GLES_QUERY_RESOURCE:

@@ -1,0 +1,21 @@
+# 0091: Approved debugger bootstrap stopped on original-driver mismatch
+
+User explicitly approved the concrete persistent root USB debugger package described in E0090 and docs/NATIVE_USB_DEBUGGER.md. The earlier approval-review block for that package is superseded by this user approval; do not request the same approval again for routine completion within this scope.
+
+`venv/Scripts/python.exe tools/deploy_native_usb_debugger.py` reached authenticated Senser mode on the physical camera. Its first original-input comparison, `/usr/kmod/usb_extcmd.ko` against the retained analyzed file, failed. The analyzed local file is 14,808 bytes. The initial implementation did not retain the returned camera bytes before raising, so the reason for mismatch is **not yet known**. It must not be described as proven ABI incompatibility, corruption, or harmless metadata variation.
+
+The script stopped before either debugger payload upload or any preload write. A local before-preload copy exists in the newly created `native-usb-debug-deploy-*` attempt directory; there is no success manifest. No new root debugger is installed by this attempt.
+
+Improved the script to retain each camera original and both hashes/lengths in a failed manifest before refusing a mismatch. Also made no-device/no-callback completion return exit code 2 rather than misleading success. These changes do not weaken the identity guard.
+
+Three subsequent invocation attempts did not find a USB camera; the capture callback did not run. A physical reconnect is needed before obtaining the mismatching camera driver and analyzing it. Do not retry blindly or bypass the guard. Existing camera preload is unchanged by this task. The next step is capture/compare the actual on-camera USB driver/API, analyze any relevant code differences, then continue the already approved installation and native-mode runtime checks.
+
+## Mismatches resolved; transport now unavailable
+
+The camera subsequently re-enumerated. A capture under `artifacts/hardware/native-usb-debug-deploy-20261105-165712/` preserved the complete 14,808-byte camera driver. All section payloads except `.note.gnu.build-id` and `.comment` match the analyzed input, including code/data/relocations/symbols/modinfo. Camera SHA-256 `fd2929a97f2de04bcc949369fd42281ccb046ec3a01bbf0fe04f3e48ee5a7e2f`; source `fca6bfcf5e0c3c4098d33b810a2788eac1e8d8bbefe072e8792d203d69854719`. A strict same-layout metadata comparison now permits only these two section payload differences and rejects overlap with any other ELF content. Three synthetic guard tests pass (allowed metadata, rejected code/header/layout edits, rejected section overlap).
+
+The next preserved attempt, `native-usb-debug-deploy-20261105-165840/`, confirmed that driver identity and captured the on-camera libusbcmd.so (15,948 bytes). Every section payload except `.comment` equals the analyzed library, including .text/.plt, symbol/string tables, relocations, dynamic/GOT/data, attributes and unwind records. All program headers match. Differences are only comment size (63 versus 109), .shstrtab file offset and ELF section-table file offset. Rather than permitting generic repacking, the installer pins this exact captured camera file with SHA-256 `9fbf3339792e40caa73faa63d6b2dfa962ca4c47853320b49ff589595283ba71` and requires that pinned local input remain unchanged. The original analyzed source retains its own provenance.
+
+An independent `tools.research.usb_debug_abi_trace` experiment successfully executed the original libusbcmd::PackParamDriver in Unicorn on explicitly constructed buffers. It verifies public 24-byte to driver 20-byte field placement, timeout 1000, flags and untouched reserved bytes. Report: `artifacts/analysis/usb-debug-abi-trace-20261105.json`. No hardware response or registration success is supplied by this experiment.
+
+The compatibility questions are resolved for this installation. Subsequent attempts and a final raw USB/native-driver/libusb check found **no Sony device**. No payload upload or preload write occurred in any of these attempts. The approved native USB debugger is still not installed; physical USB reconnect is now the only immediate prerequisite to resume the installer. Do not request deployment approval again. Capture runtime registration, uid/capabilities and actual command behavior after successful installation.

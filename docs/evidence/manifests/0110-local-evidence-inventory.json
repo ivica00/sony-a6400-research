@@ -1,0 +1,121 @@
+{
+  "date": "2026-11-06",
+  "scope": "Identity metadata only; raw code, RAM and generated reports remain in private local archive",
+  "files": [
+    {
+      "path": "artifacts/hardware/native-layout-snapshot-pid2491.log",
+      "bytes": 559,
+      "sha256": "0800b321b1a51f19b889a2158a3869e456932035edf8b0a5ee85bd7f766af2d4"
+    },
+    {
+      "path": "artifacts/hardware/native-layout-snapshot-pid2491.bin",
+      "bytes": 104596,
+      "sha256": "b8c6056a1925949a20abc55240aeb441a89c61ff8d49b7616b7caf6e6248eff5"
+    },
+    {
+      "path": "artifacts/hardware/native-layout-snapshot-pid2491.json",
+      "bytes": 211016,
+      "sha256": "3c5519d228ab86e98da8406ac0fb923652071370fc897a4be483a3b03996d04b"
+    },
+    {
+      "path": "artifacts/hardware/native-setting-node-after-layout-pid2491.json",
+      "bytes": 6138,
+      "sha256": "28c9c7894b55be3bb1e366c9e2f86906c120e8804d654a9d37853b58f2cb2b4d"
+    },
+    {
+      "path": "artifacts/hardware/native-menu-activation-dependencies.json",
+      "bytes": 535346,
+      "sha256": "5d675005ea3eb1d33860170aab3d7c74dfc97b5793676ee9eef3979bc61573fd"
+    },
+    {
+      "path": "artifacts/hardware/native-main-thread-context.json",
+      "bytes": 360,
+      "sha256": "7b7c309e3ed3509e8efda99ccdbd2743537dabbf775d0f7be66d8fb0a98779f7"
+    },
+    {
+      "path": "artifacts/hardware/native-main-thread-context-v2.json",
+      "bytes": 505,
+      "sha256": "1308283ce212cda49af228f8070c265e537a498b039e256289a7cade6c35c835"
+    },
+    {
+      "path": "artifacts/hardware/native-kuser-template.bin",
+      "bytes": 160,
+      "sha256": "ff21fed2594b7d4bf88fd7dd7b865888a019521cc2ad2c41a2af73980385f739"
+    },
+    {
+      "path": "artifacts/hardware/activation-broad-code-audit.json",
+      "bytes": 3412,
+      "sha256": "96b5beb5d2e4ae481f0b1c8588ba8940dca46d89c6a82499017600a3f604490f"
+    },
+    {
+      "path": "artifacts/hardware/native-listtab-code-component.bin",
+      "bytes": 32768,
+      "sha256": "010a6b8f9ae4624b74111221ebdb1dfd6e799d5c4faf2b9f53f66bdccd33234b"
+    },
+    {
+      "path": "artifacts/hardware/native-listtab-code-component.json",
+      "bytes": 2703,
+      "sha256": "585f6c49651e506f2051ff9c1253f40dd7112e98e281e5f60ca55db98894686e"
+    },
+    {
+      "path": "artifacts/hardware/native-widget-geometry-component.bin",
+      "bytes": 86016,
+      "sha256": "a2078e9fbb40f1947a8cbf0472786b97b1b6ea345c7f3295b261f15f629b846a"
+    },
+    {
+      "path": "artifacts/hardware/native-widget-worldpos-contracts.json",
+      "bytes": 5437,
+      "sha256": "9897be898e56aedeb7ab09925f6a1142a6e23dae04837ea5c84cb4e87aaeccd9"
+    },
+    {
+      "path": "artifacts/hardware/native-hit-visibility-contracts.json",
+      "bytes": 2187,
+      "sha256": "e044c58c08f77c9a5f7b21cab06ebec1b1647ea26053f8f8f27c7fbbe54b01f8"
+    },
+    {
+      "path": "artifacts/hardware/native-menu-selection-transition-contracts.json",
+      "bytes": 18093,
+      "sha256": "4eb673f41800d2aec80d63d89091b13ad04ad979b5c8342169eb38afe68b8ee8"
+    },
+    {
+      "path": "artifacts/analysis/active-menu-snapshot-probe.json",
+      "bytes": 90554,
+      "sha256": "fd146d9b38d7e164268de8bd99d374479d8fefe0957ce2be995d0447ed48d657"
+    },
+    {
+      "path": "artifacts/analysis/active-menu-geometry-order-check.json",
+      "bytes": 207,
+      "sha256": "144eb1686f08fd5d9d443bc09d5b56b15e2a56a16efbe9f0b2c72ad2f3ac8964"
+    },
+    {
+      "path": "artifacts/analysis/active-menu-binding-snapshot-probe.json",
+      "bytes": 19927,
+      "sha256": "8881bbcd9ae09f872ddcaf5a8e0bb8688b81688d1b3dacbdc91f48bd7fd548a8"
+    },
+    {
+      "path": "artifacts/analysis/menu-row-snapshot-probe.json",
+      "bytes": 6600,
+      "sha256": "4ce60cd51a95cc7a65eb543129c35a5fd30df559330caf73b27c0e32c9eded6e"
+    },
+    {
+      "path": "artifacts/analysis/menu-row-hit-snapshot-probe.json",
+      "bytes": 74601,
+      "sha256": "99fbe8fa45e37b01bd7a1ea7ac5289b1807cd25ade6e1e4281c6ab893dd43429"
+    },
+    {
+      "path": "artifacts/analysis/menu-activation-snapshot-probe.json",
+      "bytes": 253840,
+      "sha256": "c8ec1620c9ca4ef47903b1c91aabc40a53f32592ebd369a3ec1d02fd92115d93"
+    },
+    {
+      "path": "artifacts/analysis/menu-activation-main-thread-snapshot-probe.json",
+      "bytes": 259066,
+      "sha256": "efe1c11102f013ed5e9224306eeab1fb9a646a0bf5b4e716251bfc727c3e30e3"
+    },
+    {
+      "path": "artifacts/analysis/menu-activation-dependency-history.json",
+      "bytes": 65407,
+      "sha256": "efe2c13f67c82089da08850efc2677eca5b1803d6a6f8e41ef6f43c2933ab0a8"
+    }
+  ]
+}

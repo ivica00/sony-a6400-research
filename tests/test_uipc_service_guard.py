@@ -48,7 +48,7 @@ class UipcServiceGuardTests(unittest.TestCase):
             probe.uipc.pool_base = base + 512
             probe.mu.mem_write(base + 16, struct.pack('<2I', DMM_SERVICE_QUEUE, base + 128))
             probe.mu.mem_write(base + 128, struct.pack('<6I', 1, 0x280, 0, 0, queue, 7))
-            expected_message = probe.uipc.pool_base + probe.uipc.next_offset
+            expected_message = probe.uipc.pool_base + probe.uipc.next_offset + 12
         for register, value in ((arm.UC_ARM_REG_R0, 3), (arm.UC_ARM_REG_R1, 0x80000007),
                                 (arm.UC_ARM_REG_R2, base)):
             probe.mu.reg_write(register, value)

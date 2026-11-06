@@ -991,12 +991,11 @@ class InterpreterProbe:
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     if self.threads and cmd == GLES_LOCK_SEMAPHORE:
-                        runnable = [t.tid for t in self.threads.threads.values() if t.state == 'runnable' and t.tid != self.threads.current_tid]
-                        if runnable:
-                            next_tid = runnable[0]
+                        next_tid = self.threads.get_next_runnable_tid()
+                        if next_tid is not None:
                             self.threads.save_context(uc)
                             self.threads.threads[self.threads.current_tid].state = 'runnable'
-                            self.threads.restore_context(uc, next_tid, self.kuser)
+                            self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
                     return
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'gpio':
                     owner_id = self.filesystem.fds[fd].get('owner_id')
@@ -1548,6 +1547,24 @@ class InterpreterProbe:
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
                 return
+            if number == 158:  # sched_yield
+                ret = 0
+                uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                if self.syscall_policy == 'threads' and hasattr(self, 'threads'):
+                    next_tid, event = self.threads.handle_sched_yield()
+                    event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    if next_tid is not None:
+                        self.threads.save_context(uc)
+                        self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+                    return
+                else:
+                    event = {'syscall': 'sched_yield', 'r7': 158, 'returned': ret,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    return
             if number == 242:  # sched_setaffinity
                 pid = uc.reg_read(arm.UC_ARM_REG_R0)
                 len_ = uc.reg_read(arm.UC_ARM_REG_R1)
@@ -1577,6 +1594,18 @@ class InterpreterProbe:
                         return
                 elif cmd == 1:  # FUTEX_WAKE
                     woken, event = self.threads.handle_futex_wake(uaddr, val)
+                    uc.reg_write(arm.UC_ARM_REG_R0, woken)
+                    event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    return
+                elif cmd == 5:  # FUTEX_WAKE_OP
+                    val2 = uc.reg_read(arm.UC_ARM_REG_R3)
+                    uaddr2 = uc.reg_read(arm.UC_ARM_REG_R4)
+                    val3 = uc.reg_read(arm.UC_ARM_REG_R5)
+                    woken, event = self.threads.handle_futex_wake_op(
+                        uaddr, val, val2, uaddr2, val3, uc.mem_read, uc.mem_write
+                    )
                     uc.reg_write(arm.UC_ARM_REG_R0, woken)
                     event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
                     self.report['serviced_syscalls'].append(event)
@@ -1838,6 +1867,43 @@ class InterpreterProbe:
                 ret = 0
                 uc.reg_write(arm.UC_ARM_REG_R0, ret)
                 event = {'syscall': 'nanosleep', 'r7': 162, 'tv_sec': tv_sec, 'tv_nsec': tv_nsec,
+                         'returned': ret, 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                if self.syscall_policy == 'threads' and hasattr(self, 'threads'):
+                    next_tid = self.threads.get_next_runnable_tid()
+                    if next_tid is not None:
+                        event['switched_to'] = next_tid
+                        self.threads.save_context(uc)
+                        self.threads.threads[self.threads.current_tid].state = 'runnable'
+                        self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+                self.report['serviced_syscalls'].append(event)
+                self.report['syscall_responses_supplied'] += 1
+                return
+            if number == 78:  # sys_gettimeofday
+                tv_ptr = uc.reg_read(arm.UC_ARM_REG_R0)
+                tz_ptr = uc.reg_read(arm.UC_ARM_REG_R1)
+                if tv_ptr != 0:
+                    tv_sec = 1558936647 + (self.instructions // 1000000)
+                    tv_usec = self.instructions % 1000000
+                    uc.mem_write(tv_ptr, struct.pack('<II', tv_sec, tv_usec))
+                if tz_ptr != 0:
+                    uc.mem_write(tz_ptr, struct.pack('<II', 0, 0))
+                ret = 0
+                uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                event = {'syscall': 'gettimeofday', 'r7': 78, 'tv': tv_ptr, 'tz': tz_ptr,
+                         'returned': ret, 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                self.report['serviced_syscalls'].append(event)
+                self.report['syscall_responses_supplied'] += 1
+                return
+            if number == 263:  # sys_clock_gettime
+                clk_id = uc.reg_read(arm.UC_ARM_REG_R0)
+                tp_ptr = uc.reg_read(arm.UC_ARM_REG_R1)
+                if tp_ptr != 0:
+                    tv_sec = 1558936647 + (self.instructions // 1000000)
+                    tv_nsec = (self.instructions % 1000000) * 1000
+                    uc.mem_write(tp_ptr, struct.pack('<II', tv_sec, tv_nsec))
+                ret = 0
+                uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                event = {'syscall': 'clock_gettime', 'r7': 263, 'clk_id': clk_id, 'tp': tp_ptr,
                          'returned': ret, 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1

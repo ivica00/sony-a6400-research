@@ -6,7 +6,7 @@ from src.a6400.execution.guest_gles import (
     GuestGles, GlesBinding, UnsupportedGles, GLES_GET_VERSION,
     GLES_GET_MMIO_SIZE, GLES_GET_SUBDEVICE_ID, GLES_GET_POWER_STATE,
     GLES_QUERY_RESOURCE, GLES_GET_ALIGNMENT, GLES_GET_CONTEXT, GLES_RESET,
-    GLES_LOCK_SEMAPHORE, GLES_UNLOCK_SEMAPHORE, GLES_SIGNAL_COMPLETION,
+    GLES_LOCK_SEMAPHORE, GLES_UNLOCK_SEMAPHORE, GLES_RELEASE_RESOURCE, GLES_SIGNAL_COMPLETION,
     GLES_WAIT_COMPLETION
 )
 from src.a6400.execution.kernel_task_identity import KernelTaskObservation, UnsupportedKernelBinding
@@ -196,6 +196,17 @@ class GuestGlesTests(unittest.TestCase):
         self.assertEqual(event['reason'], 'guarded_mmap2_allocated')
         self.assertEqual(mapper.page_backing[event['returned']]['device'], 'dmpgles2')
         self.assertEqual(gles.transactions[-1]['physical'], 0xf1000000)
+
+    def test_ioctl_release_resource(self):
+        gles = GuestGles(self.binding)
+        owner = gles.open(flags=2, caller_pid=1003, caller_tgid=1000)
+        mem = bytearray(16)
+        struct.pack_into('<I', mem, 4, 0x04000000)
+        ret = gles.ioctl(owner['owner_id'], GLES_RELEASE_RESOURCE, 4,
+                         lambda a, s: bytes(mem[a:a+s]),
+                         lambda a, d: mem.__setitem__(slice(a, a+len(d)), d))
+        self.assertEqual(ret, 0)
+        self.assertEqual(gles.transactions[-1]['mask'], 0x04000000)
 
     def test_unsupported_ioctl_raises(self):
         gles = GuestGles(self.binding)

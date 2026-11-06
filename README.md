@@ -1,5 +1,16 @@
 # Sony a6400 firmware execution research
 
+Current checkpoint (2026-11-06): the normal-USB root debugger is installed and
+the original active-menu lookup, 145-widget geometry, row/model association and
+252 geometric hit checks execute on captured camera state. Original activation
+still stops before a resource-manager accounting mutation, even with an explicit
+captured main-thread/TLS control. **Physical main-menu touch is not working.**
+See [E0109](docs/evidence/0109-original-activation-thread-context-and-resource-boundary.md),
+[the live-camera/emulator workflow](docs/LIVE_CAMERA_EMULATOR_WORKFLOW.md), and
+[the publication checkpoint](docs/evidence/0110-research-checkpoint-and-github-publication.md).
+Raw firmware, RAM captures and checkpoints remain local and are not in Git.
+The entries below preserve earlier milestones and their then-current boundaries.
+
 New-owner GLES follow-up: [E0065](docs/evidence/0065-original-gles-new-owner-lifecycle-and-process-binding.md) executes original allocation, open/query/release and completion in one captured-state CPU instance (2465 instructions). All 431 tests pass. It adds explicit task-identity/address-space checks: the main process cannot reuse the selected captured task's ownership or address limit. No framebuffer pixels are demonstrated.
 
 Original GLES follow-up: [E0064](docs/evidence/0064-captured-gles-open-kernel-locks-and-queries.md) identifies source-matched GLES code, device and reciprocal task ownership in package WBI. Original open and kernel lock instructions return after 437 instructions with real retain-count changes and restored locks; original ioctl queries and kernel copy failures are verified. 423 tests pass. This is an isolated captured-state experiment: main remains at E0063, and cache/GPU hardware, new-process ownership and framebuffer output remain unresolved.

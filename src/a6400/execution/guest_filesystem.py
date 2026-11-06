@@ -22,12 +22,61 @@ class PathError(Exception):
         self.errno, self.reason = errno, reason
 
 
+AUTHENTIC_PROC_MODULES = (
+    b"devno 2161 23 usbg_stillimage,usbg_storage,cec,hdmi,usb_buspwr,usb_darwin,usbg_buspower,dma330,mmc_drv,ms_drv,mcmn_drv,grm_gles,kikilog,usb_extcmd,usbg_sen,usb_portMonitor,stream2,stream,backup,osal_uipc,emmc,ldec,dmac, Live 0x5f000000 (P)\n"
+    b"dmac 12460 3 liro,emmc,ldec, Live 0x5f004000 (P)\n"
+    b"ldec 10134 1 emmc, Live 0x5f00b000 (P)\n"
+    b"emmc 171059 11 - Live 0x5f011000 (P)\n"
+    b"osal_utm 2139 16 cec,hdmi,liro,codec_drv,ms_drv,mcmn_drv,accel,nfc,upm,dmm,kikilog,usb_portMonitor,i2c,osal_ulogio,utimer,osal_uipc, Live 0x5f042000 (P)\n"
+    b"osal_uipc 37181 34 usbg_stillimage,usbg_storage,cec,hdmi,usb_buspwr,usb_darwin,usbg_buspower,liro,codec_drv,dma330,mmc_drv,ms_drv,mcmn_drv,compass,mag,accel,grm_gles,grm_ma,nfc,upm,dmm,kikilog,usbg_sen,usb_portMonitor,sircs,i2c,indctr,udate,input,osal_ulogio,backup,utimer, Live 0x5f046000 (P)\n"
+    b"utimer 21490 0 - Live 0x5f054000 (P)\n"
+    b"backup 61073 17 hdmi,usb_buspwr,usb_darwin,liro,mcmn_drv,mag,accel,nfc,upm,dmm,usbg_sen,usb_portMonitor,i2c,indctr,udate,input,osal_ulogio, Live 0x5f05d000 (P)\n"
+    b"osal_ulogio 29859 0 - Live 0x5f070000 (P)\n"
+    b"input 22826 0 - Live 0x5f07c000 (P)\n"
+    b"udate 9116 0 - Live 0x5f086000 (P)\n"
+    b"indctr 7911 0 - Live 0x5f08c000 (P)\n"
+    b"i2c 10265 0 - Live 0x5f091000 (P)\n"
+    b"sircs 15346 0 - Live 0x5f097000 (P)\n"
+    b"stream 1077 9 - Live 0x5f09f000 (P)\n"
+    b"stream2 1629 3 - Live 0x5f0a3000 (P)\n"
+    b"usb_portMonitor 11648 0 - Live 0x5f0a7000 (P)\n"
+    b"usbg_sen 30337 0 - Live 0x5f0ad000 (P)\n"
+    b"usb_extcmd 9511 0 - Live 0x5f0b9000 (P)\n"
+    b"kikilog 25020 1 - Live 0x5f0bf000 (P)\n"
+    b"dmm 3148818 2 liro,upm, Live 0x5f0ca000 (P)\n"
+    b"upm 110055 0 - Live 0x5f3d0000 (P)\n"
+    b"nfc 10006 0 - Live 0x5f3f1000 (P)\n"
+    b"grm_ma 19680 0 - Live 0x5f3f7000 (P)\n"
+    b"grm_gles 9348 2 - Live 0x5f3ff000 (P)\n"
+    b"accel 9024 0 - Live 0x5f405000 (P)\n"
+    b"mag 6757 0 - Live 0x5f40b000 (P)\n"
+    b"compass 2734 0 - Live 0x5f410000 (P)\n"
+    b"mcmn_drv 91324 2 mmc_drv,ms_drv, Live 0x5f414000 (P)\n"
+    b"ms_drv 162876 0 - Live 0x5f430000 (P)\n"
+    b"usbg_stillimage 19213 0 - Live 0x5f459000 (P)\n"
+    b"mmc_drv 185090 4 - Live 0x5f461000 (P)\n"
+    b"dma330 248111 1 liro, Live 0x5f499000 (P)\n"
+    b"codec_drv 12644 0 - Live 0x5f4d9000 (P)\n"
+    b"liro 51420 0 - Live 0x5f4e0000 (P)\n"
+    b"usbg_buspower 9293 0 - Live 0x5f4f3000 (P)\n"
+    b"usb_darwin 21440 1 usb_buspwr, Live 0x5f4f9000 (P)\n"
+    b"usb_buspwr 8195 1 - Live 0x5f502000 (P)\n"
+    b"hdmi 154375 4 cec, Live 0x5f508000 (P)\n"
+    b"cec 53250 3 - Live 0x5f53c000 (P)\n"
+    b"wlanMemoryAllocator 3569 0 - Live 0x5f552000 (P)\n"
+    b"usbg_storage 53865 1 - Live 0x5f554000 (P)\n"
+)
+
+
 class GuestFilesystem:
     # Invented, NOT observed: /dev/nflasha10 (the real /tmp device) is not among the preserved inputs.
     EXPERIMENTAL_TMP_METADATA = {'mode': 0o040777, 'uid': 0, 'gid': 0, 'nlink': 2, 'inode': 1,
                                  'size': 4096, 'block_size': 4096, 'blocks_512': 8}
     EXPERIMENTAL_PROC_METADATA = {'mode': 0o040555, 'uid': 0, 'gid': 0, 'nlink': 2, 'inode': 1,
                                   'size': 0, 'block_size': 1024, 'blocks_512': 0}
+    EXPERIMENTAL_PROC_MODULES_METADATA = {'mode': 0o100444, 'uid': 0, 'gid': 0, 'nlink': 1, 'inode': 2,
+                                          'size': len(AUTHENTIC_PROC_MODULES), 'block_size': 1024,
+                                          'blocks_512': (len(AUTHENTIC_PROC_MODULES) + 511) // 512}
     EXPERIMENTAL_SETTING_METADATA = {'mode': 0o040755, 'uid': 0, 'gid': 0, 'nlink': 2, 'inode': 1,
                                      'size': 4096, 'block_size': 4096, 'blocks_512': 8}
 
@@ -87,7 +136,22 @@ class GuestFilesystem:
                     raise UnsupportedFilesystem('experimental_descriptor_limit')
                 self.fds[fd] = {'path': '/proc', 'device': 'proc_dir', 'flags': args[1]}
                 return {**event, **note, 'returned': fd, 'reason': 'opened_experimental_proc_dir'}
+            if path == '/proc/modules':
+                fd = next((candidate for candidate in range(3, 259) if candidate not in self.fds), None)
+                if fd is None:
+                    raise UnsupportedFilesystem('experimental_descriptor_limit')
+                self.fds[fd] = {'path': '/proc/modules', 'device': 'proc_modules', 'data': AUTHENTIC_PROC_MODULES, 'offset': 0, 'flags': args[1]}
+                return {**event, **note, 'returned': fd, 'reason': 'opened_authentic_proc_modules',
+                        'size': len(AUTHENTIC_PROC_MODULES), 'sha256': hashlib.sha256(AUTHENTIC_PROC_MODULES).hexdigest()}
             return {**event, **note, 'returned': (-2) & 0xffffffff, 'reason': 'ENOENT_experimental_empty_proc'}
+        if path == '/proc/modules':
+            if number == 33:
+                return {**event, **note, 'returned': 0, 'reason': 'authentic_proc_modules_access'}
+            if self.stat_contract is None:
+                raise UnsupportedFilesystem('stat64_success_structure_not_implemented', path=path)
+            meta = dict(self.EXPERIMENTAL_PROC_MODULES_METADATA)
+            result = self.stat_contract.request(meta, args[1])
+            return {**event, **note, **result, 'experimental_values': meta}
         if path != '/proc':
             return {**event, **note, 'returned': (-2) & 0xffffffff, 'reason': 'ENOENT_experimental_empty_proc'}
         if number == 33:
@@ -257,6 +321,42 @@ class GuestFilesystem:
                             'experimental_values': dict(self.EXPERIMENTAL_PROC_METADATA)}
                 raise UnsupportedFilesystem('proc_dir_operation_not_implemented',
                                             number=number, path=descriptor['path'])
+            if descriptor.get('device') == 'proc_modules':
+                if number == 6:
+                    del self.fds[args[0]]
+                    return {**event, 'returned': 0, 'reason': 'closed_guest_descriptor'}
+                if number == 197:
+                    if self.stat_contract is None:
+                        raise UnsupportedFilesystem('stat64_success_structure_not_implemented', path=descriptor['path'])
+                    meta = dict(self.EXPERIMENTAL_PROC_MODULES_METADATA)
+                    result = self.stat_contract.request(meta, args[1])
+                    return {**event, 'experimental': 'procfs overlay; virtual /proc namespace', **result,
+                            'experimental_values': meta}
+                if number == 19:
+                    signed = args[1] if args[1] < 0x80000000 else args[1] - 0x100000000
+                    if args[2] not in (0, 1, 2):
+                        raise PathError(22, 'EINVAL_whence')
+                    base = (0, descriptor['offset'], len(descriptor['data']))[args[2]]
+                    offset = base + signed
+                    if offset < 0:
+                        raise PathError(22, 'EINVAL_negative_offset')
+                    if offset > 0x7fffffff:
+                        raise UnsupportedFilesystem('large_file_seek_requires_llseek')
+                    descriptor['offset'] = offset
+                    return {**event, 'returned': offset, 'reason': 'guest_offset_updated'}
+                pointer, count = args[1:3]
+                if count > 1024 * 1024:
+                    raise UnsupportedFilesystem('experimental_read_limit', count=count)
+                amount = min(count, max(0, len(descriptor['data']) - descriptor['offset']))
+                if amount and not accessible(self.mu, pointer, amount, unicorn.UC_PROT_WRITE):
+                    raise PathError(14, 'EFAULT_read_buffer')
+                offset = descriptor['offset']
+                if amount:
+                    self.mu.mem_write(pointer, descriptor['data'][offset:offset + amount])
+                    if self.after_write:
+                        self.after_write(pointer, amount)
+                descriptor['offset'] += amount
+                return {**event, 'returned': amount, 'reason': 'read_snapshot', 'offset_before': offset}
             if descriptor.get('device') == 'urandom':
                 if number == 6:
                     del self.fds[args[0]]

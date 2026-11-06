@@ -1,5 +1,16 @@
 # Firmware execution roadmap
 
+Latest checkpoint, 2026-11-06: original active-menu lookup and geometry, model/row
+association, geometric hit checks and separate selection controls are established
+on retained camera snapshots (E0106–E0108). E0109 activation reaches a guarded
+resource-manager write after an explicit main-thread/TLS control; full activation
+and the original UI input/thread route remain open. Main-menu touch is incomplete.
+Next establish resource-manager side effects and the correct UI context, complete
+refresh/activation, then validate a touch modification on the physical camera.
+Follow the [camera/emulator workflow](LIVE_CAMERA_EMULATOR_WORKFLOW.md).
+The MonDrv checkpoint workaround remains an explicitly unvalidated host-created
+queue; original initialization is pending (E0097 output-backpressure evidence).
+
 Sugilite display pipeline handshake and render loop: [E0070](evidence/0070-sugilite-render-loop-and-surface-transfer.md) identifies display panel polling in libObj.so at 0x72baf0 and resolves it by configuring sub_device_id: 1 in GuestGles. Main process reaches continuous steady-state rendering, executing 61,582 complete frame render cycles (123,168 GLES_LOCK_SEMAPHORE, 123,166 GLES_UNLOCK_SEMAPHORE, 61,582 GLES_GET_RESOURCE_SUB, 61,582 GLES_GET_POWER_STATE_ALT) and performing 800-element display surface memory transfers via ARM memcpy in libc at 0x502601c0. 486 tests pass. Next connect media detection pipeline (libInfraMediaDetect.so) for read-only SD E:\ integration.
 
 USB bus power driver contract and 100M instruction milestone: [E0069](evidence/0069-usb-buspower-driver-contract-and-100m-instruction-milestone.md) implements GuestUsbBusPower (/dev/usb/buspwr, major 248, minor 13) with verified ioctl contracts (0xf200-0xf220). Firmware loads all three USB modules (usbg_buspower.ko, usb_darwin.ko, usb_buspwr.ko), opens /dev/usb/buspwr, and executes SetPortState (0xf20c). Execution reaches 100,000,000 instructions (1,013,768 serviced syscalls) with 11 concurrent threads, emitting '!!! GLES Vecgen disabled.' and executing the active Sugilite GPU/display worker (thread 1008, ModelYuvMuteToInstance in libObj.so). 486 tests pass. Next ModelYuvMute state transitions and SD media path integration.

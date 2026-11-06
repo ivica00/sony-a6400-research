@@ -281,5 +281,75 @@ class GuestThreadsTests(unittest.TestCase):
         self.assertEqual(event['syscall'], 'sched_getscheduler')
 
 
+
+    def test_get_next_runnable_tid_cyclic_round_robin(self):
+        gt = GuestThreads(initial_tid=1000)
+        gt.threads[1001] = GuestThread(1001, 't1', 'runnable')
+        gt.threads[1002] = GuestThread(1002, 't2', 'blocked_futex')
+        gt.threads[1003] = GuestThread(1003, 't3', 'runnable')
+
+        # Current is 1000 -> next runnable is 1001
+        self.assertEqual(gt.get_next_runnable_tid(), 1001)
+
+        # Switch to 1001 -> next runnable is 1003
+        gt.current_tid = 1001
+        gt.threads[1001].state = 'running'
+        self.assertEqual(gt.get_next_runnable_tid(), 1003)
+
+        # Switch to 1003 -> next runnable is 1001 (wraps around)
+        gt.threads[1001].state = 'runnable'
+        gt.current_tid = 1003
+        gt.threads[1003].state = 'running'
+        self.assertEqual(gt.get_next_runnable_tid(), 1001)
+
+        # When no other threads are runnable
+        gt.threads[1001].state = 'blocked_uipc'
+        self.assertIsNone(gt.get_next_runnable_tid())
+
+    def test_handle_sched_yield(self):
+        gt = GuestThreads(initial_tid=1000)
+        gt.threads[1001] = GuestThread(1001, 'worker', 'runnable')
+
+        next_tid, event = gt.handle_sched_yield()
+        self.assertEqual(next_tid, 1001)
+        self.assertEqual(event['syscall'], 'sched_yield')
+        self.assertEqual(event['r7'], 158)
+        self.assertEqual(event['yielded_tid'], 1000)
+        self.assertEqual(event['switched_to'], 1001)
+        self.assertEqual(event['returned'], 0)
+        self.assertEqual(gt.threads[1000].state, 'runnable')
+
+        # Yield when no other threads runnable
+        gt.current_tid = 1001
+        gt.threads[1000].state = 'blocked_futex'
+        next_tid2, event2 = gt.handle_sched_yield()
+        self.assertIsNone(next_tid2)
+        self.assertIsNone(event2['switched_to'])
+
+    def test_handle_futex_wake_op(self):
+        gt = GuestThreads(initial_tid=1000)
+        gt.threads[1001] = GuestThread(1001, 'worker1', 'blocked_futex')
+        gt.threads[1001].blocked_uaddr = 0x2000
+        gt.futex_waiters[0x2000] = [1001]
+
+        gt.threads[1002] = GuestThread(1002, 'worker2', 'blocked_futex')
+        gt.threads[1002].blocked_uaddr = 0x3000
+        gt.futex_waiters[0x3000] = [1002]
+
+        self.mem_writer(0x3000, struct.pack('<i', 1))
+
+        val3 = (0 << 28) | (4 << 24) | (0 << 12) | 0
+        total_woken, event = gt.handle_futex_wake_op(
+            uaddr=0x2000, val=1, val2=1, uaddr2=0x3000, val3=val3,
+            mem_read=self.mem_reader, mem_write=self.mem_writer
+        )
+
+        self.assertEqual(total_woken, 2)
+        self.assertEqual(event['cmd'], 'FUTEX_WAKE_OP')
+        self.assertEqual(gt.threads[1001].state, 'runnable')
+        self.assertEqual(gt.threads[1002].state, 'runnable')
+        self.assertEqual(struct.unpack('<i', self.mem_reader(0x3000, 4))[0], 0)
+
+
 if __name__ == '__main__':
     unittest.main()

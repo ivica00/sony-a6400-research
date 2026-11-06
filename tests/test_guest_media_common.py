@@ -120,6 +120,36 @@ class TestGuestMediaCommon(unittest.TestCase):
         self.assertEqual(slot, 0)
         self.assertEqual(mtype, MEDIA_TYPE_SD)
 
+    def test_media_common_set_osal_id_notify_reply(self):
+        """Verifies authentic category 3 subcmd 1 SetOsalIdForMediaNotify response."""
+        handler = GuestMediaCommon(media_type=MEDIA_TYPE_SD)
+        mock_uipc = MockUipcPool(self.memory)
+
+        req_ptr = 0x1000
+        reply_queue = 0x8000103a
+        notify_queue = 0x8000103b
+        subcmd_payload = (1) | (4 << 16)
+        req_data = struct.pack('<IIIIIIII', 3, subcmd_payload, reply_queue, 0, 0, 0, notify_queue, 0)
+        self._writer(req_ptr, req_data)
+
+        record = handler.handle_message(self._reader, self._writer, req_ptr, mock_uipc)
+        self.assertIsNotNone(record)
+        self.assertEqual(record['status'], 'serviced')
+        self.assertEqual(record['notify_queue'], notify_queue)
+        self.assertEqual(handler.notify_queue, notify_queue)
+        self.assertEqual(handler.queries_serviced, 1)
+
+        self.assertIn(reply_queue, mock_uipc.enqueued)
+        reply_ptr = mock_uipc.enqueued[reply_queue][0]
+
+        raw_reply = self._reader(reply_ptr, 32)
+        cat, subcmd_len, rq, status, r1, r2, slot, r3 = struct.unpack('<IIIIIIII', raw_reply)
+        self.assertEqual(cat, 3)
+        self.assertEqual(subcmd_len, subcmd_payload)
+        self.assertEqual(rq, reply_queue)
+        self.assertEqual(status, 0)
+        self.assertEqual(slot, notify_queue)
+
 
 if __name__ == '__main__':
     unittest.main()

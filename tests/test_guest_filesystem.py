@@ -234,6 +234,39 @@ class FilesystemTests(unittest.TestCase):
         self.assertEqual(ev_sub['returned'], 0xfffffffe)
         self.assertEqual(ev_sub['reason'], 'ENOENT_experimental_empty_proc')
 
+    def test_proc_overlay_modules(self):
+        class MockStatContract:
+            def request(self, metadata, address):
+                return {'returned': 0, 'metadata': metadata, 'address': address}
+
+        fs = GuestFilesystem(self.mu, self.nodes, lambda p, n: b'', stat_contract=MockStatContract(), proc_overlay='experimental-empty')
+        ev_access = fs.request(33, [self.path('/proc/modules'), 0, 0])
+        self.assertEqual(ev_access['returned'], 0)
+        self.assertEqual(ev_access['reason'], 'authentic_proc_modules_access')
+
+        ev_stat = fs.request(195, [self.path('/proc/modules'), 0x5000, 0])
+        self.assertEqual(ev_stat['returned'], 0)
+        self.assertGreater(ev_stat['metadata']['size'], 0)
+
+        ev_open = fs.request(5, [self.path('/proc/modules'), 0, 0])
+        self.assertIn('returned', ev_open)
+        fd = ev_open['returned']
+        self.assertGreaterEqual(fd, 3)
+        self.assertEqual(ev_open['reason'], 'opened_authentic_proc_modules')
+
+        ev_fstat = fs.request(197, [fd, 0x5000, 0])
+        self.assertEqual(ev_fstat['returned'], 0)
+
+        ev_read1 = fs.request(3, [fd, 0x5000, 1024])
+        self.assertEqual(ev_read1['returned'], 1024)
+        ev_read2 = fs.request(3, [fd, 0x5400, 1024])
+        self.assertEqual(ev_read2['returned'], 1024)
+        buf = bytes(self.mu.mem_read(0x5000, 2048))
+        self.assertIn(b'grm_ma ', buf)
+
+        ev_close = fs.request(6, [fd, 0, 0])
+        self.assertEqual(ev_close['returned'], 0)
+
     def test_setting_overlay_stop_policy_blocks_setting(self):
         fs = GuestFilesystem(self.mu, self.nodes, lambda p, n: b'', setting_overlay='stop')
         with self.assertRaises(UnsupportedFilesystem):

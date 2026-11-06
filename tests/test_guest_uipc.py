@@ -77,10 +77,19 @@ class TestGuestUipc(unittest.TestCase):
         ret = uipc.handle_ioctl(self._reader, self._writer, UIPC_CMD_VALLOC_MSG_WAIT, arg_ptr)
         self.assertEqual(ret, 0)
 
-        # Dest pointer receives user address inside pool
+        # Dest pointer receives user address inside pool (offset by 12-byte authentic OSAL header)
         msg_addr = struct.unpack('<I', self._reader(out_ptr, 4))[0]
-        self.assertEqual(msg_addr, 0x50330020)
+        self.assertEqual(msg_addr, 0x5033002c)
         self.assertIn(msg_addr, uipc.allocated_msgs)
+
+        # Verify authentic Sony OSAL header preceding msg_addr
+        raw_header = self._reader(msg_addr - 12, 12)
+        _, num_blocks, flags, ref_count, magic = struct.unpack('<IBBHI', raw_header)
+        self.assertEqual(flags, 1)
+        self.assertEqual(ref_count, 1)
+        self.assertEqual(magic, 0xa5a5a5a5)
+        # For size 52: alloc_size = (52 + 43) & ~31 = 96, num_blocks = 96 >> 5 = 3
+        self.assertEqual(num_blocks, 2)
 
         # Write message body
         msg_body = b'\t\x00  94 B  Ib 094_main()\x00'
@@ -270,7 +279,7 @@ class TestGuestUipc(unittest.TestCase):
             
         uipc.pool_base = 0x50330000
         msg_addr = uipc.allocate_message(48)
-        self.assertEqual(msg_addr, 0x50330020)
+        self.assertEqual(msg_addr, 0x5033002c)
         self.assertIn(msg_addr, uipc.allocated_msgs)
         
         queue = 0x0094016a

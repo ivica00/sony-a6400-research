@@ -24,6 +24,7 @@ EXPECTED_PTHREAD_CLONE_FLAGS = (
 # Futex operations
 FUTEX_WAIT = 0
 FUTEX_WAKE = 1
+FUTEX_WAKE_OP = 5
 FUTEX_PRIVATE_FLAG = 128
 FUTEX_CMD_MASK = 0x7f
 
@@ -115,7 +116,7 @@ class GuestThreads:
                      mem_writer: Callable[[int, bytes], None],
                      *, syscall_registers: Dict[int, int]) -> Tuple[int, Dict[str, object]]:
         """Handles sys_clone (syscall 120).
-        
+
         Copy the syscall-return context, replacing only child r0 and sp.
         Original libc instructions own function dispatch and the exit path.
         """
@@ -163,6 +164,36 @@ class GuestThreads:
         self.thread_log.append(event)
         return tid, event
 
+    def get_next_runnable_tid(self) -> Optional[int]:
+        """Finds the next runnable thread in cyclic round-robin order."""
+        all_tids = list(self.threads.keys())
+        if self.current_tid not in all_tids:
+            return None
+        idx = all_tids.index(self.current_tid)
+        candidates = all_tids[idx + 1:] + all_tids[:idx]
+        for tid in candidates:
+            if self.threads[tid].state == 'runnable':
+                return tid
+        return None
+
+    def handle_sched_yield(self) -> Tuple[Optional[int], Dict[str, object]]:
+        """Handles sys_sched_yield (syscall 158).
+
+        Yields execution to the next runnable thread if one exists.
+        Returns (next_tid, event).
+        """
+        next_tid = self.get_next_runnable_tid()
+        if next_tid is not None:
+            self.threads[self.current_tid].state = 'runnable'
+        event = {
+            'syscall': 'sched_yield',
+            'r7': 158,
+            'yielded_tid': self.current_tid,
+            'switched_to': next_tid,
+            'returned': 0
+        }
+        return next_tid, event
+
     def handle_gettid(self) -> Tuple[int, Dict[str, object]]:
         """Handles sys_gettid (syscall 224)."""
         event = {'syscall': 'gettid', 'r7': 224, 'returned': self.current_tid}
@@ -206,7 +237,7 @@ class GuestThreads:
     def handle_futex_wait(self, uaddr: int, val: int,
                           mem_reader: Callable[[int, int], bytes]) -> Tuple[Optional[int], Optional[int], Dict[str, object]]:
         """Handles sys_futex FUTEX_WAIT.
-        
+
         Returns (ret_val, next_runnable_tid, event).
         If *uaddr != val, returns (-EAGAIN, None, event).
         If *uaddr == val, blocks current thread and returns (None, next_tid, event).
@@ -223,8 +254,7 @@ class GuestThreads:
         curr_thread.blocked_uaddr = uaddr
         self.futex_waiters.setdefault(uaddr, []).append(self.current_tid)
 
-        runnable = [t for t in self.threads.values() if t.state == 'runnable']
-        next_tid = runnable[0].tid if runnable else None
+        next_tid = self.get_next_runnable_tid()
 
         event = {
             'syscall': 'futex',
@@ -254,6 +284,68 @@ class GuestThreads:
         event = {'syscall': 'futex', 'cmd': 'FUTEX_WAKE', 'uaddr': uaddr, 'woken': woken, 'returned': woken}
         return woken, event
 
+    def handle_futex_wake_op(self, uaddr: int, val: int, val2: int, uaddr2: int, val3: int,
+                             mem_read=None, mem_write=None):
+        woken, _ = self.handle_futex_wake(uaddr, val)
+
+        op = (val3 >> 28) & 0xf
+        cmp_op = (val3 >> 24) & 0xf
+        oparg = (val3 >> 12) & 0xfff
+        cmparg = val3 & 0xfff
+
+        woken2 = 0
+        if mem_read is not None and mem_write is not None and uaddr2:
+            try:
+                oldval = struct.unpack('<i', mem_read(uaddr2, 4))[0]
+                newval = oldval
+                if op == 0:  # FUTEX_OP_SET
+                    newval = oparg
+                elif op == 1:  # FUTEX_OP_ADD
+                    newval = (oldval + oparg) & 0xffffffff
+                elif op == 2:  # FUTEX_OP_OR
+                    newval = oldval | oparg
+                elif op == 3:  # FUTEX_OP_ANDN
+                    newval = oldval & ~oparg
+                elif op == 4:  # FUTEX_OP_XOR
+                    newval = oldval ^ oparg
+
+                if newval != oldval:
+                    mem_write(uaddr2, struct.pack('<i', newval))
+
+                cond = False
+                if cmp_op == 0:  # FUTEX_OP_CMP_EQ
+                    cond = (oldval == cmparg)
+                elif cmp_op == 1:  # FUTEX_OP_CMP_NE
+                    cond = (oldval != cmparg)
+                elif cmp_op == 2:  # FUTEX_OP_CMP_LT
+                    cond = (oldval < cmparg)
+                elif cmp_op == 3:  # FUTEX_OP_CMP_LE
+                    cond = (oldval <= cmparg)
+                elif cmp_op == 4:  # FUTEX_OP_CMP_GT
+                    cond = (oldval > cmparg)
+                elif cmp_op == 5:  # FUTEX_OP_CMP_GE
+                    cond = (oldval >= cmparg)
+
+                if cond and val2 > 0:
+                    w2, _ = self.handle_futex_wake(uaddr2, val2)
+                    woken2 = w2
+            except Exception:
+                pass
+
+        total_woken = woken + woken2
+        event = {
+            'syscall': 'futex',
+            'cmd': 'FUTEX_WAKE_OP',
+            'uaddr': uaddr,
+            'val': val,
+            'val2': val2,
+            'uaddr2': uaddr2,
+            'val3': val3,
+            'woken': total_woken,
+            'returned': total_woken,
+        }
+        return total_woken, event
+
     def handle_uipc_wait(self, queue: int, resume_pc: int) -> Tuple[Optional[int], Dict[str, object]]:
         """Handles blocking wait on an empty UIPC queue (ioctl 0x80000007)."""
         curr_thread = self.threads[self.current_tid]
@@ -261,8 +353,7 @@ class GuestThreads:
         curr_thread.blocked_uaddr = queue
         self.uipc_waiters.setdefault(queue, []).append(self.current_tid)
 
-        runnable = [t for t in self.threads.values() if t.state == 'runnable']
-        next_tid = runnable[0].tid if runnable else None
+        next_tid = self.get_next_runnable_tid()
 
         event = {
             'syscall': 'ioctl',
@@ -284,8 +375,7 @@ class GuestThreads:
             if self.current_tid not in waiters:
                 waiters.append(self.current_tid)
 
-        runnable = [t for t in self.threads.values() if t.state == 'runnable']
-        next_tid = runnable[0].tid if runnable else None
+        next_tid = self.get_next_runnable_tid()
 
         event = {
             'syscall': op,
@@ -321,7 +411,7 @@ class GuestThreads:
     def handle_exit(self, status: int,
                     mem_writer: Callable[[int, bytes], None]) -> Tuple[Optional[int], Dict[str, object]]:
         """Handles sys_exit (syscall 1).
-        
+
         Terminates the current thread. Clears child_tidptr if registered.
         Returns (next_runnable_tid, event).
         """
@@ -338,8 +428,7 @@ class GuestThreads:
                     self.threads[w_tid].regs[arm.UC_ARM_REG_R0] = 0
             self.futex_waiters.pop(curr.child_tidptr, None)
 
-        runnable = [t for t in self.threads.values() if t.state == 'runnable']
-        next_tid = runnable[0].tid if runnable else None
+        next_tid = self.get_next_runnable_tid()
 
         event = {
             'syscall': 'exit',

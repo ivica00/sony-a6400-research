@@ -56,6 +56,9 @@ tools/build.sh
 tools/check_mod_logs.py
 tools/*read_dump.py
 tools/read_*_dump.py
+# Keep guarded deployment tools; native source copies live in tools/native_camera.
+!tools/deploy_native_usb_debugger.py
+!tools/deploy_guarded_native_touch.py
 reports/*.png
 reports/*.bin
 tests/test_modern_menu_*.py

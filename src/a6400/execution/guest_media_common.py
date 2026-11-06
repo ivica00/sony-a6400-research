@@ -24,6 +24,7 @@ class GuestMediaCommon:
 
     def __init__(self, media_type: int = MEDIA_TYPE_SD):
         self.media_type = media_type
+        self.notify_queue: Optional[int] = None
         self.transactions = []
         self.queries_serviced = 0
 
@@ -57,7 +58,10 @@ class GuestMediaCommon:
 
         if category == 2 and subcmd == 1:
             reply_size = 32
-            reply_ptr = uipc.allocate_message(reply_size)
+            try:
+                reply_ptr = uipc.allocate_message(reply_size, memory_writer=memory_writer)
+            except TypeError:
+                reply_ptr = uipc.allocate_message(reply_size)
             reply_data = struct.pack(
                 '<IIIIIIII',
                 category,
@@ -76,6 +80,37 @@ class GuestMediaCommon:
             record['reply_ptr'] = reply_ptr
             record['media_type'] = self.media_type
             record['classification'] = 'authentic-mcmn CheckInsertedMedia SD presence reply'
+            self.queries_serviced += 1
+            self.transactions.append(record)
+            return record
+
+        if category == 3 and subcmd == 1:
+            # mcmnd_uipc_setosalidformedianotify / InfraMediaDetectThreadRM::SetOsalIdForMediaNotify
+            notify_queue = slot_id  # word at +0x18 holds caller's notify queue (e.g. 0x8000103b)
+            self.notify_queue = notify_queue
+            reply_size = 32
+            try:
+                reply_ptr = uipc.allocate_message(reply_size, memory_writer=memory_writer)
+            except TypeError:
+                reply_ptr = uipc.allocate_message(reply_size)
+            reply_data = struct.pack(
+                '<IIIIIIII',
+                category,
+                subcmd_payload,
+                reply_queue,
+                0,  # status = 0 (success)
+                0,
+                0,
+                notify_queue,
+                0,
+            )
+            memory_writer(reply_ptr, reply_data)
+            uipc.enqueue_message(reply_queue, reply_ptr)
+
+            record['status'] = 'serviced'
+            record['reply_ptr'] = reply_ptr
+            record['notify_queue'] = notify_queue
+            record['classification'] = 'authentic-mcmn SetOsalIdForMediaNotify registration reply'
             self.queries_serviced += 1
             self.transactions.append(record)
             return record

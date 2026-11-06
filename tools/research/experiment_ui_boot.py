@@ -3,7 +3,10 @@ import argparse
 import hashlib
 import json
 import struct
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 import unicorn
 import unicorn.arm_const as arm
 from project_paths import PROJECT_ROOT
@@ -291,6 +294,21 @@ def main():
         probe.uipc.handle_rcv_msg_tmo = patched_rcv_msg_tmo
         active_tid = probe.threads.current_tid if hasattr(probe, 'threads') else 1000
         print(f'[*] Checkpoint restored! Resuming at instruction {probe.instructions:,} (active TID {active_tid}).')
+
+        # If TID 1004 was previously blocked on the unserviced mcmn SetOsalIdForMediaNotify reply (category 3 subcmd 1),
+        # deliver the authentic reply now so THREAD_INFRA1 completes.
+        if hasattr(probe, 'threads') and 1004 in probe.threads.threads:
+            t1004 = probe.threads.threads[1004]
+            if t1004.state == 'blocked_uipc' and t1004.blocked_uaddr == 0x8000103a:
+                reply_queue = 0x8000103a
+                notify_queue = 0x8000103b
+                subcmd_payload = 1 | (4 << 16)
+                reply_ptr = probe.uipc.allocate_message(32)
+                reply_data = struct.pack('<IIIIIIII', 3, subcmd_payload, reply_queue, 0, 0, 0, notify_queue, 0)
+                probe.mu.mem_write(reply_ptr, reply_data)
+                probe.uipc.enqueue_message(reply_queue, reply_ptr)
+                probe.threads.handle_uipc_wake(reply_queue)
+                print(f"[+] Re-serviced authentic mcmn SetOsalIdForMediaNotify reply on queue 0x{reply_queue:08x}; TID 1004 is now runnable!")
     print(f"[*] Running probe (budget: {args.instructions} instructions)...")
     report = probe.run(instruction_budget=args.instructions, timeout_us=args.timeout_us)
     if args.save_checkpoint:

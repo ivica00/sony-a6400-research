@@ -118,14 +118,34 @@ class GuestUipc:
         raw_params = memory_reader(params_ptr, 12)
         out_ptr_addr, req_size, flag = struct.unpack('<III', raw_params)
 
-        # Allocate from shared pool
-        alloc_size = (req_size + 15) & ~15
+        # Authentic Sony OSAL UIPC allocation geometry:
+        # Blocks are 32 bytes. Header occupies 12 bytes preceding user payload pointer.
+        # If req_size <= 20, fits in single 32-byte block (num_blocks recorded as 0).
+        # If req_size > 20, alloc_size = (req_size + 43) & ~31, num_blocks = alloc_size >> 5.
+        if req_size <= 20:
+            num_blocks = 0
+            alloc_size = 32
+        else:
+            alloc_size = (req_size + 43) & ~31
+            num_blocks = alloc_size >> 5
+
         if self.next_offset + alloc_size > self.total_pool_size:
             return -12 # ENOMEM
 
-        msg_addr = self.pool_base + self.next_offset
+        raw_addr = self.pool_base + self.next_offset
         self.next_offset += alloc_size
-        self.allocated_msgs[msg_addr] = alloc_size
+
+        # Write authentic OSAL raw header (12 bytes):
+        #   offset 0 (uint32): link/pool descriptor (0)
+        #   offset 4 (uint8):  num_blocks (read by osal_msg_size at [msg_ptr - 8])
+        #   offset 5 (uint8):  flags (1)
+        #   offset 6 (uint16): ref_count (1, decremented by osal_free_msg at [msg_ptr - 6])
+        #   offset 8 (uint32): magic / queue ID (0xa5a5a5a5 at [msg_ptr - 4])
+        hdr = struct.pack('<IBBHI', 0, num_blocks, 1, 1, 0xa5a5a5a5)
+        memory_writer(raw_addr, hdr)
+
+        msg_addr = raw_addr + 12
+        self.allocated_msgs[msg_addr] = alloc_size - 12
 
         # Write user-space pointer back to caller's destination
         memory_writer(out_ptr_addr, struct.pack('<I', msg_addr))
@@ -133,7 +153,9 @@ class GuestUipc:
             'type': 'valloc',
             'pool_id': pool_id,
             'msg_addr': msg_addr,
+            'raw_addr': raw_addr,
             'size': req_size,
+            'num_blocks': num_blocks,
             'flag': flag
         })
         return 0
@@ -401,16 +423,25 @@ class GuestUipc:
                     self.transactions[-1]['classification'] = 'authentic-grm verified DMM allocation completion'
         return 0
 
-    def allocate_message(self, size: int = 64) -> int:
-        """Allocates a message buffer from the UIPC shared pool (for event injection/simulation)."""
+    def allocate_message(self, size: int = 64, memory_writer=None) -> int:
+        """Allocates a message buffer with authentic OSAL header from the UIPC shared pool."""
         if self.pool_base is None:
             raise RuntimeError("Cannot allocate message before UIPC shared pool is mapped")
-        alloc_size = (size + 15) & ~15
+        if size <= 20:
+            num_blocks = 0
+            alloc_size = 32
+        else:
+            alloc_size = (size + 43) & ~31
+            num_blocks = alloc_size >> 5
         if self.next_offset + alloc_size > self.total_pool_size:
             raise MemoryError("UIPC shared pool exhausted")
-        msg_addr = self.pool_base + self.next_offset
+        raw_addr = self.pool_base + self.next_offset
         self.next_offset += alloc_size
-        self.allocated_msgs[msg_addr] = alloc_size
+        hdr = struct.pack('<IBBHI', 0, num_blocks, 1, 1, 0xa5a5a5a5)
+        if memory_writer is not None:
+            memory_writer(raw_addr, hdr)
+        msg_addr = raw_addr + 12
+        self.allocated_msgs[msg_addr] = alloc_size - 12
         return msg_addr
 
     def enqueue_message(self, queue: int, msg_addr: int) -> None:

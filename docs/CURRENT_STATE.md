@@ -1,3 +1,14 @@
+# Latest checkpoint: 2026-11-06
+
+This document's older audit remains historical. Current native-menu findings are
+in [E0109](evidence/0109-original-activation-thread-context-and-resource-boundary.md):
+original lookup, geometry and geometric hit checks run on real captures, but
+physical menu touch and completed activation are not demonstrated. The installed
+normal-USB debugger supplies evidence, not invented firmware decisions. See the
+[workflow](LIVE_CAMERA_EMULATOR_WORKFLOW.md) and
+[publication audit](evidence/0110-research-checkpoint-and-github-publication.md).
+
+
 # Current state audit — 2026-10-18
 
 ## What exists
