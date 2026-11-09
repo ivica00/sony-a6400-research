@@ -10,7 +10,7 @@ def decode(data):
     if len(data) < 16:
         raise ValueError('Truncated snapshot header')
     magic, version, count, size = struct.unpack_from('<4I', data)
-    if magic != 0x534c4159 or version != 2 or count > 2048 or size > 512 * 1024:
+    if magic != 0x534c4159 or version != 2 or count > 4096 or size > 512 * 1024:
         raise ValueError('Unsupported or out-of-bounds snapshot header')
     start = 16 + count * 12
     if len(data) != start + size:

@@ -1,5 +1,47 @@
 # Firmware execution roadmap
 
+Current UVC/PTP overview (2026-11-08, through E0203): [UVC_PTP_STATUS.md](UVC_PTP_STATUS.md). It separates physical proof, offline contracts and the three remaining phases before the first PC Remote UVC+PTP enumeration test. Earlier entries below retain historical experiment status.
+
+[E0144](evidence/0144-native-jpeg-receiver-ownership-and-dma-allocation.md): Native JPEG receiver/queue ownership source-checked; reference DMM UnitType0x50e absent on a6400. Kernel-owned 256 KiB lifecycle succeeds, but must gain metadata/per-slot bounds before streaming. Next finish synchronous SET_PATH conversion, dimension/capacity and DMM ownership contracts, then acquire one native JPEG. No sensor configuration issued; module unloaded, debugger intact, 599 tests pass.
+
+[E0143](evidence/0143-uvc-720p-test-transport-and-30fps-verified.md): Endpoint/START, decoded MJPEG and ~30 FPS static-pattern transport verified on camera; local monitor HTTP integration works and Mass Storage is restored. Next implement verified native JPEG producer/DMM ownership using the unresolved 0x01670464 receiver. Static test-pattern transport is not sensor LiveView. 599 emulator tests and 53 ARM controls pass.
+
+[E0142](evidence/0142-uvc-bulk-endpoint-bridge-and-physical-boundary.md): Next recover Mass Storage from the final UVC experiment and preserve surviving kernel logs. Resolve the original START/transfer or teardown stall before further deployment; then obtain a decoded host frame, measure delivery, and connect native JPEG production/CinemaHUD. Current feeder repeats a static test JPEG. 599 emulator tests/53 ARM controls pass; physical streaming remains unverified.
+
+[E0135](evidence/0135-uvc-port-device-node-and-gadget-callback-abi.md):
+device-table and callback ABI mismatches are verified. A private-node-only
+reference object builds offline; next prove the descriptor/callback bridge,
+endpoint/DMA lifetime and rollback before any camera installation.
+
+[E0134](evidence/0134-zve10-v203-reference-uvc-stack-and-jpeg-path.md):
+ZV-E10 reference now supplies actual Sony UVC stack and720p descriptors.
+Audit usbg_video/kernel/devno ABI and gadget type12 registration before any port;
+trace reference configuration queue01670464 separately from JPEG-fetch0167046a.
+No a6400 UVC module is installed or active.
+
+[E0133](evidence/0133-gadget-infrastructure-ptp-gates-and-liveview-test-plan.md):
+no active configfs/UVC function demonstrated; original PTP metadata/transfer
+filters are distinct. Next resolve JPEG queue0167046a receiver and buffer ownership,
+then baseline one frame before any RAM-only width change. No camera mod armed.
+
+USB monitor investigation (2026-11-07): [E0132](evidence/0132-usb-liveview-jpeg-source-and-width-gate.md)
+establishes an original JPEG source path and a normal320/640/1024 width gate.
+Next verify the lower-level encoder/path0x20 and frame ownership, capture one
+decoded frame, then establish USB transport and measured1080p/30 throughput.
+No camera streaming mode is enabled; the configuration-derived width path is
+an investigation candidate, not an established1920-pixel capability.
+
+E0113 confirms active-MENU reference1 versus USB0, but also a changed resource
+cache head. The narrow release primitive passes; whole activation must wait for
+coherent coupled list/model/allocator inputs (E0114). Do not repair this by
+setting counters or fabricating/removing list membership on the host.
+
+E0111 supersedes the accounting boundary below: original accounting, locks and
+bookkeeping-node free now execute. The next stop is an original zero-reference
+release diagnostic for an image pointer retained in MENU but read later in USB.
+E0112's verified waiting observer will capture the active menu/resource together;
+validate that evidence before changing reference counts or admitting underflow.
+
 Latest checkpoint, 2026-11-06: original active-menu lookup and geometry, model/row
 association, geometric hit checks and separate selection controls are established
 on retained camera snapshots (E0106–E0108). E0109 activation reaches a guarded

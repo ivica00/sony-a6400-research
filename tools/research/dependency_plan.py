@@ -166,6 +166,7 @@ class Planner:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target', required=True)
+    parser.add_argument('--inventory', default='artifacts/inventory/elf-inventory.json')
     parser.add_argument('--function', action='append', default=[])
     parser.add_argument('--pc-offset', type=lambda value: int(value, 0), help='Module .text-relative offset, not a runtime VA')
     parser.add_argument('--depth', type=int, default=1)
@@ -176,7 +177,10 @@ def main():
     output = (PROJECT_ROOT / args.report_dir).resolve()
     if not output.is_relative_to(PROJECT_ROOT / 'artifacts'):
         parser.error('Reports must remain under artifacts')
-    entries = bounded_json(PROJECT_ROOT / 'artifacts/inventory/elf-inventory.json', 64 * 1024 * 1024)['entries']
+    inventory_path=(PROJECT_ROOT/args.inventory).resolve()
+    if not inventory_path.is_relative_to((PROJECT_ROOT/'artifacts').resolve()):
+        parser.error('Inventory must remain under artifacts')
+    entries = bounded_json(inventory_path, 64 * 1024 * 1024)['entries']
     planner = Planner(PROJECT_ROOT, entries, PROJECT_ROOT / 'artifacts/cache/dependency-planner')
     if args.target not in planner.entries:
         parser.error('Target is not inventoried')
@@ -211,7 +215,8 @@ def main():
             names_chunk = names[start:start + 24]
             plan_id = hashlib.sha256(output.relative_to(PROJECT_ROOT).as_posix().encode()).hexdigest()[:16]
             batch_dir = 'artifacts/tools/rea/plan-' + plan_id + '-' + str(len(commands))
-            args_list = ['--target', target, '--report-dir', batch_dir, '--reuse-evidence']
+            args_list = ['--target', target, '--inventory', args.inventory,
+                         '--report-dir', batch_dir, '--reuse-evidence']
             for name in names_chunk:
                 args_list += ['--procedure', name, '--instructions', name]
             prefix = "wsl.exe --cd " + quote('/mnt/' + PROJECT_ROOT.drive[0].lower() + PROJECT_ROOT.as_posix()[2:])

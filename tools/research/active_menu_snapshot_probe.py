@@ -1,5 +1,6 @@
 """Replay original active-menu lookup and geometry from a complete native snapshot."""
 import json
+import argparse
 import struct
 from pathlib import Path
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
@@ -10,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HW = ROOT / 'artifacts/hardware'
 
 
-def geometry(records, widgets, hit_points=None):
+def geometry(records, widgets, hit_points=None, mouse_fixture=None):
     uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
     pages, known, executable = set(), set(), []
     stack, point, output, end = 0x8300000, 0x8310000, 0x8320000, 0x8330000
@@ -44,6 +45,13 @@ def geometry(records, widgets, hit_points=None):
             elif record['name'] == '_ZN2ux6wgtsys10WidgetBase9sys_isHitERKNS_4core7Vector2E':
                 supply(int(record['address'], 16), bytes.fromhex(record['code']), True)
     for address in (stack, point, output, end): uc.mem_map(address, 4096)
+    if mouse_fixture is not None:
+        # Explicit offline coordinate source, not captured physical event state.
+        # All singleton/GOT bytes must be supplied by the caller as records.
+        mouse, system = mouse_fixture
+        if not 0 <= mouse < 4:
+            raise ValueError('Invalid fixture mouse')
+        supply(system + mouse * 20 + 0x4a8, bytes(4))
     # Explicit Cortex-A5 VFP architectural setup; no function result is supplied.
     uc.reg_write(UC_ARM_REG_C1_C0_2, 0xf << 20)
     uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
@@ -97,6 +105,23 @@ def geometry(records, widgets, hit_points=None):
                     uc.mem_write(point, struct.pack('<2f', *xy)); known.update(range(point, point + 8))
                     hit, n = call(0x6305080, [widget, point])
                     row['hit_results'].append(dict(point=list(xy), hit=hit, instructions=n))
+                    if mouse_fixture is not None:
+                        uc.mem_write(system + mouse * 20 + 0x4a8, struct.pack('<2h', *xy))
+                        _, transform_n = call(0x63051f0, [output, widget, mouse])
+                        local = bytes(uc.mem_read(output, 8))
+                        uc.mem_write(point, local)
+                        _, roundtrip_n = call(0x63052e8, [output, widget, point])
+                        roundtrip = list(struct.unpack('<2f', uc.mem_read(output, 8)))
+                        # Feeding local coordinates to isHit is a deliberate
+                        # negative/control experiment, not native routing.
+                        local_hit, local_n = call(0x6305080, [widget, point])
+                        row['hit_results'][-1].update(
+                            native_local_mouse=list(struct.unpack('<2f', local)),
+                            local_input_control_hit=local_hit,
+                            native_world_roundtrip=roundtrip,
+                            roundtrip_instructions=roundtrip_n,
+                            transform_instructions=transform_n,
+                            local_hit_instructions=local_n)
         except Exception as error:
             row.update(returned=False, boundary=str(error), pc=hex(uc.reg_read(UC_ARM_REG_PC)))
         report.append(row)
@@ -104,7 +129,11 @@ def geometry(records, widgets, hit_points=None):
 
 
 def main():
-    capture = json.loads((HW / 'native-layout-snapshot-pid2491.json').read_text())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--snapshot', type=Path, default=HW / 'native-layout-snapshot-pid2491.json')
+    parser.add_argument('--output', type=Path, default=ROOT / 'artifacts/analysis/active-menu-snapshot-probe.json')
+    args = parser.parse_args()
+    capture = json.loads(args.snapshot.read_text())
     if not capture['complete_binary']: raise ValueError('Complete native binary required')
     records = capture['records']; by = {int(r['address'], 16): r for r in records}
     def raw(address, size):
@@ -138,7 +167,7 @@ def main():
     result = dict(scope='Original active-menu lookup and geometry on complete non-atomic camera snapshot; original cache updates confined to emulator copies; no camera calls or writes',
                   lookup=lookup, menu=hex(menu), widget_count=len(widgets), geometry=calculated,
                   emulator_cache_writes=cache_writes, stale_it_workarounds=it_fixes)
-    destination = ROOT / 'artifacts/analysis/active-menu-snapshot-probe.json'
+    destination = args.output
     destination.write_text(json.dumps(result, indent=2), encoding='utf-8')
     print(destination); print('widgets', len(widgets), 'geometry returns', sum(row['returned'] for row in result['geometry']))
 

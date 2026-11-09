@@ -103,6 +103,8 @@ class Session:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target', default=DEFAULT_TARGET, help='Inventoried project-relative ELF')
+    parser.add_argument('--inventory', default='artifacts/inventory/elf-inventory.json',
+                        help='Hash inventory under artifacts, including isolated reference-camera inventories')
     parser.add_argument('--procedure', action='append', required=True)
     parser.add_argument('--instructions', action='append', default=[])
     parser.add_argument('--report-dir', required=True, help='New directory under artifacts/')
@@ -112,7 +114,10 @@ def main():
         parser.error('At most 48 static queries per session')
     target = (PROJECT_ROOT / args.target).resolve()
     relative = target.relative_to(PROJECT_ROOT).as_posix()
-    inventory = json.loads((PROJECT_ROOT / 'artifacts/inventory/elf-inventory.json').read_text(encoding='utf-8'))
+    inventory_path=(PROJECT_ROOT / args.inventory).resolve()
+    if not inventory_path.is_relative_to((PROJECT_ROOT/'artifacts').resolve()):
+        parser.error('Inventory must remain under artifacts')
+    inventory = json.loads(inventory_path.read_text(encoding='utf-8'))
     expected = next(row['sha256'] for row in inventory['entries'] if row['path'] == relative)
     checked_input(PROJECT_ROOT, relative, expected)
     output = (PROJECT_ROOT / args.report_dir).resolve()

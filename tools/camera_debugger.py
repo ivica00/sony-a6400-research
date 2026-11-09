@@ -176,7 +176,7 @@ def connect():
     sys.path.insert(0,str(ROOT/'Sony-PMCA-RE'))
     from pmca.commands.usb import importDriver,listDevices
     from pmca.usb.sony import SonyMscExtCmdDevice,SonyMtpExtCmdDevice
-    with host_lock(),importDriver('libusb') as driver:
+    with host_lock(),importDriver(None) as driver:
         devices=[d for d in listDevices(driver,True) if isinstance(d,(SonyMscExtCmdDevice,SonyMtpExtCmdDevice))]
         if len(devices)!=1:
             raise RuntimeError(f'Expected one existing MSC/MTP camera; found {len(devices)}. No mode switch attempted.')

@@ -1,5 +1,7 @@
 # Platform evidence
 
+For the consolidated UVC/PTP state through E0203, start with [UVC/PTP status and next steps](../UVC_PTP_STATUS.md). Individual evidence records remain the source for exact claims and limitations.
+
 Create one record per hardware or software claim. Fields:
 
 ```text

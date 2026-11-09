@@ -64,3 +64,14 @@ reports/*.bin
 tests/test_modern_menu_*.py
 docs/modern_menu_overhaul_design.md
 
+
+# Local compiled camera payloads and extracted reference descriptor data
+tools/native_camera/*_arm
+tools/native_camera/zve10_uvc_tree.h
+
+/tools/native_camera/patch_backup_bin
+/tools/native_camera/patch_backup_tiny
+/tools/native_camera/patch_inh_factor
+/tools/native_camera/test_ptrace_call
+/tools/native_camera/test_uipc_media
+/tools/native_camera/uvc_probe_dma_meta

@@ -1,5 +1,70 @@
 # Sony a6400 firmware execution research
 
+## Demonstrated on physical hardware
+
+This project researches Sony ILCE-6400 firmware execution and hardware contracts. Physical camera experiments and bounded original-code emulation are documented separately; a custom display or a successful USB transfer does not establish complete firmware compatibility.
+
+### Framebuffer writes on the camera — demonstrated
+
+The photograph below shows our custom interface drawn on the physical a6400 display, demonstrating successful framebuffer writing. The interface and its displayed labels are a homebrew rendering demonstration: the photograph alone does not verify the listed settings, recording-limit changes, original Sony menu navigation, or complete firmware emulation.
+
+![Custom interface written to the physical Sony a6400 framebuffer](docs/images/framebuffer-camera-menu.png)
+
+### UVC mode — demonstrated transport, unfinished integration
+
+Physical USB UVC transport of a static MJPEG test pattern at **1280 × 720 and approximately 30 FPS** was verified: FFmpeg decoded the received JPEG and DirectShow measured **29.9592 FPS over 180 frames**. The image below is the test pattern, not live sensor output. See [E0143: physical transport evidence](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md).
+
+![Sony a6400 UVC 720p at 30 FPS static test pattern](docs/images/uvc-720p-test-pattern.png)
+
+**Current boundary (2026-11-09):** the combined PC Remote/UVC/PTP session can initialize and stop on the camera, but the latest 90-second Windows test reports composite-parent **Code 10**, with no usable PTP/UVC children. Sensor-to-UVC feeder integration remains unfinished; the shared module keeps video streaming disabled. See [E0208: current result and next steps](docs/evidence/0208-windows-90s-parent-code10-and-feeder-boundary.md) and [UVC/PTP status](docs/UVC_PTP_STATUS.md).
+
+## Historical research checkpoints
+
+The entries below record individual experiments in time order as originally documented. Their limitations and intermediate failures must be read alongside the current result above.
+
+[E0144](docs/evidence/0144-native-jpeg-receiver-ownership-and-dma-allocation.md): Located and live-source-checked the native LIRO JPEG receiver and verified its 12-buffer ownership contract. Corrected `0x50e` to DMM UnitType; ordinary builds now preserve native allocation failure instead of substituting a fixed window. Three physical 256 KiB kernel-owned DMA lifecycle cycles pass. Native sensor acquisition remains unfinished; all 599 tests pass and the experimental module is unloaded.
+
+[E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md): Physical Bulk IN test-pattern transport now works: FFmpeg decoded 1280x720 MJPEG, 180 DirectShow frames measured 29.9592 FPS, and the local monitor served a JPEG. Camera returned to Mass Storage; all 599 tests pass. This is a static JPEG transport milestone; native sensor JPEG production and ownership remain unfinished.
+
+[E0142](docs/evidence/0142-uvc-bulk-endpoint-bridge-and-physical-boundary.md): Bulk endpoint wrapper bridge and byte-count ABI fix implemented; 599 emulator tests and 53 ARM controls pass. Physical frame transport remains unresolved. Final experiment remains in UVC with no debugger access; recover Mass Storage before further testing. PnP remains OK with inbox usbvideo. Camera payload writes were RAM-only.
+
+[E0135](docs/evidence/0135-uvc-port-device-node-and-gadget-callback-abi.md)
+finds two concrete UVC port blockers: a device-table collision and an8-byte
+gadget callback-layout difference. A node-only ARM candidate is built OFFLINE
+with original executable sections unchanged; it is explicitly not deployable.
+Physical UVC remains off; descriptor/callback bridging is the next boundary.
+
+[E0134](docs/evidence/0134-zve10-v203-reference-uvc-stack-and-jpeg-path.md)
+extracts the user-supplied ZV-E10 2.03 reference without running its updater.
+It identifies actual Sony UVC video/audio modules, userland streaming integration
+and720p25/30 descriptors missing from the inspected a6400 equivalents.
+No reference component is installed on a6400;1080p/UVC compatibility is unproven.
+
+[E0133](docs/evidence/0133-gadget-infrastructure-ptp-gates-and-liveview-test-plan.md)
+audits the actual Sony gadgetcore stack, identifies separate PTP handle/status
+filters and records a RAM-only experiment plan. No active UVC function or1080p/30
+stream is demonstrated. Package JPEG settings are distinguished from live backup.
+
+USB monitor discovery (2026-11-07): [E0132](docs/evidence/0132-usb-liveview-jpeg-source-and-width-gate.md)
+identifies source-equal JPEG live-view code and verifies its normal width gate
+accepts320/640/1024 and routes1920 to fallback. A separate configuration-derived
+path remains to investigate. **1080p/30 USB streaming is not yet demonstrated.**
+Camera inspection was read-only; no streaming mode or hook was enabled.
+
+[E0113](docs/evidence/0113-active-menu-reference-confirmed-and-cache-coherence.md)
+confirms the live menu resource has one reference while a later USB snapshot
+had zero; original release1-to-0 succeeds as a narrow control. The coupled
+resource-list state also differs, so full activation remains unproven.
+[E0114](docs/evidence/0114-coupled-active-resource-model-and-arena-capture.md)
+prepares a combined active-state capture rather than guessing missing ownership.
+
+Latest continuation: [E0111](docs/evidence/0111-resource-accounting-list-ownership-and-snapshot-lifetime.md)
+executes original accounting, synchronization, resource-list lookup/unlink and
+libc fastbin free. It stops on a zero-reference release in combined MENU/USB
+captures. [E0112](docs/evidence/0112-active-menu-resource-lifetime-observer.md)
+prepares the targeted active-menu/resource capture to test that lifetime mismatch.
+Physical main-menu touch and completed activation remain unproven.
+
 Current checkpoint (2026-11-06): the normal-USB root debugger is installed and
 the original active-menu lookup, 145-widget geometry, row/model association and
 252 geometric hit checks execute on captured camera state. Original activation
@@ -174,7 +239,7 @@ The first two launch prototypes. `test_authentic_screens.py` generates illustrat
 
 `check_camera.py` scans connected USB devices. `backup_camera.py` interacts with camera service mode and reads backup data; invoke it deliberately with a connected camera. Repository organization checks do not execute those operations.
 
-The existing `venv/` is retained. Reproducible dependency locking is a roadmap task; no fresh-environment compatibility is claimed. This directory was not a Git checkout at organization time. `.gitignore` is prepared for a future repository; no upstream repositories were relocated or initialized.
+The existing `venv/` is retained. Reproducible dependency locking is a roadmap task; no fresh-environment compatibility is claimed. At the original organization checkpoint this directory was not yet a Git checkout. It is now published as a source and research-documentation repository; local firmware, device backups and generated artifacts remain excluded.
 
 ## Fidelity rule
 
@@ -189,3 +254,5 @@ This project is an independent clean-room research and educational effort aimed 
 - **Trademarks:** "Sony", "a6400", "ILCE-6400", and related names, marks, emblems, and images are registered trademarks of Sony Group Corporation.
 - **No Proprietary Code:** This repository contains ONLY original clean-room source code, reverse-engineering specifications, and research documentation. It does NOT distribute, host, or link to copyrighted Sony firmware binaries, decrypted partition images, or cryptographic circumvention keys. Users must provide their own legally acquired firmware packages or device dumps for local analysis.
 - **Legal Basis:** Reverse engineering for the purpose of achieving interoperability is recognized and protected under applicable copyright laws (including Article 6 of the EU Software Directive 2009/24/EC and Section 107 of the US Copyright Act).
+
+Current menu research checkpoint (2026-11-06): [E0120](docs/evidence/0120-v7-capture-original-fastbin-allocation-and-resource-rebind.md) preserves the complete V7 capture and executes original allocation, list insertion and resource rebind in the emulator. Activation stops at an uncaptured auxiliary-object field; physical menu touch remains incomplete. All566 tests pass. No observer is armed.
