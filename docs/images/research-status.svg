@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="520" viewBox="0 0 1000 520" role="img" aria-labelledby="title desc">
+<title id="title">Sony a6400 research status through E0226</title>
+<desc id="desc">617 tests passed in the last recorded full suite. Static 720p UVC transport measured 29.9592 FPS. Composite children enumerated, but teardown remains unresolved. Monitor output preservation demonstrated; sensor integration and SD journal unfinished. Tiles show qualitative milestone states, not completion percentages.</desc>
+<rect width="1000" height="520" rx="16" fill="#0d1117"/>
+<g font-family="Segoe UI,Arial,sans-serif">
+<text x="28" y="39" fill="#f0f6fc" font-size="24" font-weight="700">Research status</text>
+<text x="972" y="37" text-anchor="end" fill="#9da7b3" font-size="13">2026-11-09 · E0226</text>
+<path d="M28 54H972" stroke="#30363d"/>
+<rect x="28" y="72" width="280" height="63" rx="7" fill="#161b22"/>
+<text x="42" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">LAST FULL SUITE</text>
+<text x="42" y="120" fill="#36c88a" font-size="22" font-weight="700">617 passing</text>
+<rect x="320" y="72" width="310" height="63" rx="7" fill="#161b22"/>
+<text x="334" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">UVC TEST PATTERN</text>
+<text x="334" y="120" fill="#58a6ff" font-size="22" font-weight="700">29.9592 FPS</text>
+<rect x="642" y="72" width="330" height="63" rx="7" fill="#161b22"/>
+<text x="656" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">MONITOR ARM CHECKS</text>
+<text x="656" y="120" fill="#bc9cff" font-size="22" font-weight="700">8 admission cases</text>
+<rect x="28" y="154" width="460" height="86" rx="7" fill="#161b22"/>
+<text x="42" y="178" fill="#f0f6fc" font-size="13" font-weight="700">DISPLAY</text>
+<text x="474" y="178" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">DEMONSTRATED</text>
+<text x="42" y="200" fill="#9da7b3" font-size="12">Physical rendering</text>
+<rect x="42" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="96" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="150" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="204" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="258" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="312" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="366" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="420" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="512" y="154" width="460" height="86" rx="7" fill="#161b22"/>
+<text x="526" y="178" fill="#f0f6fc" font-size="13" font-weight="700">UVC / MJPEG</text>
+<text x="958" y="178" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">720p / ~30 FPS</text>
+<text x="526" y="200" fill="#9da7b3" font-size="12">Static test pattern</text>
+<rect x="526" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="580" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="634" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="688" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="742" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="796" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="850" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="904" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="28" y="253" width="460" height="86" rx="7" fill="#161b22"/>
+<text x="42" y="277" fill="#f0f6fc" font-size="13" font-weight="700">COMPOSITE USB</text>
+<text x="474" y="277" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">TEARDOWN OPEN</text>
+<text x="42" y="299" fill="#9da7b3" font-size="12">Parent + both children</text>
+<rect x="42" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="96" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="150" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="204" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="258" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="312" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="366" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="420" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="512" y="253" width="460" height="86" rx="7" fill="#161b22"/>
+<text x="526" y="277" fill="#f0f6fc" font-size="13" font-weight="700">MONITOR OUTPUT</text>
+<text x="958" y="277" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">30,115 BYTES</text>
+<text x="526" y="299" fill="#9da7b3" font-size="12">Preserve before ack</text>
+<rect x="526" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="580" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="634" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="688" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="742" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="796" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="850" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="904" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
+<rect x="28" y="352" width="460" height="86" rx="7" fill="#161b22"/>
+<text x="42" y="376" fill="#f0f6fc" font-size="13" font-weight="700">SD JOURNAL</text>
+<text x="474" y="376" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">NOT WRITTEN</text>
+<text x="42" y="398" fill="#9da7b3" font-size="12">Native volume identified</text>
+<rect x="42" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="96" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="150" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="204" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="258" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="312" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="366" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="420" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="512" y="352" width="460" height="86" rx="7" fill="#161b22"/>
+<text x="526" y="376" fill="#f0f6fc" font-size="13" font-weight="700">SENSOR → UVC</text>
+<text x="958" y="376" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">INTEGRATION OPEN</text>
+<text x="526" y="398" fill="#9da7b3" font-size="12">Shared video disabled</text>
+<rect x="526" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="580" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="634" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="688" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="742" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="796" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="850" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<rect x="904" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
+<text x="28" y="475" fill="#9da7b3" font-size="12">Tiles indicate milestone state, not firmware coverage or percentage complete.</text>
+<text x="28" y="497" fill="#9da7b3" font-size="12">Physical results, fixture checks and open boundaries are detailed in the table below.</text>
+</g></svg>
