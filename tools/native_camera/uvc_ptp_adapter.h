@@ -6,7 +6,7 @@
 int a6400_uvc_ptp_translate_setup(const unsigned char *wire,
                                 unsigned int wire_interface,
                                 unsigned char *native);
-/* Returns the native gadgetcore wrapper for enabled HS Bulk IN 0x82.
+/* Returns the native gadgetcore wrapper for enabled HS Bulk IN 0x84.
  * dwc/list must originate from the kernel START contract, never host pointers. */
 unsigned int a6400_uvc_ptp_select_endpoint(void *dwc, unsigned int packed_count,
                                         void *const *list);

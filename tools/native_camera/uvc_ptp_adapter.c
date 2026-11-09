@@ -25,10 +25,10 @@ unsigned int a6400_uvc_ptp_select_endpoint(void *dwc, unsigned int packed_count,
     const unsigned char *desc;
     if (!dwc || !list || !count || count>16) return 0;
     /* Original dwc3_wIndex_to_dep: ((ep&15)*2 + direction + 0x34)*4. */
-    raw=*(void **)((unsigned char *)dwc+0xe4);
+    raw=*(void **)((unsigned char *)dwc+0xf4);
     if (!raw || !(*(unsigned int *)((unsigned char *)raw+0x4c)&1u)) return 0;
     desc=*(const unsigned char **)((unsigned char *)raw+0x1c);
-    if (!desc || desc[0]!=7 || desc[1]!=5 || desc[2]!=0x82 ||
+    if (!desc || desc[0]!=7 || desc[1]!=5 || desc[2]!=0x84 ||
         (desc[3]&3)!=2 || desc[4]!=0 || desc[5]!=2) return 0;
     for (i=0; i<count; ++i) {
         void *wrapper=list[i];

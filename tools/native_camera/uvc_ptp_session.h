@@ -1,6 +1,6 @@
 /* Offline orchestration candidate. The hardware backend is not supplied here.
  * Caller serializes all operations and pins source/reference/ops lifetime.
- * Reference must be the verified wire1/2 + endpoint82 MOD, not legacy code. */
+ * Reference must be the verified wire1/2 + endpoint84 MOD, not legacy code. */
 #ifndef A6400_UVC_PTP_SESSION_H
 #define A6400_UVC_PTP_SESSION_H
 #include "uvc_callback_bridge.h"

@@ -121,19 +121,19 @@ def main():
     phase[0]='adapter'
     def fixture():
         cpu.mem_write(0x201000,bytes(0x1000))
-        cpu.mem_write(0x2010e4,struct.pack('<I',0x201200))
+        cpu.mem_write(0x2010f4,struct.pack('<I',0x201200))
         cpu.mem_write(0x20121c,struct.pack('<I',0x201300))
         cpu.mem_write(0x20124c,struct.pack('<I',1))
-        cpu.mem_write(0x201300,bytes([7,5,0x82,2,0,2,0]))
+        cpu.mem_write(0x201300,bytes([7,5,0x84,2,0,2,0]))
         cpu.mem_write(0x201424,struct.pack('<I',0x201200))
         cpu.mem_write(0x201524,struct.pack('<I',0x201200))
         cpu.mem_write(0x201600,struct.pack('<II',0,0x201400))
     def select(count=2,dwc=0x201000,listing=0x201600):
         return execute(symbols['a6400_uvc_ptp_select_endpoint'],0x500000,dwc,count,listing)
-    fixture();check('endpoint-82-wrapper-returned',select()==0x201400)
+    fixture();check('endpoint-84-wrapper-returned',select()==0x201400)
     check('original-packed-count-low-byte',select(0xaacc0002)==0x201400)
     for name,address,data in [
-        ('missing-raw',0x2010e4,bytes(4)),('disabled',0x20124c,bytes(4)),
+        ('missing-raw',0x2010f4,bytes(4)),('disabled',0x20124c,bytes(4)),
         ('missing-descriptor',0x20121c,bytes(4)),('ptp-in-81',0x201302,b'\x81'),
         ('ptp-event-83',0x201302,b'\x83'),('interrupt-type',0x201303,b'\x03'),
         ('wrong-packet-size',0x201304,b'\x40\0'),('short-descriptor',0x201300,b'\x06'),
@@ -162,17 +162,17 @@ def main():
     original_instruction=reference[instruction_offset:instruction_offset+4]
     check('start-tag-original-instruction-identity',original_instruction==bytes.fromhex('7e20e0e3'))
     patched=bytearray(reference)
-    patched[instruction_offset:instruction_offset+4]=bytes.fromhex('7d20e0e3')
+    patched[instruction_offset:instruction_offset+4]=bytes.fromhex('7b20e0e3')
     changed=[i for i,(a,b) in enumerate(zip(reference,patched)) if a!=b]
     check('endpoint-mod-only-one-proved-byte',changed==[instruction_offset])
-    cpu.mem_write(0x10116c,bytes.fromhex('7d20e0e3'))
+    cpu.mem_write(0x10116c,bytes.fromhex('7b20e0e3'))
     # Host changes the instruction between runs; discard cached translations.
     cpu.ctl_remove_cache(0x10116c,0x101178)
     cpu.reg_write(UC_ARM_REG_R5,0x200800);cpu.reg_write(UC_ARM_REG_R6,0x200900)
     cpu.reg_write(UC_ARM_REG_R3,0x200a00)
     execute(0x10116c,0x101178)
-    check('explicit-mod-start-tag-82',bytes(cpu.mem_read(0x200818,1))==b'\x82')
-    patched_path=out/'reference-endpoint82.offline.o'
+    check('explicit-mod-start-tag-84',bytes(cpu.mem_read(0x200818,1))==b'\x84')
+    patched_path=out/'reference-endpoint84.offline.o'
     patched_path.write_bytes(patched)
     # Alternative to copied setup requests: let a narrowly modified original
     # classifier consume wire 1/2 directly, keeping the original request pointer.
@@ -193,7 +193,7 @@ def main():
         request=bytes([0xa1,0x81,0,1,wire,2,1,0])
         classify(request,0x1016f8)
         check('mod-entity-path-unchanged-'+str(wire),True)
-    combined_path=out/'reference-wire12-endpoint82.offline.o'
+    combined_path=out/'reference-wire12-endpoint84.offline.o'
     combined_path.write_bytes(combined)
     report=dict(status='offline_controls_passed',check_count=len(checks),checks=checks,
         source_sha256=hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
@@ -202,7 +202,7 @@ def main():
         endpoint_mod=dict(path=str(patched_path.relative_to(ROOT)),
             sha256=hashlib.sha256(patched).hexdigest(),file_offset=hex(instruction_offset),
             text_offset='0x116c',original_instruction=original_instruction.hex(),
-            mod_instruction='7d20e0e3',changed_byte_count=len(changed)),
+            mod_instruction='7b20e0e3',changed_byte_count=len(changed)),
         direct_wire_mod=dict(path=str(combined_path.relative_to(ROOT)),
             sha256=hashlib.sha256(combined).hexdigest(),
             classifier_file_offset=hex(classifier_offset),classifier_text_offset='0x13e8',
@@ -213,7 +213,7 @@ def main():
             'Direct-wire MOD uses the unchanged native request pointer; only its classifier slices are executed, not complete callback/EP0 completion.',
             'Original classification slices stop before allocators/queueing; entity errors and stream negotiation are not completed.',
             'Endpoint pointers/descriptors/enabled state are explicit fixtures, not live hardware allocation.',
-            'Original START writes 81; a separate explicit one-byte MOD changes the tag to 82. It is not a complete linked/deployable module.',
+            'Original START writes 81; a separate explicit one-byte MOD changes the tag to 84. It is not a complete linked/deployable module.',
             'No combined UVC/PTP enumeration, stream, control command, or teardown is proven.'])
     (out/'manifest.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
     print(json.dumps(report,indent=2))

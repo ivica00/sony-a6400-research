@@ -318,13 +318,13 @@ def main():
             check('session-active-class-route-'+str(wire),call('probe_class_call',shadow,0x212000,0x213000)==0 and events[-1].get('arguments',[])[:3]==[REFERENCE,0x212000,0x213000])
         # Actual session endpoint selector and bridge START, with explicit
         # controller/endpoint fixtures. No UVC transfer is submitted.
-        put(0x210f94,0x215000);put(0x21501c,0x215100);put(0x21504c,1)
-        cpu.mem_write(0x215100,bytes([7,5,0x82,2,0,2,0]))
+        put(0x210fa4,0x215000);put(0x21501c,0x215100);put(0x21504c,1)
+        cpu.mem_write(0x215100,bytes([7,5,0x84,2,0,2,0]))
         put(0x215224,0x215000);put(0x215600,0x215200)
         shadow=call('a6400_uvc_bridge_shadow',bridge,1)
         symbols['probe_start_call']=word(shadow+0x10)
         call('probe_start_call',shadow,3,0x68ab0001,0x215600)
-        check('session-endpoint82-start-wrapper',events[-1].get('endpoint_wrapper')==0x215200)
+        check('session-endpoint84-start-wrapper',events[-1].get('endpoint_wrapper')==0x215200)
         # Explicit test-driver STOP, not an inferred native hardware drain.
         check('session-fixture-stop',call('probe_stop',SESSION)==0)
         cleanup_start=len(events)

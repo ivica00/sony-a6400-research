@@ -160,7 +160,7 @@ def main():
         raw_rebound.extend(bytes(new_offset-len(raw_rebound)))
         raw_rebound.extend(relocation_payload)
         struct.pack_into('<II',raw_rebound,section_table+rel_section_index*section_entry_size+16,new_offset,len(relocation_payload))
-        for offset,old,new in [(0x116c,'7e20e0e3','7d20e0e3'),(0x13e8,'ff5015e2','015055e2')]:
+        for offset,old,new in [(0x116c,'7e20e0e3','7b20e0e3'),(0x13e8,'ff5015e2','015055e2')]:
             if raw_rebound[text_offset+offset:text_offset+offset+4]!=bytes.fromhex(old):
                 raise ValueError('Reference endpoint/classifier instruction mismatch')
             raw_rebound[text_offset+offset:text_offset+offset+4]=bytes.fromhex(new)
@@ -184,6 +184,7 @@ def main():
         cflags.append('-DA6400_UVC_COHERENT_ALLOC=1')
     legacy_flags=[]
     if args.shared_ptp_enumeration_candidate:
+        cflags.append('-DA6400_UVC_ENUMERATION_ONLY=1')
         legacy_flags=['-Da6400_uvc_gadgetcore_register_hook=a6400_legacy_register_hook',
                       '-Da6400_uvc_gadgetcore_unregister_hook=a6400_legacy_unregister_hook',
                       '-Da6400_uvc_video_core_ioctl=a6400_uvc_legacy_dma_ioctl']
@@ -243,7 +244,7 @@ def main():
                 orig_data = s.data()
                 expected_data=bytearray(orig_data)
                 if args.shared_ptp_enumeration_candidate and s.name=='.text':
-                    expected_data[0x116c:0x1170]=bytes.fromhex('7d20e0e3')
+                    expected_data[0x116c:0x1170]=bytes.fromhex('7b20e0e3')
                     expected_data[0x13e8:0x13ec]=bytes.fromhex('015055e2')
                 mod_data = cand.data() if cand else b''
                 prefix_match = mod_data.startswith(expected_data)
@@ -294,6 +295,7 @@ def main():
         'start_probe_only': args.start_probe_only,
         'shared_ptp_enumeration_candidate':args.shared_ptp_enumeration_candidate,
         'trace_control_requests':args.trace_control,
+        'enumeration_rejects_uvc_class_vendor':args.shared_ptp_enumeration_candidate,
         'deployable':False if args.shared_ptp_enumeration_candidate else None,
         'physical_test_ready':False if args.shared_ptp_enumeration_candidate else None,
         'buffer_allocation': ('owned_kernel_coherent' if args.coherent_buffer_allocation

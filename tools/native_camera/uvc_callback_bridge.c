@@ -50,6 +50,11 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
     uvc_u32 target, result=0, bulk=0;
     int primary;
     if (!b) return which>=CLASS ? NOT_HANDLED : (uvc_u32)EINVAL_;
+#ifdef A6400_UVC_ENUMERATION_ONLY
+    /* Enumeration has no video-control owner or sensor feeder. Do not enter
+     * reference PROBE/COMMIT/vendor handlers with an incomplete application. */
+    if (which==CLASS || which==VENDOR) return NOT_HANDLED;
+#endif
     primary=d->interface_number==b->snapshot.primary_interface;
     /* Endpoint-bearing START and its matching STOP can use either shadow.
      * Other notifications retain the reference's primary-only routing. */

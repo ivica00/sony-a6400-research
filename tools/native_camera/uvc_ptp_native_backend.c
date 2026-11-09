@@ -207,9 +207,22 @@ static int quiesce(void *gc)
 {
     int ret;
     if (!valid_gc(gc)) return -116;
-    ret=pullup(gc,0);if(ret)return ret;
+#ifdef A6400_UVC_TRACE_CONTROL
+    printk("[a6400_teardown] pullup_begin config=%u\n",(unsigned int)((unsigned char *)gc)[0x74]);
+#endif
+    ret=pullup(gc,0);
+#ifdef A6400_UVC_TRACE_CONTROL
+    printk("[a6400_teardown] pullup_end ret=%d config=%u\n",ret,(unsigned int)((unsigned char *)gc)[0x74]);
+#endif
+    if(ret)return ret;
     /* This original function is void. Do not interpret its residual r0 as ack. */
+#ifdef A6400_UVC_TRACE_CONTROL
+    printk("[a6400_teardown] native_disconnect_begin\n");
+#endif
     ((void (*)(void *))0x602b9464u)(gc);
+#ifdef A6400_UVC_TRACE_CONTROL
+    printk("[a6400_teardown] native_disconnect_end config=%u\n",(unsigned int)((unsigned char *)gc)[0x74]);
+#endif
     if (((unsigned char *)gc)[0x74] || live->descriptor_users ||
         live->session->bridge.in_flight || live->session->bridge.started) return -16;
     ret=registry_count(gc,0,1);if(ret<0)return ret;

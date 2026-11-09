@@ -1,0 +1,25 @@
+# E0230 — Fixed SD information query and preserve-before-ack collector
+
+Date: 2026-11-09. Offline integration plus read-only physical preflight; physical query result is not yet established at this update. No SD journal or configured UVC activation.
+
+## Exact original command identity
+
+The only new command literal is `IFSYS getdriveinfo A\r` (20bytes). Original libInfraFsys identity remains E0220's SHA75f24fd03f4a187563622d6320f0690108fa6e231ac6e84cbda9303b8dc9af2c. E0228 REA retained the actual query body: `Fsys_GetDriveInfo` and result/status/device/filesystem reporting. This is an existing service call, including its native information-refresh callbacks, not merely passive RAM reading; it has no file-create/write request. It does not initialize a private filesystem instance. No general claim about all camera-managed media activity follows.
+
+The helper resolves fresh MWF and filesystem text mappings, then checks original query prefix16bytes, service state1, current g_fsys A pointer/device string `/dev/mmca`, relocated subcommand table/name/callback (`getdriveinfo`, Thumb1583d), unique registered `IFSYS` callback Thumb15c61, empty prefix and main-first0. Source table offset6aaf8+60 and GOT6bfe8 were verified from the original ELF; live tables are read via GOT. Input/output must be empty, parser cursor/mode0 and queue/backing identities stable. Identity is checked again after placing payload but before publishing the input cursor. These sequential checks are not exclusive ownership or concurrency certification. Only fixed help and fixed SD-info commands exist, not arbitrary command text.
+
+## Collector and failure handling
+
+`native_monitor_collector.c` retains passive mode and adds explicit `--sd-info`. It waits at most61 attempts for pre-publication identity/read admission, with one-second intervals, then never repeats a confirmed or uncertain publication. Codes10–12 (payload/prepublish/publish uncertainty) are terminal. Each captured query chunk is bounded, written to the own RAM log, fsync'ed and readback-compared before its output cursor is acknowledged. Only this query's expected input endpoint is accepted. Any acknowledgement failure stops without retry/rollback. Aggregate answer is capped below8192bytes; total RAM log32768bytes; reply collection uses at most61 one-second samples. These are nominal loop bounds, not a hard timeout on OS IO or Sony command execution. No cancellation of a blocked Sony worker is attempted.
+
+Observed success requires actual `result = 0x00000000`, `filesystemType`, final `MWF>` and a subsequent empty-output/consumed-input snapshot. Publication or wrapper1 is insufficient. Receipt verification and query success are reported separately. A readback-failure fixture exposed an incorrect byte-total after fully written but unverified data; fixed by accounting completed writes before verification, preserving failure evidence without acknowledging the queue. Partial write/other failures remain terminal and do not imply a complete receipt.
+
+Final build: `artifacts/native/monitor-sd-collector-e0230-verified/manifest.json`, Sony-libc ARM warnings-as-errors. Eleven compiled ARM identity cases pass with explicit pread/memcmp fixtures: valid, absent volume, internal flash substitution, changed code, inactive service, wrong subcommand/dispatcher, duplicate registration, prefix/main-first changes and short read. Nine actual-collector-body mocked IO cases pass, including successful query/one ack, uncertain publication/no retry and failed preserve/no ack. Original6passive fault cases remain. Failed earlier fixture runs are retained under earlier E0230 build directories; an initial test harness also omitted memcmp servicing and was corrected explicitly, not replaced by silent success. No physical concurrency/publisher proof follows from these fixtures.
+
+Regression logs: `artifacts/monitor-sd-collector-e0230-tests*.log`;617tests pass in the first full run17.853s, with final run retained after the write-accounting fix. Required venv interpreter probe verified. Host staging/collection tool compiles; ordinary tests do not call it.
+
+## Physical boundary
+
+Read-only preflight `artifacts/hardware/uvc-monitor-sd-query-e0230-preflight` observed input10/10 and output30153/30153, zero pending bytes, matching original code/topology. No command or cursor write in this preflight. The stage tool checks TracerPid0/no usbg_video, fresh own RAM paths, byte-equal upload and READY before instructing an ordinary PCRemote switch. Physical stage/collection receipts, if subsequently produced, live under their own hardware run directory; do not infer query success from this document or elapsed host monitoring. Collection retains all own camera files pending separate checked cleanup.
+
+Next: ordinary mode-switch observation and complete result/receipt recovery, then fresh device/status checks and removal only of owned temporary files. Approved SD journal remains unwritten. A successful information query would still not prove non-overwrite file creation, durable flush/restart survival, safe configured UVC teardown, live sensor video or simultaneous PTP control.

@@ -26,6 +26,7 @@
 #include "uvc_ptp_stop_attest.h"
 #include "uvc_ptp_entry_hook.h"
 #include "native_freeze.h"
+#include "uvc_ptp_runner_stop.h"
 
 #define IOCTL_UVC_INIT      0x4038e000u
 #define IOCTL_UVC_STOP      0x0000e001u
@@ -56,6 +57,25 @@ static void sig_handler(int sig)
 
 static struct a6400_stop_request attest;
 static const char *receipt_path;
+static int preserve_receipt(void);
+
+static int stop_session(void *context)
+{ return ioctl(*(int *)context,IOCTL_UVC_STOP,0); }
+static int read_session_status(void *context,int state[4])
+{ return ioctl(*(int *)context,0x8010f022u,state); }
+
+static void retain_failed_session(int fd,const int state[4]) __attribute__((noreturn));
+static void retain_failed_session(int fd,const int state[4])
+{
+    printf("SESSION_RUNNER RETAINED fd=%d phase=%d pin=%d hooks=%d error=%d; no retire/close/retry\n",
+           fd,state[0],state[1],state[2],state[3]);
+    fflush(stdout);fflush(stderr);
+    if(receipt_path && preserve_receipt())
+        fprintf(stderr,"RETAINED receipt_copy_failed errno=%d\n",errno);
+    /* Keep the descriptor alive. Exiting would implicitly invoke release and
+     * could retry failed cleanup. A blocked STOP never reaches this branch. */
+    for(;;) pause();
+}
 
 static int run_session(int argc, char **argv)
 {
@@ -66,7 +86,7 @@ static int run_session(int argc, char **argv)
     int wait_pcremote = 0;
     int wait_timeout = 300;
     const char *device_path = "/tmp_bt/video";
-    int fd = -1, ret = 0, published = 0, session_active = 0;
+    int fd = -1, ret = 0, published = 0, session_active = 0, init_attempted = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--duration") && i + 1 < argc) {
@@ -177,6 +197,7 @@ static int run_session(int argc, char **argv)
     info.extra_info_ptr = NULL;
     info.extra_info_size = 0;
 
+    init_attempted = 1;
     ret = ioctl(fd, IOCTL_UVC_INIT, &info);
     printf("STEP 2: IOCTL_UVC_INIT returned ret=%d errno=%d (%s)\n", ret, errno, strerror(errno));
     fflush(stdout);
@@ -205,15 +226,13 @@ static int run_session(int argc, char **argv)
 
 teardown:
     /* Phase D: Stop Session if active */
-    if (session_active) {
+    if (init_attempted) {
         printf("STEP 3: Stopping composite session (IOCTL_UVC_STOP)...\n");
         fflush(stdout);
-        int stop_ret = ioctl(fd, IOCTL_UVC_STOP, 0);
-        if (stop_ret != 0) {
-            fprintf(stderr, "WARN IOCTL_UVC_STOP failed: ret=%d errno=%d\n", stop_ret, errno);
-        } else {
-            printf("STEP 3: Composite session stopped.\n");
-        }
+        int state[4];
+        const struct a6400_runner_stop_ops stop_ops={stop_session,read_session_status};
+        if (!a6400_runner_stop_verified(&stop_ops,&fd,state)) retain_failed_session(fd,state);
+        printf("STEP 3: Composite session stopped; IDLE/unpinned/no hooks/no error verified.\n");
         fflush(stdout);
     }
 
@@ -253,7 +272,7 @@ teardown:
     }
 
     close(fd);
-    printf("SESSION_RUNNER complete result=0\n");
+    printf("SESSION_RUNNER complete result=%d\n",session_active ? 0:8);
     fflush(stdout);
     return session_active ? 0 : 8;
 }

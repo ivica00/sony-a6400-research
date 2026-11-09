@@ -53,7 +53,7 @@ void a6400_uvc_ptp_candidate_init(struct a6400_uvc_ptp_candidate *p)
     for (i=0; i<sizeof(p->vs_extra); ++i)
         p->vs_extra[i]=s_desc_12625_template[i];
     p->vc_extra[12]=2; /* baInterfaceNr: new VideoStreaming interface */
-    p->vs_extra[6]=0x82; /* VS input header bEndpointAddress */
+    p->vs_extra[6]=0x84; /* VS input header bEndpointAddress */
     p->alternates[1].klass=0x0e;
     p->alternates[1].subclass=1;
     p->alternates[1].extra_size=sizeof(p->vc_extra);
@@ -64,7 +64,7 @@ void a6400_uvc_ptp_candidate_init(struct a6400_uvc_ptp_candidate *p)
     p->alternates[2].extra=p->vs_extra;
     p->alternates[2].endpoint_count=1;
     p->alternates[2].endpoints=&p->video_endpoint;
-    p->video_endpoint.address=0x82;
+    p->video_endpoint.address=0x84;
     p->video_endpoint.attributes=2;
     p->video_endpoint.max_packet=512;
     p->video_endpoint.reserved5[0]=2;

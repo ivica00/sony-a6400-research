@@ -1,92 +1,144 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="520" viewBox="0 0 1000 520" role="img" aria-labelledby="title desc">
-<title id="title">Sony a6400 research status through E0226</title>
-<desc id="desc">617 tests passed in the last recorded full suite. Static 720p UVC transport measured 29.9592 FPS. Composite children enumerated, but teardown remains unresolved. Monitor output preservation demonstrated; sensor integration and SD journal unfinished. Tiles show qualitative milestone states, not completion percentages.</desc>
-<rect width="1000" height="520" rx="16" fill="#0d1117"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="822" viewBox="0 0 1000 822" role="img" aria-labelledby="title desc">
+<title id="title">Sony a6400 research status through E0239</title>
+<desc id="desc">624 tests passed in the last recorded full suite. Guest emulation reaches the im.elf entry point and event phase 1 of 8, with 36/36 ARM syscall contracts, 20/20 ext2, 14/14 mmap and 13/13 uIPC cases; full boot is not claimed and 0 of 198 static plugin definitions are initialized. The firmware census covers 474 inventoried ELF modules with 74,134 exported function symbols (63,992 unique names) and 8,658 unique imports; 289 functions have retained static analysis, while internal/static functions remain unenumerated. Host-written artifacts are shown separately: the custom menu is drawn on the camera display but is not firmware compatibility. PTP liveview transferred a 1024x680 sensor JPEG, while PTP control transactions remain unverified. Static 720p UVC transport measured 29.9592 FPS; composite children enumerate but the Windows parent reports Code 10 and teardown is unresolved. The journal path was corrected to 8.3 A:/A6400J.DAT offline, but an intermittent PC Remote self-reboot blocks physical deployment. A bounded JPEG frame-metadata parser passes offline UVC checks but is not wired into Update. Tiles are qualitative states, not completion percentages.</desc>
+<rect width="1000" height="822" rx="16" fill="#0d1117" />
 <g font-family="Segoe UI,Arial,sans-serif">
 <text x="28" y="39" fill="#f0f6fc" font-size="24" font-weight="700">Research status</text>
-<text x="972" y="37" text-anchor="end" fill="#9da7b3" font-size="13">2026-11-09 · E0226</text>
-<path d="M28 54H972" stroke="#30363d"/>
-<rect x="28" y="72" width="280" height="63" rx="7" fill="#161b22"/>
-<text x="42" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">LAST FULL SUITE</text>
-<text x="42" y="120" fill="#36c88a" font-size="22" font-weight="700">617 passing</text>
-<rect x="320" y="72" width="310" height="63" rx="7" fill="#161b22"/>
-<text x="334" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">UVC TEST PATTERN</text>
-<text x="334" y="120" fill="#58a6ff" font-size="22" font-weight="700">29.9592 FPS</text>
-<rect x="642" y="72" width="330" height="63" rx="7" fill="#161b22"/>
-<text x="656" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">MONITOR ARM CHECKS</text>
-<text x="656" y="120" fill="#bc9cff" font-size="22" font-weight="700">8 admission cases</text>
-<rect x="28" y="154" width="460" height="86" rx="7" fill="#161b22"/>
-<text x="42" y="178" fill="#f0f6fc" font-size="13" font-weight="700">DISPLAY</text>
-<text x="474" y="178" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">DEMONSTRATED</text>
-<text x="42" y="200" fill="#9da7b3" font-size="12">Physical rendering</text>
-<rect x="42" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="96" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="150" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="204" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="258" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="312" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="366" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="420" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="512" y="154" width="460" height="86" rx="7" fill="#161b22"/>
-<text x="526" y="178" fill="#f0f6fc" font-size="13" font-weight="700">UVC / MJPEG</text>
-<text x="958" y="178" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">720p / ~30 FPS</text>
-<text x="526" y="200" fill="#9da7b3" font-size="12">Static test pattern</text>
-<rect x="526" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="580" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="634" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="688" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="742" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="796" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="850" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="904" y="214" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="28" y="253" width="460" height="86" rx="7" fill="#161b22"/>
-<text x="42" y="277" fill="#f0f6fc" font-size="13" font-weight="700">COMPOSITE USB</text>
-<text x="474" y="277" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">TEARDOWN OPEN</text>
-<text x="42" y="299" fill="#9da7b3" font-size="12">Parent + both children</text>
-<rect x="42" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="96" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="150" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="204" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="258" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="312" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="366" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="420" y="313" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="512" y="253" width="460" height="86" rx="7" fill="#161b22"/>
-<text x="526" y="277" fill="#f0f6fc" font-size="13" font-weight="700">MONITOR OUTPUT</text>
-<text x="958" y="277" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">30,115 BYTES</text>
-<text x="526" y="299" fill="#9da7b3" font-size="12">Preserve before ack</text>
-<rect x="526" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="580" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="634" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="688" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="742" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="796" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="850" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="904" y="313" width="48" height="9" rx="2" fill="#36c88a"/>
-<rect x="28" y="352" width="460" height="86" rx="7" fill="#161b22"/>
-<text x="42" y="376" fill="#f0f6fc" font-size="13" font-weight="700">SD JOURNAL</text>
-<text x="474" y="376" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">NOT WRITTEN</text>
-<text x="42" y="398" fill="#9da7b3" font-size="12">Native volume identified</text>
-<rect x="42" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="96" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="150" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="204" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="258" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="312" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="366" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="420" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="512" y="352" width="460" height="86" rx="7" fill="#161b22"/>
-<text x="526" y="376" fill="#f0f6fc" font-size="13" font-weight="700">SENSOR → UVC</text>
-<text x="958" y="376" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">INTEGRATION OPEN</text>
-<text x="526" y="398" fill="#9da7b3" font-size="12">Shared video disabled</text>
-<rect x="526" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="580" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="634" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="688" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="742" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="796" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="850" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<rect x="904" y="412" width="48" height="9" rx="2" fill="#f0bd55"/>
-<text x="28" y="475" fill="#9da7b3" font-size="12">Tiles indicate milestone state, not firmware coverage or percentage complete.</text>
-<text x="28" y="497" fill="#9da7b3" font-size="12">Physical results, fixture checks and open boundaries are detailed in the table below.</text>
+<text x="972" y="37" text-anchor="end" fill="#9da7b3" font-size="13">2026-11-09 | E0239</text>
+<path d="M28 54H972" stroke="#30363d" />
+
+<rect x="28" y="72" width="280" height="63" rx="7" fill="#161b22" />
+<text x="42" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">SYSTEM PYTHON SUITE</text>
+<text x="42" y="120" fill="#36c88a" font-size="22" font-weight="700">624 passing</text>
+<rect x="320" y="72" width="310" height="63" rx="7" fill="#161b22" />
+<text x="334" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">MONITOR ARM CHECKS</text>
+<text x="334" y="120" fill="#bc9cff" font-size="22" font-weight="700">21 admission cases</text>
+<rect x="642" y="72" width="330" height="63" rx="7" fill="#161b22" />
+<text x="656" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">UVC TEST PATTERN</text>
+<text x="656" y="120" fill="#58a6ff" font-size="22" font-weight="700">29.9592 FPS</text>
+<text x="28" y="150" fill="#9da7b3" font-size="11">Legend: green = verified contract · amber = open boundary · blue = host-written artifact (not firmware compatibility)</text>
+
+<rect x="28" y="164" width="466" height="104" rx="7" fill="#161b22" />
+<text x="42" y="188" fill="#f0f6fc" font-size="13" font-weight="700">GUEST EMULATION</text>
+<text x="480" y="188" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">ENTRY REACHED</text>
+<text x="42" y="210" fill="#9da7b3" font-size="12">im.elf entry; full boot not claimed</text>
+<text x="42" y="226" fill="#9da7b3" font-size="12">36/36 syscalls · 20/20 ext2 · 14/14 mmap</text>
+<text x="42" y="242" fill="#9da7b3" font-size="12">13/13 uIPC · 12/12 linker · 8/8 dispatch · 1/8 phases</text>
+
+<rect x="506" y="164" width="466" height="104" rx="7" fill="#161b22" />
+<text x="520" y="188" fill="#f0f6fc" font-size="13" font-weight="700">FIRMWARE SURFACE</text>
+<text x="958" y="188" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">MOSTLY UNEXPLORED</text>
+<text x="520" y="210" fill="#9da7b3" font-size="12">474 ELFs · 74,134 exported funcs</text>
+<text x="520" y="226" fill="#9da7b3" font-size="12">289 analyzed · 8,658 unique imports</text>
+<text x="520" y="242" fill="#9da7b3" font-size="12">0/198 plugins · 10/37 drivers · 7/30 parts</text>
+
+<rect x="28" y="282" width="466" height="104" rx="7" fill="#161b22" />
+<text x="42" y="306" fill="#f0f6fc" font-size="13" font-weight="700">CUSTOM MENU / FRAMEBUFFER</text>
+<text x="480" y="306" text-anchor="end" fill="#58a6ff" font-size="11" font-weight="700">HOST-WRITTEN</text>
+<text x="42" y="328" fill="#9da7b3" font-size="12">Custom UI drawn on the camera display</text>
+<text x="42" y="344" fill="#9da7b3" font-size="12">Not firmware compatibility or original menu</text>
+<rect x="42" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
+<rect x="96" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
+<rect x="150" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
+<rect x="204" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
+<rect x="258" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
+<rect x="312" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
+<rect x="366" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
+<rect x="420" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
+
+<rect x="506" y="282" width="466" height="104" rx="7" fill="#161b22" />
+<text x="520" y="306" fill="#f0f6fc" font-size="13" font-weight="700">PTP LIVEVIEW / CONTROL</text>
+<text x="958" y="306" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">LIVEVIEW OK</text>
+<text x="520" y="328" fill="#9da7b3" font-size="12">Sensor JPEG 1024×680 over PTP</text>
+<text x="520" y="344" fill="#9da7b3" font-size="12">Control transactions unverified</text>
+<rect x="520" y="360" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="574" y="360" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="628" y="360" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="682" y="360" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="736" y="360" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="790" y="360" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="844" y="360" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="898" y="360" width="48" height="8" rx="2" fill="#f0bd55" />
+
+<rect x="28" y="400" width="466" height="104" rx="7" fill="#161b22" />
+<text x="42" y="424" fill="#f0f6fc" font-size="13" font-weight="700">UVC / MJPEG</text>
+<text x="480" y="424" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">720p / ~30 FPS</text>
+<text x="42" y="446" fill="#9da7b3" font-size="12">Static test pattern; no sensor frames</text>
+<rect x="42" y="478" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="96" y="478" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="150" y="478" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="204" y="478" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="258" y="478" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="312" y="478" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="366" y="478" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="420" y="478" width="48" height="8" rx="2" fill="#36c88a" />
+
+<rect x="506" y="400" width="466" height="104" rx="7" fill="#161b22" />
+<text x="520" y="424" fill="#f0f6fc" font-size="13" font-weight="700">COMPOSITE USB</text>
+<text x="958" y="424" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">TEARDOWN OPEN</text>
+<text x="520" y="446" fill="#9da7b3" font-size="12">Parent + PTP + UVC; Windows Code 10</text>
+<rect x="520" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="574" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="628" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="682" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="736" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="790" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="844" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="898" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
+
+<rect x="28" y="518" width="466" height="104" rx="7" fill="#161b22" />
+<text x="42" y="542" fill="#f0f6fc" font-size="13" font-weight="700">NATIVE MONITOR</text>
+<text x="480" y="542" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">QUERY ANSWERED</text>
+<text x="42" y="564" fill="#9da7b3" font-size="12">IFSYS getdriveinfo A reply verified</text>
+<rect x="42" y="596" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="96" y="596" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="150" y="596" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="204" y="596" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="258" y="596" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="312" y="596" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="366" y="596" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="420" y="596" width="48" height="8" rx="2" fill="#36c88a" />
+
+<rect x="506" y="518" width="466" height="104" rx="7" fill="#161b22" />
+<text x="520" y="542" fill="#f0f6fc" font-size="13" font-weight="700">SD JOURNAL</text>
+<text x="958" y="542" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">NOT WRITTEN</text>
+<text x="520" y="564" fill="#9da7b3" font-size="12">8.3 path ready; PC Remote self-reboot</text>
+<rect x="520" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="574" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="628" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="682" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="736" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="790" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="844" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="898" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
+
+<rect x="28" y="636" width="466" height="104" rx="7" fill="#161b22" />
+<text x="42" y="660" fill="#f0f6fc" font-size="13" font-weight="700">SENSOR TO UVC</text>
+<text x="480" y="660" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">FEEDER UNWIRED</text>
+<text x="42" y="682" fill="#9da7b3" font-size="12">Frame metadata parser tested offline</text>
+<rect x="42" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="96" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="150" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="204" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="258" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="312" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="366" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
+<rect x="420" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
+
+<rect x="506" y="636" width="466" height="104" rx="7" fill="#161b22" />
+<text x="520" y="660" fill="#f0f6fc" font-size="13" font-weight="700">VALIDATION</text>
+<text x="958" y="660" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">624 PASSING</text>
+<text x="520" y="682" fill="#9da7b3" font-size="12">21 ARM admission · 19 mocked collector</text>
+<rect x="520" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="574" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="628" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="682" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="736" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="790" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="844" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+<rect x="898" y="714" width="48" height="8" rx="2" fill="#36c88a" />
+
+<text x="28" y="764" fill="#9da7b3" font-size="12">Tiles indicate bounded milestone state, not firmware coverage or percentage complete.</text>
+<text x="28" y="788" fill="#9da7b3" font-size="12">Firmware counts are a dynamic-symbol census; internal/static functions and unused tables remain unenumerated.</text>
+<text x="28" y="812" fill="#9da7b3" font-size="12">Physical results, fixture checks and open boundaries are detailed in the table below.</text>
 </g></svg>

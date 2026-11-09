@@ -31,6 +31,7 @@ def main():
     files = [
         source,
         ROOT / 'tools/native_camera/native_freeze.h',
+        ROOT / 'tools/native_camera/uvc_ptp_runner_stop.h',
         ROOT / 'tools/native_camera/uvc_ptp_stop_attest.h',
         ROOT / 'tools/native_camera/uvc_ptp_entry_hook.h',
         ROOT / 'tools/native_camera/snapshot_start.S',

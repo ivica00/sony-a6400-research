@@ -238,7 +238,7 @@ def main():
         save()
 
         print("\n" + "=" * 70)
-        print(">>> SESIJA JE ZAVRSENA NA KAMERI! <<<")
+        print(">>> HOST NADZOR JE ZAVRSEN; ZAVRSETAK NA KAMERI JOS NIJE POTVRDJEN. <<<")
         print(">>> SADA VRATITE KAMERU U 'Mass Storage' NACIN RADA:")
         print(">>>   MENU -> Setup (zuti kofer) -> USB Connection -> Mass Storage")
         print("=" * 70 + "\n")

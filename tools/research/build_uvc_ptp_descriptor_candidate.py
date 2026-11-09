@@ -141,10 +141,10 @@ def main():
     check('physical-config-power-and-attributes-preserved',raw[5:9]==captured[5:9])
     check('vc-interface-one',parsed['interfaces'][1]['number']==1 and parsed['interfaces'][1]['class']==14 and parsed['interfaces'][1]['subclass']==1)
     check('vs-interface-two',parsed['interfaces'][2]['number']==2 and parsed['interfaces'][2]['class']==14 and parsed['interfaces'][2]['subclass']==2)
-    check('video-endpoint-82',parsed['interfaces'][2]['endpoints']==[dict(address='0x82',attributes=2,max_packet=512,interval=0)])
+    check('video-endpoint-84',parsed['interfaces'][2]['endpoints']==[dict(address='0x84',attributes=2,max_packet=512,interval=0)])
     # 9 config + 30 PTP + 9 VC = 48; VS follows 40 original VC bytes.
     vc=bytearray(original_bytes(0x12598,40)); vc[12]=2
-    vs=bytearray(original_bytes(0x12625,61)); vs[6]=0x82
+    vs=bytearray(original_bytes(0x12625,61)); vs[6]=0x84
     check('original-vc-only-interface-reference-remapped',raw[48:88]==vc)
     check('original-vs-only-endpoint-reference-remapped',raw[97:158]==vs)
     check('no-endpoint-address-collision',len({e['address'] for i in parsed['interfaces'] for e in i['endpoints']})==4)
