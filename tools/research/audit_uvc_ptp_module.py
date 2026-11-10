@@ -21,6 +21,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir',required=True,type=Path)
     parser.add_argument('--output-dir',required=True,type=Path)
+    parser.add_argument('--linked-elf',type=Path,help='Use a prebuilt fixture ELF; skip gcc/ld (WSL-less environments)')
+    parser.add_argument('--prepare-only',action='store_true',help='Write the fixture and the exact gcc/ld commands, then exit')
     args=parser.parse_args();out=args.output_dir.resolve()
     if not out.is_relative_to(ROOT/'artifacts'):parser.error('Output must be under artifacts')
     out.mkdir(parents=True,exist_ok=True)
@@ -63,12 +65,20 @@ def main():
         subprocess.run(command,cwd=ROOT,check=True)
     rel=lambda p:p.relative_to(ROOT).as_posix()
     obj=out/'module_guard_fixture.o';linked=out/'module-guards.elf'
-    run(['arm-linux-gnueabi-gcc','-marm','-march=armv7-a','-mfloat-abi=softfp','-ffreestanding','-fno-builtin','-fno-pic','-fno-pie','-O2','-Itools/native_camera','-c',rel(fixture),'-o',rel(obj)])
     imports=sorted(s.name for s in sym.iter_symbols() if s.name and s['st_shndx']=='SHN_UNDEF')
     addresses={name:0x700000+i*256 for i,name in enumerate(imports)}
-    run(['arm-linux-gnueabi-ld','--no-undefined','-Ttext=0x5f800000','-Tdata=0x5f810000','-z','max-page-size=4096',
-         '-e','0x5f800000','-o',rel(linked),rel(module),rel(obj),
-         *['--defsym='+name+'='+hex(address) for name,address in addresses.items()]])
+    gcc=['arm-linux-gnueabi-gcc','-marm','-march=armv7-a','-mfloat-abi=softfp','-ffreestanding','-fno-builtin','-fno-pic','-fno-pie','-O2','-Itools/native_camera','-c',rel(fixture),'-o',rel(obj)]
+    ld=['arm-linux-gnueabi-ld','--no-undefined','-Ttext=0x5f800000','-Tdata=0x5f810000','-z','max-page-size=4096',
+        '-e','0x5f800000','-o',rel(linked),rel(module),rel(obj),
+        *['--defsym='+name+'='+hex(address) for name,address in addresses.items()]]
+    if args.prepare_only:
+        (out/'prepare.json').write_text(json.dumps({'gcc':gcc,'ld':ld,'fixture':rel(fixture),'obj':rel(obj),'linked':rel(linked)},indent=2)+'\n')
+        print(json.dumps({'prepare':str(out/'prepare.json')}))
+        return
+    if args.linked_elf:
+        linked=args.linked_elf.resolve()
+    else:
+        run(gcc);run(ld)
     image=ELFFile(io.BytesIO(linked.read_bytes()));symbols={s.name:s['st_value'] for s in image.get_section_by_name('.symtab').iter_symbols() if s['st_shndx']!='SHN_UNDEF'}
     cpu=Uc(UC_ARCH_ARM,UC_MODE_ARM);cpu.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A9);pages=set();writable=[];executable=[]
     for segment in image.iter_segments():

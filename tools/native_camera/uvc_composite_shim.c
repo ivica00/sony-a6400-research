@@ -10,6 +10,9 @@
 #include "uvc_callback_bridge.h"
 #include "zve10_uvc_tree.h"
 #include "test_pattern_720p.h"
+#ifdef A6400_UVC_PRODUCER_ADMISSION
+#include "uvc_producer_submit.h"
+#endif
 
 extern int printk(const char *fmt, ...);
 extern void *arch_phys_to_noncache(unsigned int phys);
@@ -539,6 +542,93 @@ static inline void a6400_usb_pullup(void *gc, int is_on)
     }
 }
 
+#ifdef A6400_LIVEVIEW_CONSISTENCY
+/* The app re-creates the stillimage/PTP gadget on liveview start. The module's
+ * UVC overlay must be dropped for that re-create to stay consistent, and the
+ * UDC must be re-armed after it. The app calls usb_gcw_stop/start through BL
+ * call sites in the gadgetcore text; find and patch those sites at runtime. */
+static unsigned int *g_gcw_sites[32];
+static unsigned int g_gcw_saved[32];
+static int g_gcw_count;
+static int g_gcw_active;
+
+static int my_liveview_gcw_stop(void *gc)
+{
+    int ret = ((int (*)(void *))0x602bd834u)(gc);
+    a6400_unhook_make_config_desc();
+    if (gc) {
+        a6400_demote_uvc_drivers(gc);
+    }
+    printk("[a6400_uvc] liveview consistency: gcw_stop (app re-create), overlay dropped\n");
+    return ret;
+}
+
+static int my_liveview_gcw_start(unsigned char arg)
+{
+    void **p_gc = (void **)0x6051b17cu;
+    int ret = ((int (*)(unsigned char))0x602bd7f8u)(arg);
+    if (p_gc && *p_gc) {
+        void *gc = *p_gc;
+        a6400_arm_ep0(a6400_get_dwc(gc));
+        a6400_usb_pullup(gc, 1);
+    }
+    printk("[a6400_uvc] liveview consistency: gcw_start re-armed EP0/pullup\n");
+    return ret;
+}
+
+static void a6400_hook_gcw_calls(void)
+{
+    unsigned int *p;
+    int n = 0;
+
+    if (g_gcw_active) {
+        return;
+    }
+    for (p = (unsigned int *)0x602a0000u; p < (unsigned int *)0x602c0000u && n < 32; p++) {
+        unsigned int w = *p;
+        unsigned long dest;
+        long off;
+        void *hook;
+
+        if ((w & 0xff000000u) != 0xeb000000u) {
+            continue;
+        }
+        off = ((long)(w << 8)) >> 6;
+        dest = (unsigned long)p + 8 + off;
+        if (dest == 0x602bd834u) {
+            hook = (void *)my_liveview_gcw_stop;
+        } else if (dest == 0x602bd7f8u) {
+            hook = (void *)my_liveview_gcw_start;
+        } else {
+            continue;
+        }
+        g_gcw_sites[n] = p;
+        g_gcw_saved[n] = w;
+        *p = 0xeb000000u | (unsigned int)(((long)hook - ((long)p + 8)) >> 2 & 0x00ffffffu);
+        n++;
+    }
+    g_gcw_count = n;
+    g_gcw_active = 1;
+    ((void (*)(void))0x60119c80u)();
+    printk("[a6400_uvc] liveview consistency: patched %d gcw call sites\n", n);
+}
+
+static void a6400_unhook_gcw_calls(void)
+{
+    int i;
+
+    if (!g_gcw_active) {
+        return;
+    }
+    for (i = 0; i < g_gcw_count; i++) {
+        *g_gcw_sites[i] = g_gcw_saved[i];
+    }
+    g_gcw_active = 0;
+    ((void (*)(void))0x60119c80u)();
+    printk("[a6400_uvc] liveview consistency: restored %d gcw call sites\n", g_gcw_count);
+}
+#endif
+
 static int a6400_uvc_commit_descriptors(void)
 {
     void **p_gc = (void **)0x6051b17cu;
@@ -608,6 +698,9 @@ static int a6400_uvc_commit_descriptors(void)
 
     /* 7.5. Hook make_config_desc to inject IADs for Windows usbccgp / usbvideo */
     a6400_hook_make_config_desc();
+#ifdef A6400_LIVEVIEW_CONSISTENCY
+    a6400_hook_gcw_calls();
+#endif
 
     /* 7.6. Promote shadow0 and shadow1 to head of gc->drv_list */
     a6400_promote_uvc_drivers(gc);
@@ -645,6 +738,9 @@ static int a6400_uvc_restore_descriptors(void)
     /* 1.5. Restore gc->drv_list and unhook make_config_desc */
     a6400_demote_uvc_drivers(gc);
     a6400_unhook_make_config_desc();
+#ifdef A6400_LIVEVIEW_CONSISTENCY
+    a6400_unhook_gcw_calls();
+#endif
 
     /* 2. Clear UVC descriptor table pointer (static bundle, do not call kfree/free_desc_tbl) */
     *(void **)((char *)gc + 0x6c) = (void *)0;
@@ -882,6 +978,14 @@ int a6400_usb_sync_free_phys_buffer(int task, unsigned short handle)
 /* 5. MOD DMA Query and Slot Capacity Enforcement Bridge */
 #define IOCTL_UVC_MOD_QUERY_DMA 0x8010f020
 
+#ifdef A6400_UVC_PRODUCER_ADMISSION
+/* Opt-in producer admission state: both slots start free. A successful submit
+ * consumes one slot; Update/ENABLE/WAIT remain rejected in this candidate. */
+static struct a6400_uvc_producer_state g_producer_state = {
+    {0, 0, 0, 0, 0}, {{1, 0}, {1, 0}}, 0
+};
+#endif
+
 struct a6400_uvc_dma_metadata {
     unsigned int phys_addr;
     unsigned int total_size;
@@ -955,6 +1059,44 @@ long a6400_uvc_video_core_ioctl(void *filp, unsigned int cmd, unsigned long arg)
              data.phys_addr+data.frame_size > g_dma_phys))) return -22;
 #endif
     }
+
+#ifdef A6400_UVC_PRODUCER_ADMISSION
+    if (cmd == 0x4008f004) { /* opt-in producer admission; never calls Update */
+        struct {
+            unsigned int frame_size;
+            unsigned int phys_addr;
+            unsigned int slot;
+            unsigned int prefix_len;
+            unsigned char prefix[64];
+            unsigned int reserved;
+        } data;
+        struct a6400_uvc_producer_frame frame;
+        unsigned int destination[1];
+        unsigned int slot_capacity;
+        int admitted;
+        if (!arg) return -14;
+        if (__copy_from_user(&data, (void *)arg, sizeof(data)) != 0) return -14;
+        if (data.prefix_len > 64u) return -22;
+#ifdef A6400_UVC_COHERENT_ALLOC
+        if (!g_dma_phys) return -19;
+        destination[0] = g_dma_phys;
+        slot_capacity = A6400_UVC_DMA_SIZE / 2;
+#else
+        destination[0] = 0x20000000u;
+        slot_capacity = (1294u * 1024u) / 2;
+#endif
+        frame.frame_size = data.frame_size;
+        frame.phys_addr = data.phys_addr;
+        frame.slot = data.slot;
+        frame.prefix = data.prefix;
+        frame.prefix_len = data.prefix_len;
+        admitted = a6400_uvc_producer_submit(&g_producer_state, &frame,
+                                              slot_capacity, destination,
+                                              slot_capacity * 2, 1280, 720);
+        if (admitted < 0) return -22;
+        return admitted;
+    }
+#endif
 
     return usbg_video_core_ioctl(filp, cmd, arg);
 }

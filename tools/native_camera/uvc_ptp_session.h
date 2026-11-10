@@ -8,6 +8,9 @@
 struct a6400_uvc_ptp_ops {
     /* quiesce must stop/disconnect AND drain native PTP/UVC/EP0 consumers. */
     int (*quiesce)(void *);
+    /* Optional end-path original clear-configuration (0x602b90cc). Called only
+     * when A6400_UVC_TEARDOWN_UNCONFIGURE_FIRST is compiled in. */
+    int (*unconfigure)(void *);
     int (*resume)(void *);
     /* unbind must be idempotent, including after a partially failed bind. */
     int (*bind_ep0)(void *,struct a6400_uvc_ptp_candidate *);

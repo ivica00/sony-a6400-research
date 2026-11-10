@@ -31,6 +31,7 @@ from src.a6400.execution.guest_cec import GuestCec, UnsupportedCec
 from src.a6400.execution.guest_mmca_char import GuestMmcChar, UnsupportedMmcChar, MMC_CHAR_NODES
 from src.a6400.execution.guest_pipe import GuestPipe, UnsupportedPipe, POLLNVAL, POLLERR, POLLHUP
 from src.a6400.execution.guest_sem import GuestSem
+from src.a6400.execution.guest_display import DisplayModel, display_contract
 from src.a6400.execution.kernel_task_identity import UnsupportedKernelBinding
 
 
@@ -40,7 +41,8 @@ class InterpreterProbe:
                  graphics_service_policy='stop', null_page_policy='stop',
                  kmod_service_policy='stop',
                  media_service_policy='stop', hook_mode='instruction',
-                 mmap_base=None, mmap_ceiling=None, mmap_search_low=None):
+                 mmap_base=None, mmap_ceiling=None, mmap_search_low=None,
+                 display_profile=None, grm_pool_policy='gl-common-only'):
         if null_page_policy not in ('stop', 'read-zero'):
             raise ValueError('Unknown null page policy')
         self.null_page_policy = null_page_policy
@@ -86,6 +88,17 @@ class InterpreterProbe:
         self.instructions = 0
         self._progress_interval = 0
         self._on_progress = None
+        self.display = None
+        if display_profile is not None:
+            profile = (display_profile if isinstance(display_profile, dict)
+                       else display_contract(display_profile))
+            self.display = DisplayModel(profile)
+            self.report['display_contract'] = profile.get('name')
+        self._pause_requested = False
+        self._run_open = False
+        self._usb_connect_record = None
+        self._usb_connect_at = 0
+        self._usb_connect_attempts = 0
         if madvise_policy != 'stop':
             self.report['assumptions'].append('Optional MADV_DONTNEED: only owned private anonymous pages; eager zeroing models later zero-fill reads, not RSS, physical reclaim or timing.')
         self.prepared = False
@@ -155,12 +168,19 @@ class InterpreterProbe:
             self.kuser = GuestKuser(self.mu, kuser_template)
             self.report['assumptions'].append('ARM Linux high vectors page at 0xffff0000 with kernel helper template (version 5) and set_tls contract.')
         if syscall_policy in ('uipc', 'threads'):
-            self.uipc = GuestUipc(backup_service_policy=backup_service_policy,
-                                  graphics_service_policy=graphics_service_policy,
-                                  media_service_policy=media_service_policy)
+            if grm_pool_policy not in ('gl-common-only', 'captured-e0044'):
+                raise ValueError('Unknown GRM pool policy')
+            uipc_options = {'backup_service_policy': backup_service_policy,
+                            'graphics_service_policy': graphics_service_policy,
+                            'media_service_policy': media_service_policy}
+            if graphics_service_policy == 'authentic-grm' and grm_pool_policy != 'gl-common-only':
+                from src.a6400.execution.grm_service import GrmMaService
+                uipc_options['grm_service'] = GrmMaService(pool_policy=grm_pool_policy)
+            self.uipc = GuestUipc(**uipc_options)
             self.report['media_service_policy'] = media_service_policy
             self.report['backup_service_policy'] = backup_service_policy
             self.report['graphics_service_policy'] = graphics_service_policy
+            self.report['grm_pool_policy'] = grm_pool_policy
             if graphics_service_policy == 'authentic-grm':
                 self.report['assumptions'].append('Graphics service: authentic-grm verified gl_common pool and allocation.')
             self.report['assumptions'].append('Other synchronous UIPC acknowledgements remain experimental transport responses; recipient execution and service semantics are not established.')
@@ -251,12 +271,16 @@ class InterpreterProbe:
     def _block(self, uc, address, size, user_data):
         insn_est = max(1, size // 2)
         self.instructions += insn_est
+        if self._pause_requested:
+            self._pause_check(uc)
         if self._progress_interval and self.instructions % self._progress_interval < insn_est:
             self._on_progress(self)
         self.tail.append((address, size))
 
     def _code(self, uc, address, size, user_data):
         self.instructions += 1
+        if self._pause_requested:
+            self._pause_check(uc)
         if self._progress_interval and self.instructions % self._progress_interval == 0:
             self._on_progress(self)
         self.tail.append((address, size))
@@ -266,6 +290,121 @@ class InterpreterProbe:
             cpsr = uc.reg_read(arm.UC_ARM_REG_CPSR)
             if cpsr & ((3 << 25) | (0x3f << 10)):
                 uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr & ~((3 << 25) | (0x3f << 10)))
+
+    def _pause_check(self, uc):
+        if self._pause_requested and self.report.get('status') == 'running':
+            self._pause_requested = False
+            self.report['status'] = 'paused'
+            uc.emu_stop()
+
+    def _display_write(self, uc, access, address, size, value, user_data):
+        if self.display is None:
+            return
+        self.display.note_write(address, size, uc.reg_read(arm.UC_ARM_REG_PC),
+                                getattr(getattr(self, 'threads', None), 'current_tid', None),
+                                self.instructions)
+
+    def _install_display_write_hooks(self):
+        """Watch only mapped display-surface ranges; execution is unchanged."""
+        if self.display is None:
+            return
+        installed = set(self.display.installed_ranges)
+        for start, end in self.display.all_surface_ranges():
+            if (start, end) in installed:
+                continue
+            self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._display_write,
+                             begin=start, end=end - 1)
+            self.display.installed_ranges.append((start, end))
+
+    def capture_display(self, key=None):
+        """Read one display frame from guest memory; never writes guest state."""
+        if self.display is None:
+            return None
+        return self.display.read_frame(lambda address, size: bytes(self.mu.mem_read(address, size)),
+                                       key=key, instruction=self.instructions)
+
+    def inject_usb_event(self, record):
+        """Inject one verified /dev/usb/event record and wake blocked readers."""
+        if not record:
+            raise ValueError('USB event record must not be empty')
+        if getattr(self, 'usb_event', None) is None:
+            raise ValueError('No USB event device is bound')
+        result = self.usb_event.inject_record(bytes(record))
+        filesystem = getattr(self, 'filesystem', None)
+        fd = None
+        if filesystem is not None:
+            fd = next((number for number, entry in filesystem.fds.items()
+                       if entry.get('device') == 'usb_event'), None)
+        woken = []
+        if fd is not None and getattr(self, 'threads', None) is not None:
+            woken = list(self.threads.handle_fd_wake(fd) or [])
+        entry = {'instruction': self.instructions, 'fd': fd, 'woken': woken,
+                 **(result if isinstance(result, dict) else {'accepted': bool(result)})}
+        self.report.setdefault('usb_event_injection', []).append(entry)
+        return entry
+
+    def arm_usb_connect_event(self, record, at_instruction=0):
+        """Arm one verified record for delivery once the event device is open."""
+        if not record:
+            raise ValueError('USB event record must not be empty')
+        self._usb_connect_record = bytes(record)
+        self._usb_connect_at = int(at_instruction)
+        self._usb_connect_attempts = 0
+        if self._progress_interval == 0:
+            self._progress_interval = 1_000_000
+        original = self._on_progress
+
+        def wrapped(probe):
+            if original is not None:
+                original(probe)
+            probe._maybe_inject_usb_connect()
+
+        self._on_progress = wrapped
+        return self
+
+    def _maybe_inject_usb_connect(self):
+        record = self._usb_connect_record
+        if record is None or self.instructions < self._usb_connect_at:
+            return None
+        if getattr(self, 'usb_event', None) is None or not getattr(self.usb_event, 'owners', {}):
+            return None
+        self._usb_connect_attempts += 1
+        try:
+            result = self.inject_usb_event(record)
+        except Exception as error:
+            self.report['usb_event_injection_error'] = {'reason': str(error),
+                                                        'attempts': self._usb_connect_attempts}
+            self._usb_connect_record = None
+            return None
+        if result.get('accepted'):
+            self._usb_connect_record = None
+        elif self._usb_connect_attempts >= 64:
+            self.report['usb_event_injection_error'] = {
+                'reason': result.get('reason', 'record_not_accepted'),
+                'attempts': self._usb_connect_attempts}
+            self._usb_connect_record = None
+        return result
+
+    def inject_uipc_message(self, queue, payload, source=None):
+        """Queue one explicit UIPC message and wake the target queue waiters."""
+        if getattr(self, 'uipc', None) is None:
+            raise ValueError('No UIPC device is initialized')
+        if not payload:
+            raise ValueError('UIPC injection payload must not be empty')
+        payload = bytes(payload)
+        message = self.uipc.allocate_message(len(payload), memory_writer=self._uipc_write)
+        self.mu.mem_write(message, payload)
+        self.uipc.enqueue_message(queue, message)
+        woken = []
+        if getattr(self, 'threads', None) is not None:
+            woken = list(self.threads.handle_uipc_wake(queue) or [])
+            if getattr(self.uipc, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300' and self.uipc.callback_ready():
+                woken.extend(self.threads.handle_uipc_wake(-1) or [])
+        entry = {'instruction': self.instructions, 'queue': queue, 'size': len(payload),
+                 'sha256': hashlib.sha256(payload).hexdigest(), 'msg_ptr': message,
+                 'woken': woken, 'source': source}
+        self.report.setdefault('uipc_injection', []).append(entry)
+        return entry
 
     def _interrupt(self, uc, interrupt, user_data):
         pc = uc.reg_read(arm.UC_ARM_REG_PC)
@@ -1154,7 +1293,8 @@ class InterpreterProbe:
                     try:
                         queue = (struct.unpack('<I', self._uipc_read(arg, 4))[0]
                                  if cmd in (0x80000007, 0x80000004) else None)
-                        ret = self.uipc.handle_ioctl(self._uipc_read, self._uipc_write, cmd, arg)
+                        ret = self.uipc.handle_ioctl(self._uipc_read, self._uipc_write, cmd, arg,
+                                                     tid=self.threads.current_tid if hasattr(self, 'threads') else None)
                     except UnverifiedGuestData as error:
                         self._identity_boundary(error.details)
                         return
@@ -1163,11 +1303,15 @@ class InterpreterProbe:
                             **error.details, 'pc': pc, 'r7': number, 'cmd': cmd, 'arg': arg})
                         uc.emu_stop()
                         return
-                    if ret is None and cmd == 0x80000007 and self.syscall_policy == 'threads':
+                    if ret is None and cmd in (0x80000007, 0x8000000d) and self.syscall_policy == 'threads' and (cmd == 0x80000007 or getattr(self.uipc, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300'):
+                        if cmd == 0x8000000d:
+                            queue = -1  # Internal scheduler key for callback waiters.
                         self.threads.save_context(uc)
                         self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
                         next_tid, event = self.threads.handle_uipc_wait(queue, pc - size)
                         event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
+                        if cmd == 0x8000000d:
+                            event['cmd'] = 'UIPC_CMD_WAIT_CB'
                         self.report['serviced_syscalls'].append(event)
                         if next_tid is not None:
                             self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
@@ -1182,6 +1326,8 @@ class InterpreterProbe:
                             woken = []
                             if cmd == 0x80000004:
                                 woken.extend(self.threads.handle_uipc_wake(queue))
+                                if getattr(self.uipc, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300' and self.uipc.callback_ready():
+                                    woken.extend(self.threads.handle_uipc_wake(-1))
                             # A service may enqueue a completion on a different
                             # reply queue during this ioctl. Wake its receivers
                             # only when an actual message is available.
@@ -1252,6 +1398,13 @@ class InterpreterProbe:
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
+                    if (self.display is not None and 0 <= event['returned'] < 0x80000000
+                            and self.stream.mapping):
+                        self.display.register_mapping(
+                            self.stream.mapping['virtual_start'],
+                            self.stream.mapping['length'],
+                            self.stream.mapping['physical_start'], 'stream')
+                        self._install_display_write_hooks()
                     return
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'uipc':
                     addr = uc.reg_read(arm.UC_ARM_REG_R0)
@@ -1263,6 +1416,8 @@ class InterpreterProbe:
                     if 0 <= event['returned'] < 0x80000000:
                         self.mmap.mark_device_range(event['returned'], length, 'uipc')
                     self.uipc.pool_base = event['returned']
+                    if 0 <= event['returned'] < 0x80000000:
+                        self.uipc.initialize_pool_options(self._uipc_write)
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
@@ -1385,7 +1540,7 @@ class InterpreterProbe:
                 self.report['syscall_responses_supplied'] += 1
                 uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
                 return
-        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 19, 33, 195, 197) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 19, 33, 195)):
+        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 19, 33, 39, 195, 197) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 19, 33, 39, 195)):
             args = [uc.reg_read(r) for r in (arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2)]
             try:
                 event = self.filesystem.request(number, args)
@@ -1519,6 +1674,19 @@ class InterpreterProbe:
                 event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
+                return
+            if number in (159, 160) and getattr(self.uipc, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300':
+                # E0300: original kernel functions and tables at 0x603c9a44/5c.
+                policy = uc.reg_read(arm.UC_ARM_REG_R0)
+                values = (0, 159, 159, 0, -22, 0) if number == 159 else (0, 1, 1, 0, -22, 0)
+                ret = values[policy] if policy < len(values) else -22
+                self.report['serviced_syscalls'].append({
+                    'syscall': 'sched_get_priority_max' if number == 159 else 'sched_get_priority_min',
+                    'r7': number, 'policy': policy, 'returned': ret,
+                    'pc': pc, 'instruction_address': pc - size, 'thumb': thumb,
+                    'source': 'original-kernel-e0300'})
+                self.report['syscall_responses_supplied'] += 1
+                uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff)
                 return
             if number == 155:  # sched_getparam
                 pid = uc.reg_read(arm.UC_ARM_REG_R0)
@@ -1844,7 +2012,7 @@ class InterpreterProbe:
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
                 return
-            if number == 301:  # sys_semtimedop
+            if number in (301, 312):  # sys_semtimedop (a6400 glibc 2.11.2 wrapper uses 312)
                 semid = uc.reg_read(arm.UC_ARM_REG_R0)
                 tsops = uc.reg_read(arm.UC_ARM_REG_R1)
                 nsops = uc.reg_read(arm.UC_ARM_REG_R2)
@@ -1853,7 +2021,7 @@ class InterpreterProbe:
                                           memory_reader=lambda a, sz: bytes(uc.mem_read(a, sz)),
                                           memory_writer=lambda a, d: uc.mem_write(a, d))
                 uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff if ret < 0 else ret)
-                event = {'syscall': 'semtimedop', 'r7': 301, 'semid': semid, 'tsops': hex(tsops),
+                event = {'syscall': 'semtimedop', 'r7': number, 'semid': semid, 'tsops': hex(tsops),
                          'nsops': nsops, 'timeout': hex(timeout), 'returned': ret,
                          'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 self.report['serviced_syscalls'].append(event)
@@ -1995,7 +2163,8 @@ class InterpreterProbe:
         self._after_host_write(address, len(data))
 
     def _after_host_write(self, address, size):
-        self.uname.forget_range(address, size)
+        if hasattr(self, 'uname'):
+            self.uname.forget_range(address, size)
         if hasattr(self, 'stat64'):
             self.stat64.forget_range(address, size)
         if hasattr(self, 'stream'):
@@ -2018,28 +2187,78 @@ class InterpreterProbe:
                            boundary={**details, 'pc': self.mu.reg_read(arm.UC_ARM_REG_PC)})
         self.mu.emu_stop()
 
-    def run(self, instruction_budget=100000, timeout_us=2000000):
+    def begin(self, instruction_budget=100000, timeout_us=2000000):
+        """Open a run without executing; slices may follow via run_slice()."""
         if not self.prepared:
             raise ValueError('Prepare the process before execution')
         if instruction_budget <= 0 or timeout_us <= 0:
             raise ValueError('Execution limits must be positive')
+        if self._run_open:
+            raise ValueError('A run is already open; use run_slice() or finish()')
         if self.report['status'] != 'not_started':
             raise ValueError('Use a fresh probe for each run')
+        self._run_open = True
+        self._slices_executed = 0
         self.report.update(status='running', instruction_budget=instruction_budget, timeout_us=timeout_us,
                            madvise_policy=self.madvise_policy)
-        budget_remaining = instruction_budget - self.instructions if instruction_budget > self.instructions else instruction_budget
+        self._maybe_inject_usb_connect()
+        return self
+
+    def run_slice(self, instruction_count, timeout_us=None):
+        """Execute one bounded slice of an open run; a pause stays resumable."""
+        if not self.prepared:
+            raise ValueError('Prepare the process before execution')
+        if not self._run_open:
+            raise ValueError('Call begin() before run_slice()')
+        if instruction_count <= 0:
+            raise ValueError('Slice instruction count must be positive')
+        if self.report['status'] not in ('running', 'paused'):
+            raise ValueError('Run is not resumable')
+        timeout = self.report.get('timeout_us') if timeout_us is None else timeout_us
+        if timeout is None or timeout <= 0:
+            raise ValueError('Execution limits must be positive')
+        self._pause_requested = False
+        self.report['status'] = 'running'
+        if getattr(self, '_slices_executed', 0) == 0:
+            start = self.entry
+        else:
+            start = self.mu.reg_read(arm.UC_ARM_REG_PC)
+            if self.mu.reg_read(arm.UC_ARM_REG_CPSR) & 0x20:
+                start |= 1
+        self._slices_executed = getattr(self, '_slices_executed', 0) + 1
         try:
-            self.mu.emu_start(self.entry, 0, timeout=timeout_us, count=budget_remaining)
-            if self.report['status'] == 'running':
-                self.report['status'] = ('timeout' if self.mu.query(unicorn.UC_QUERY_TIMEOUT)
-                                         else 'instruction_budget_exhausted' if (self.instructions >= instruction_budget or self.hook_mode == 'fast')
-                                         else 'unexpected_stop')
-            if self.hook_mode == 'fast' and self.report['status'] == 'instruction_budget_exhausted':
-                self.instructions = max(self.instructions, instruction_budget)
+            self.mu.emu_start(start, 0, timeout=timeout, count=instruction_count)
         except unicorn.UcError as error:
             if self.report['status'] == 'running':
                 self.report['status'] = 'execution_fault'
             self.report['engine_error'] = str(error)
+            return self.report
+        if self.report['status'] == 'running' and self.mu.query(unicorn.UC_QUERY_TIMEOUT):
+            self.report['status'] = 'timeout'
+        return self.report
+
+    def pause(self):
+        """Request a stop at the next block/instruction boundary."""
+        if self._run_open and self.report['status'] == 'running':
+            self._pause_requested = True
+
+    def finish(self, reason=None):
+        """Close an open run and build the final report."""
+        if self._run_open:
+            self._run_open = False
+            if self.report['status'] == 'running':
+                self.report['status'] = reason or 'instruction_budget_exhausted'
+        return self._finalize_report()
+
+    def run(self, instruction_budget=100000, timeout_us=2000000):
+        self.begin(instruction_budget, timeout_us)
+        budget_remaining = instruction_budget - self.instructions if instruction_budget > self.instructions else instruction_budget
+        self.run_slice(budget_remaining, timeout_us)
+        if self.hook_mode == 'fast' and self.report.get('status') in ('running', 'instruction_budget_exhausted'):
+            self.instructions = max(self.instructions, instruction_budget)
+        return self.finish()
+
+    def _finalize_report(self):
         last_insns = []
         for item in self.tail:
             if isinstance(item, tuple):
@@ -2097,5 +2316,7 @@ class InterpreterProbe:
             }
         if hasattr(self, 'stream'):
             self.report['stream'] = self.stream.report()
+        if self.display is not None:
+            self.report['display'] = self.display.report()
         return self.report
 

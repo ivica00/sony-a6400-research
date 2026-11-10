@@ -48,9 +48,9 @@ class CameraGuiWindow:
         )
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, ipady=4)
 
-        # Bindings
-        self.root.bind("<space>", lambda e: self.on_shutter())
-        self.root.bind("<Return>", lambda e: self.on_menu())
+        # Static checkpoint diagnostic only.  It intentionally exposes no
+        # host-written camera navigation; live guest frames are presented by
+        # tools.research.emulator_gui.
         self.root.bind("s", lambda e: self.save_screenshot())
 
         self.stream_data: Optional[bytes] = None
@@ -98,15 +98,6 @@ class CameraGuiWindow:
 
         self.tk_image = ImageTk.PhotoImage(lcd_image)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
-
-    def on_shutter(self):
-        print("[GUI] Shutter button triggered!")
-        self.status_bar.config(text="Shutter pressed - Captured active display frame.")
-        self.save_screenshot()
-
-    def on_menu(self):
-        print("[GUI] Menu button triggered!")
-        self.status_bar.config(text="Menu button toggled.")
 
     def save_screenshot(self):
         out_dir = Path("artifacts/gui")

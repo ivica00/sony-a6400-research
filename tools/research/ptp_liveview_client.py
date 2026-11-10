@@ -58,13 +58,19 @@ def parse_jpeg(data: bytes):
     return w, h, len(jpeg_bytes), jpeg_bytes
 
 
+def is_wpd_shutdown_error(exc):
+    """True when a WPD COM object was invalidated (device re-enumerated)."""
+    text = str(exc).lower()
+    return 'shutdown was already called' in text or 'object that owns it' in text
+
+
 class SonyWpdPTPLiveView:
     def __init__(self):
         from pmca.usb.driver.windows.wpd import MtpContext
         self.ctx = MtpContext()
         self.drv = None
 
-    def connect(self):
+    def connect(self, device_index=0):
         from pmca.usb.driver.windows.wpd import (
             tag_inner_PROPVARIANT, VT_UI4, CreateObject,
             PortableDevicePropVariantCollection,
@@ -77,9 +83,14 @@ class SonyWpdPTPLiveView:
                 "Ensure camera is powered ON and set to:\n"
                 "  MENU -> Setup -> USB Connection -> PC Remote"
             )
+        if not 0 <= device_index < len(devices):
+            raise IndexError(f'device index {device_index} outside 0..{len(devices)-1}')
+        self.device_count = len(devices)
+        self.device_index = device_index
+        self.device_handle = devices[device_index].handle
 
-        print(f"Found camera: {devices[0].handle}")
-        self.drv = self.ctx.openDevice(devices[0])
+        print(f"Found camera: {self.device_handle} (index {device_index}/{len(devices)})")
+        self.drv = self.ctx.openDevice(devices[device_index])
 
         # Patch 64-bit PROPVARIANT marshaling bug in WPD driver
         def fixed_initPropCollection(values):
@@ -111,20 +122,45 @@ class SonyWpdPTPLiveView:
         print("Handshake complete! LiveView ready.\n")
 
     def get_frame(self, retries=15):
+        self.last_response = None
+        self.reconnects = 0
         for _ in range(retries):
+            if getattr(self, 'drv', None) is None:
+                try:
+                    self.connect(getattr(self, 'device_index', 0))
+                    self.reconnects += 1
+                    self.last_response = {'reconnected': True}
+                except Exception as reconnect_exc:
+                    self.last_response = {'reconnect_error': repr(reconnect_exc)}
+                    time.sleep(0.05)
+                    continue
             try:
                 rc, data = self.drv.sendReadCommand(PTP_OC_GetObject, [SONY_HANDLE_LIVEVIEW])
+                self.last_response = {'rc': rc, 'len': len(data) if data else 0}
                 if rc == PTP_RC_OK and data and len(data) > 100:
                     res = parse_jpeg(data)
                     if res and res[0] > 0:
                         return res
                 time.sleep(0.015)
-            except Exception:
+            except Exception as exc:
+                self.last_response = {'error': repr(exc)}
+                if is_wpd_shutdown_error(exc):
+                    self.close()
+                    continue
                 time.sleep(0.02)
         return None
 
     def close(self):
-        pass
+        driver = getattr(self, 'drv', None)
+        if driver is None:
+            return
+        device = getattr(driver, 'device', None)
+        try:
+            if device is not None:
+                device.Close()
+        except Exception:
+            pass
+        self.drv = None
 
 
 class UvcLiveView:

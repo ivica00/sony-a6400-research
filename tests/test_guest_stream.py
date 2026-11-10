@@ -88,6 +88,19 @@ class StreamTests(unittest.TestCase):
         with self.assertRaises(UnsupportedMmap):
             self.mapper.request_madvise(virtual, 4096, 4)
 
+    def test_checkpoint_state_round_trip_keeps_mapping_and_guards(self):
+        virtual = self.map()
+        self.stream.forget_range(virtual, 4)
+        state = self.stream.to_state()
+        fresh_mu = unicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_ARM)
+        fresh_mapper = GuestMmap(fresh_mu, type('FS', (), {'fds': {}})())
+        fresh = GuestStream(fresh_mu, fresh_mapper, PROFILE, self.stop, lambda a, n: None)
+        fresh.from_state(state)
+        self.assertEqual(fresh.mapping, self.stream.mapping)
+        self.assertEqual(fresh.mappings, self.stream.mappings)
+        self.assertEqual(fresh.unknown, self.stream.unknown)
+        self.assertEqual(fresh.offset, self.stream.offset)
+
     def test_unsupported_alias_permissions_and_overflow_do_not_allocate_pages(self):
         before = set(self.mapper.mapped_pages)
         for args in ((0, 4096, 7, 1, 4, 0), (0, 4096, 3, 2, 4, 0),

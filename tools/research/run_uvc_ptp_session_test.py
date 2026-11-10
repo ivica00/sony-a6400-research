@@ -21,6 +21,8 @@ import time
 from tools.camera_debugger import connect
 from tools.research.build_uvc_ptp_descriptor_candidate import ROOT
 from tools.research.capture_sony_usb_hub import capture as capture_hub
+from tools.research.p4_policy import (evaluate_after, evaluate_preflight,
+                                      evaluate_receipt, pre_teardown_host_gate)
 from tools.research.uvc_ptp_windows_host import query_devices, classify, setupapi_sony
 
 
@@ -40,8 +42,23 @@ def main():
     p.add_argument('--module-audit', type=Path, default=ROOT / 'artifacts/analysis/uvc-ptp-module-e0206')
     p.add_argument('--runner-build', type=Path, default=ROOT / 'artifacts/native/uvc-ptp-runner-e0208')
     p.add_argument('--duration', type=int, default=90, help='Session duration in seconds (default 90 for Windows binding)')
+    p.add_argument('--p4', action='store_true', help='Bounded P4 enumeration/teardown with strict receipt policy')
+    p.add_argument('--msc-wait', type=int, default=120, help='Seconds to wait for MSC reconnect after teardown')
     args = p.parse_args()
     if not 1<=args.duration<=300:p.error('Duration must be 1..300 seconds')
+    if args.p4:
+        if args.module_build == ROOT / 'artifacts/native/uvc-ptp-module-e0206':
+            args.module_build = ROOT / 'artifacts/native/uvc-ptp-module-e0212'
+        if args.module_audit == ROOT / 'artifacts/analysis/uvc-ptp-module-e0206':
+            args.module_audit = ROOT / 'artifacts/analysis/uvc-ptp-module-e0212'
+        if args.runner_build == ROOT / 'artifacts/native/uvc-ptp-runner-e0208':
+            args.runner_build = ROOT / 'artifacts/native/uvc-ptp-runner-p4'
+        if args.duration == 90:
+            args.duration = 60
+        if not 1 <= args.duration <= 90:
+            p.error('P4 duration must be 1..90 seconds')
+        if not 30 <= args.msc_wait <= 300:
+            p.error('P4 MSC wait must be 30..300 seconds')
 
     out = args.output_dir.resolve()
     if not out.is_relative_to(ROOT / 'artifacts'):
@@ -54,6 +71,9 @@ def main():
     runner_bytes = runner_file.read_bytes()
     mod_sha = hashlib.sha256(module_bytes).hexdigest()
     run_sha = hashlib.sha256(runner_bytes).hexdigest()
+    module_manifest = json.loads((args.module_build.resolve() / 'manifest.json').read_text())
+    if module_manifest.get('sha256') != mod_sha or module_manifest.get('size_bytes') != len(module_bytes):
+        raise ValueError('Module build identity mismatch')
     runner_manifest=json.loads((args.runner_build.resolve()/'manifest.json').read_text())
     runner_records=[r for path,r in runner_manifest['files'].items() if Path(path).name==runner_file.name]
     if len(runner_records)!=1 or runner_records[0]['sha256']!=run_sha or runner_records[0]['bytes']!=len(runner_bytes):
@@ -82,6 +102,8 @@ def main():
         session_log=remote_log,
         session_receipt=remote_receipt,
         duration_sec=args.duration,
+        p4_mode=args.p4,
+        msc_wait_sec=args.msc_wait,
         camera_writes='/tmp_bt only',
         files={}
     )
@@ -110,6 +132,7 @@ def main():
     node_created = False
     runner_pushed = False
     before_mods = None
+    uptime_before = None
 
     try:
         with connect() as dbg:
@@ -124,6 +147,17 @@ def main():
             artifact('status-before.txt', status_before)
             if not re.search(rb'^TracerPid:\s+0$', status_before, re.M):
                 raise RuntimeError('Owner process already traced')
+
+            uptime_before, _ = dbg.read_all('/proc/uptime', 4096)
+            artifact('uptime-before.txt', uptime_before)
+            if args.p4:
+                preflight = evaluate_preflight(module_sha=mod_sha, runner_sha=run_sha,
+                                               audit=audit_data, modules=before_mods,
+                                               status149=status_before)
+                report['p4_preflight'] = preflight
+                save()
+                if not preflight['ok']:
+                    raise RuntimeError('P4 preflight failed: ' + ','.join(preflight['reasons']))
 
             # Upload module
             report['upload_module'] = dbg.push(remote_mod, module_bytes)
@@ -232,6 +266,10 @@ def main():
         report['pcremote_switched_detected'] = pcremote_switched
         report['uvc_detected_on_host'] = uvc_detected
         report['children_ready_together']=any(s.get('binding',{}).get('children_ready_simultaneously',False) for s in host_samples)
+        last_binding = host_samples[-1].get('binding') if host_samples else None
+        report['host_enum_gate'] = pre_teardown_host_gate(last_binding)
+        if not report['host_enum_gate']['ok']:
+            print(f"!!! HOST ENUMERATION GATE: {report['host_enum_gate']['reasons']} (teardown risk)")
         try:
             metadata,setup_text=setupapi_sony();artifact('setupapi-sony.txt',setup_text.encode('utf-8'));report['setupapi']=metadata
         except OSError as setup_error:report['setupapi_error']=repr(setup_error)
@@ -256,7 +294,7 @@ def main():
         msc_reconnected = False
         reconnection=ExitStack()
         wait_msc_start = time.time()
-        while time.time() - wait_msc_start < 120:
+        while time.time() - wait_msc_start < args.msc_wait:
             try:
                 dbg=reconnection.enter_context(connect())
                 msc_reconnected = True
@@ -266,7 +304,10 @@ def main():
 
         if not msc_reconnected:
             print("[-] Isteklo vrijeme cekanja za Mass Storage reconnect!")
+            report['status'] = 'teardown_unconfirmed' if args.p4 else 'failed'
             report['cleanup_error'] = 'Timeout waiting for camera to return to Mass Storage'
+            if args.p4:
+                print(">>> P4 TEARDOWN NIJE POTVRDJEN. NE uklanjaj modul. Restartaj kameru, pa javi za read-only provjeru.")
             save()
         else:
             print("[+] Ponovno povezan na debugger u Mass Storage nacinu! Preuzimam dokaze...")
@@ -282,8 +323,14 @@ def main():
                         report['collected_log_path']=remote_log
                     if truncated:raise RuntimeError('Truncated session receipt')
                     artifact('session.log', log_raw)
-                    report['runner_completed']=b'SESSION_RUNNER complete result=0' in log_raw and b'Entry hook retired' in log_raw and b'IOCTL_UVC_INIT returned ret=0' in log_raw
-                    if not report['runner_completed']:raise RuntimeError('Runner completion/retirement not confirmed; preserving module for recovery')
+                    policy = evaluate_receipt(log_raw)
+                    report['p4_receipt'] = policy
+                    report['runner_completed'] = policy['ok']
+                    if not policy['ok']:
+                        report['status'] = 'teardown_unconfirmed' if args.p4 else 'failed'
+                        save()
+                        raise RuntimeError('Receipt policy failed; preserving module for recovery: '
+                                           + ','.join(policy['reasons']))
 
                     # Check status
                     status_after, status_short = dbg.read_all('/proc/149/status', 16384)
@@ -319,14 +366,34 @@ def main():
                     after_mods, _ = dbg.read_all('/proc/modules', 65536)
                     artifact('modules-after.txt', after_mods)
                     report['module_list_restored'] = (before_mods is not None and after_mods == before_mods)
+                    uptime_after, _ = dbg.read_all('/proc/uptime', 4096)
+                    artifact('uptime-after.txt', uptime_after)
+                    after = evaluate_after(modules_before=before_mods, modules_after=after_mods,
+                                           uptime_before=uptime_before, uptime_after=uptime_after,
+                                           receipt_ok=policy['ok'])
+                    report['p4_after'] = after
+                    if args.p4 and not after['ok']:
+                        report['status'] = 'failed'
+                        report['p4_failure'] = 'after policy: ' + ','.join(after['reasons'])
+                    elif args.p4:
+                        report['status'] = ('p4_session_completed'
+                                            if 'error' not in report and report['module_list_restored'] and policy['ok']
+                                            else 'failed')
+                    else:
+                        report['status'] = ('phase3_session_completed'
+                                            if 'error' not in report and report['module_list_restored'] and policy['ok']
+                                            else 'failed')
                     artifact('debugger-after.txt', dbg.request(1)['payload'])
-                    report['status'] = 'phase3_session_completed' if 'error' not in report and report['module_list_restored'] and report.get('runner_completed') else 'failed'
                     save()
             except Exception as cleanup_err:
                 report['cleanup_error'] = repr(cleanup_err)
                 save()
             finally:
                 reconnection.close()
+
+    if args.p4 and report.get('status') != 'p4_session_completed':
+        print("\n>>> P4 NIJE USPJESNO ZAVRSEN. Ne tvrdi cist teardown.")
+        print(">>> Ako kamera ne reagira: restartaj je, pa javi za read-only provjeru MSC/modula/usbg_video.")
 
     print(json.dumps({k: v for k, v in report.items() if k != 'files'}, indent=2))
 

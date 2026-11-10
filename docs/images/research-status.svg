@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="822" viewBox="0 0 1000 822" role="img" aria-labelledby="title desc">
-<title id="title">Sony a6400 research status through E0239</title>
-<desc id="desc">624 tests passed in the last recorded full suite. Guest emulation reaches the im.elf entry point and event phase 1 of 8, with 36/36 ARM syscall contracts, 20/20 ext2, 14/14 mmap and 13/13 uIPC cases; full boot is not claimed and 0 of 198 static plugin definitions are initialized. The firmware census covers 474 inventoried ELF modules with 74,134 exported function symbols (63,992 unique names) and 8,658 unique imports; 289 functions have retained static analysis, while internal/static functions remain unenumerated. Host-written artifacts are shown separately: the custom menu is drawn on the camera display but is not firmware compatibility. PTP liveview transferred a 1024x680 sensor JPEG, while PTP control transactions remain unverified. Static 720p UVC transport measured 29.9592 FPS; composite children enumerate but the Windows parent reports Code 10 and teardown is unresolved. The journal path was corrected to 8.3 A:/A6400J.DAT offline, but an intermittent PC Remote self-reboot blocks physical deployment. A bounded JPEG frame-metadata parser passes offline UVC checks but is not wired into Update. Tiles are qualitative states, not completion percentages.</desc>
+<title id="title">Sony a6400 research status through E0296</title>
+<desc id="desc">669 tests passed in the last recorded full suite. E0289 showed the e0288 liveview-consistency module keeping the composite enumerated through liveview with a clean teardown. E0290-E0292 added GetObject diagnostics, found the host WPD COM shutdown at liveview start, and fixed the reconnect retry. E0293-E0295 showed the MI_00 WPD child installs but the WPD API list was empty, and fixed the snapshot timing. E0296: the device stayed enumerated, but the camera became unresponsive after liveview (operator restarted it); the reconnect budget was too short. Next: a minimal variant that drops the UVC overlay on the app stop but does not re-arm EP0/pullup in the start wrapper, then the snapshot3 test with a larger retry budget.</desc>
 <rect width="1000" height="822" rx="16" fill="#0d1117" />
 <g font-family="Segoe UI,Arial,sans-serif">
 <text x="28" y="39" fill="#f0f6fc" font-size="24" font-weight="700">Research status</text>
-<text x="972" y="37" text-anchor="end" fill="#9da7b3" font-size="13">2026-11-09 | E0239</text>
+<text x="972" y="37" text-anchor="end" fill="#9da7b3" font-size="13">2026-11-09 | E0296</text>
 <path d="M28 54H972" stroke="#30363d" />
 
 <rect x="28" y="72" width="280" height="63" rx="7" fill="#161b22" />
@@ -75,8 +75,8 @@
 
 <rect x="506" y="400" width="466" height="104" rx="7" fill="#161b22" />
 <text x="520" y="424" fill="#f0f6fc" font-size="13" font-weight="700">COMPOSITE USB</text>
-<text x="958" y="424" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">TEARDOWN OPEN</text>
-<text x="520" y="446" fill="#9da7b3" font-size="12">Parent + PTP + UVC; Windows Code 10</text>
+<text x="958" y="424" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">PTP SESSION OPEN</text>
+<text x="520" y="446" fill="#9da7b3" font-size="12">LCD liveview on, no PTP frame; teardown stuck 2/3</text>
 <rect x="520" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
 <rect x="574" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
 <rect x="628" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
@@ -102,7 +102,7 @@
 <rect x="506" y="518" width="466" height="104" rx="7" fill="#161b22" />
 <text x="520" y="542" fill="#f0f6fc" font-size="13" font-weight="700">SD JOURNAL</text>
 <text x="958" y="542" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">NOT WRITTEN</text>
-<text x="520" y="564" fill="#9da7b3" font-size="12">8.3 path ready; PC Remote self-reboot</text>
+<text x="520" y="564" fill="#9da7b3" font-size="12">Idle 3/3 stable; journal unwritten</text>
 <rect x="520" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
 <rect x="574" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
 <rect x="628" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
@@ -115,7 +115,7 @@
 <rect x="28" y="636" width="466" height="104" rx="7" fill="#161b22" />
 <text x="42" y="660" fill="#f0f6fc" font-size="13" font-weight="700">SENSOR TO UVC</text>
 <text x="480" y="660" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">FEEDER UNWIRED</text>
-<text x="42" y="682" fill="#9da7b3" font-size="12">Frame metadata parser tested offline</text>
+<text x="42" y="682" fill="#9da7b3" font-size="12">Admission ioctl linked offline; feeder unwired</text>
 <rect x="42" y="714" width="48" height="8" rx="2" fill="#36c88a" />
 <rect x="96" y="714" width="48" height="8" rx="2" fill="#36c88a" />
 <rect x="150" y="714" width="48" height="8" rx="2" fill="#f0bd55" />

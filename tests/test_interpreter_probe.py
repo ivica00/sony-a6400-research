@@ -757,6 +757,191 @@ class InterpreterProbeTests(unittest.TestCase):
 
 
 
+class ProbeSliceAndDisplayTests(unittest.TestCase):
+    """Bounded pause/resume and read-only display capture contracts."""
+
+    def setUp(self):
+        self.folder = PROJECT_ROOT / 'artifacts/tests/process-probe'
+        self.folder.mkdir(parents=True, exist_ok=True)
+
+    def probe(self, code=bytes.fromhex('00bf00bf00bf'), display_profile=None):
+        app = make_elf(self.folder / 'slice-app.elf', b'\xfe\xe7', dynamic=False)
+        interpreter = make_elf(self.folder / 'slice-linker.elf', code)
+        probe = InterpreterProbe(syscall_policy='stop', display_profile=display_profile)
+        probe.prepare(app, interpreter, ['/usr/bin/test'])
+        return probe
+
+    def test_pause_and_resume_slices(self):
+        probe = self.probe(bytes.fromhex('fee7'))
+        state = {'paused': False}
+        probe.begin(instruction_budget=1000, timeout_us=1000000)
+        probe._progress_interval = 8
+
+        def progress(current):
+            if not state['paused'] and current.instructions >= 40:
+                state['paused'] = True
+                current.pause()
+
+        probe._on_progress = progress
+        report = probe.run_slice(200)
+        self.assertEqual(report['status'], 'paused')
+        paused_at = probe.instructions
+        self.assertGreaterEqual(paused_at, 40)
+        self.assertLess(paused_at, 200)
+
+        report = probe.run_slice(30)
+        self.assertEqual(report['status'], 'running')
+        self.assertGreaterEqual(probe.instructions, paused_at + 30)
+
+        report = probe.finish(reason='stopped_by_user')
+        self.assertEqual(report['status'], 'stopped_by_user')
+        self.assertEqual(report['instructions_executed'], probe.instructions)
+
+    def test_fresh_probe_rejects_slices_without_begin(self):
+        probe = self.probe()
+        with self.assertRaises(ValueError):
+            probe.run_slice(10)
+
+    def test_display_capture_with_mapped_osd(self):
+        from src.a6400.execution.guest_display import display_contract
+        probe = self.probe(display_profile=display_contract('camera-e0074-e0044'))
+        self.assertIsNotNone(probe.display)
+        self.assertEqual(probe.report['display_contract'], 'camera-e0074-e0044')
+        self.assertIsNone(probe.capture_display())
+
+        probe.mu.mem_map(0x30000000, 0x200000, 5)  # UC_PROT_READ | UC_PROT_WRITE
+        probe.display.register_mapping(0x30000000, 0x200000, 0x23A80000)
+        probe._install_display_write_hooks()
+        self.assertTrue(probe.display.installed_ranges)
+        probe.display.note_write(0x30000000, 2, pc=0x401000, tid=1042, instruction=5)
+        probe.mu.mem_write(0x30000000, struct.pack('<H', 0xF00F))
+        frame = probe.capture_display()
+        self.assertEqual(frame.surface.name, 'osd_a')
+        self.assertEqual(frame.status, 'written')
+        self.assertEqual(frame.rgba[0:4], bytes((255, 0, 0, 255)))
+        self.assertIsNone(probe.capture_display('sugilite_color0'))
+        self.assertEqual(probe._finalize_report()['display']['contract'], 'camera-e0074-e0044')
+
+
+class SemtimedopDispatchTests(unittest.TestCase):
+    """a6400 glibc 2.11.2 uses syscall 312 for semtimedop (301 also accepted)."""
+
+    def _probe_with_sem(self):
+        from src.a6400.execution.guest_sem import GuestSem, IPC_CREAT
+        probe = InterpreterProbe(syscall_policy='stop')
+        probe.syscall_policy = 'threads'
+        probe.sem = GuestSem()
+        probe.report['status'] = 'running'
+        probe.mu.mem_map(0x1000, 0x2000, 7)
+        probe.mu.mem_write(0x1000, bytes.fromhex('000000ef'))  # svc 0
+        semid = probe.sem.semget(0x10020000, 1, IPC_CREAT | 0o666)
+        probe.mu.mem_write(0x2000, struct.pack('<Hhh', 0, 1, 0))
+        return probe, semid
+
+    def test_semtimedop_syscall_312_is_serviced(self):
+        probe, semid = self._probe_with_sem()
+        probe.mu.reg_write(arm.UC_ARM_REG_R0, semid)
+        probe.mu.reg_write(arm.UC_ARM_REG_R1, 0x2000)
+        probe.mu.reg_write(arm.UC_ARM_REG_R2, 1)
+        probe.mu.reg_write(arm.UC_ARM_REG_R3, 0)
+        probe.mu.reg_write(arm.UC_ARM_REG_R7, 312)
+        probe.mu.reg_write(arm.UC_ARM_REG_PC, 0x1004)
+        probe.mu.reg_write(arm.UC_ARM_REG_CPSR, 0)
+        probe._interrupt(probe.mu, 2, None)
+        event = probe.report['serviced_syscalls'][-1]
+        self.assertEqual(event['syscall'], 'semtimedop')
+        self.assertEqual(event['r7'], 312)
+        self.assertEqual(event['returned'], 0)
+        self.assertEqual(probe.sem.sets_by_id[semid].values, [1])
+        self.assertEqual(probe.report['status'], 'running')
+
+    def test_semtimedop_syscall_301_remains_accepted(self):
+        probe, semid = self._probe_with_sem()
+        probe.mu.reg_write(arm.UC_ARM_REG_R0, semid)
+        probe.mu.reg_write(arm.UC_ARM_REG_R1, 0x2000)
+        probe.mu.reg_write(arm.UC_ARM_REG_R2, 1)
+        probe.mu.reg_write(arm.UC_ARM_REG_R3, 0)
+        probe.mu.reg_write(arm.UC_ARM_REG_R7, 301)
+        probe.mu.reg_write(arm.UC_ARM_REG_PC, 0x1004)
+        probe.mu.reg_write(arm.UC_ARM_REG_CPSR, 0)
+        probe._interrupt(probe.mu, 2, None)
+        event = probe.report['serviced_syscalls'][-1]
+        self.assertEqual(event['r7'], 301)
+        self.assertEqual(event['returned'], 0)
+
+
+class UsbEventInjectionTests(unittest.TestCase):
+    class FakeEvent:
+        def __init__(self):
+            self.owners = {}
+            self.record = None
+
+        def inject_record(self, record):
+            self.record = record
+            return {'accepted': True, 'reason': 'verified_record', 'bytes': len(record),
+                    'sha256': hashlib.sha256(record).hexdigest()}
+
+    class FakeThreads:
+        def __init__(self):
+            self.woken = []
+
+        def handle_fd_wake(self, fd):
+            self.woken.append(fd)
+            return [1014]
+
+        def handle_uipc_wake(self, queue):
+            self.woken.append(queue)
+            return [1001]
+
+    def _probe(self):
+        from types import SimpleNamespace
+        probe = InterpreterProbe(syscall_policy='stop')
+        probe.filesystem = SimpleNamespace(fds={13: {'device': 'usb_event'}})
+        probe.usb_event = self.FakeEvent()
+        probe.threads = self.FakeThreads()
+        probe.instructions = 123
+        return probe
+
+    def test_inject_wakes_reader_and_records_provenance(self):
+        probe = self._probe()
+        result = probe.inject_usb_event(b'ABCD')
+        self.assertTrue(result['accepted'])
+        self.assertEqual(result['fd'], 13)
+        self.assertEqual(result['woken'], [1014])
+        self.assertEqual(probe.usb_event.record, b'ABCD')
+        stored = probe.report['usb_event_injection'][-1]
+        self.assertEqual(stored['bytes'], 4)
+        self.assertEqual(stored['sha256'], hashlib.sha256(b'ABCD').hexdigest())
+
+    def test_arm_waits_for_open_device_and_delivers_once(self):
+        probe = self._probe()
+        probe.arm_usb_connect_event(b'ABCD', at_instruction=0)
+        self.assertIsNone(probe._maybe_inject_usb_connect())
+        probe.usb_event.owners = {1: {}}
+        result = probe._maybe_inject_usb_connect()
+        self.assertTrue(result['accepted'])
+        self.assertIsNone(probe._maybe_inject_usb_connect())
+        self.assertEqual(probe.usb_event.record, b'ABCD')
+
+
+    def test_uipc_message_injection_writes_payload_and_wakes(self):
+        from src.a6400.execution.guest_uipc import GuestUipc
+        probe = InterpreterProbe(syscall_policy='stop')
+        probe.mu.mem_map(0x2000, 0x1000, 7)
+        probe.uipc = GuestUipc(total_pool_size=0x1000)
+        probe.uipc.pool_base = 0x2000
+        probe.threads = self.FakeThreads()
+        probe.instructions = 77
+        result = probe.inject_uipc_message(0x1234, b'\x01\x02\x03', source='unit-test')
+        self.assertEqual(bytes(probe.mu.mem_read(0x202c, 3)), b'\x01\x02\x03')
+        self.assertEqual(bytes(probe.mu.mem_read(0x2020, 12)),
+                         struct.pack('<IBBHI', 0, 0, 1, 1, 0xa5a5a5a5))
+        self.assertEqual(probe.uipc.message_queues[0x1234], [0x202c])
+        self.assertEqual(result['woken'], [1001])
+        self.assertEqual(probe.report['uipc_injection'][-1]['queue'], 0x1234)
+        self.assertEqual(probe.report['uipc_injection'][-1]['size'], 3)
+
+
 if __name__ == '__main__':
     unittest.main()
 

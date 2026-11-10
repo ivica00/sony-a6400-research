@@ -30,6 +30,8 @@ BACKUP_SERVICE_QUEUE = 0x003e014d
 GRM_MA_SERVICE_QUEUE = 0x014c0424
 DMM_SERVICE_QUEUE = 0x0061003c
 MEDIA_COMMON_DRIVER_QUEUE = 0x00d9016e
+# Scheduler-only wait key; never exposed as a guest queue identifier.
+CALLBACK_WAIT_KEY = -1
 
 
 class UnsupportedUipc(RuntimeError):
@@ -103,6 +105,24 @@ class GuestUipc:
         self.connected = True
         self.transactions.append({'type': 'connect', 'total_pool': self.total_pool_size, 'buf_ptr': buf_ptr})
         return 0
+
+    def initialize_pool_options(self, memory_writer):
+        """Write only k_uipc_init's verified option stores (E0300, opt-in).
+
+        This is not the kernel allocator/RT-pool initialization. Bytes not
+        explicitly stored by the original instructions are left untouched.
+        """
+        if getattr(self, 'pool_options_policy', 'legacy-empty') != 'kernel-e0300':
+            return
+        if self.pool_base is None or (self.total_pool_size, self.vpool_size,
+                                      self.fblock_size) != (0x100000, 0x40000, 0x8000):
+            raise UnsupportedUipc('kernel_pool_options_geometry_mismatch')
+        memory_writer(self.pool_base, struct.pack('<5I', 0x100000, 0x20000,
+                                                 0x40000, 0x8000, 4))
+        memory_writer(self.pool_base + 0x15, b'\x01\x00')
+        self.transactions.append({'type': 'pool_options', 'policy': 'kernel-e0300',
+                                  'base': self.pool_base, 'proxy_threads': 4,
+                                  'kernel_allocator_initialized': False})
 
     def handle_valloc_msg_wait(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x8000000a (__k_4u_valloc_msg_wait).
@@ -546,8 +566,10 @@ class GuestUipc:
         })
         return 0
 
-    def handle_ioctl(self, memory_reader, memory_writer, cmd: int, arg: int) -> Optional[int]:
+    def handle_ioctl(self, memory_reader, memory_writer, cmd: int, arg: int, tid=None) -> Optional[int]:
         """Dispatches supported UIPC ioctl commands."""
+        if cmd == UIPC_CMD_WAIT_CB and getattr(self, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300':
+            return self.handle_wait_cb(memory_reader, memory_writer, arg, tid=tid)
         if cmd == UIPC_CMD_CONNECT:
             return self.handle_connect(memory_reader, memory_writer, arg)
         elif cmd == UIPC_CMD_VALLOC_MSG_WAIT:
@@ -574,4 +596,50 @@ class GuestUipc:
             return self.handle_stat_sem(memory_reader, memory_writer, arg)
         elif cmd == UIPC_CMD_DYNAMIC_ID:
             return self.handle_dynamic_id(memory_reader, memory_writer, arg)
+        return None
+
+    def callback_ready(self):
+        return any(self.message_queues.get(cb['queue']) for cb in self.callbacks.values())
+
+    def handle_wait_cb(self, reader, writer, arg, tid=None):
+        """E0300 __k_4u_wait_cb: return a tuple to the original proxy loop.
+
+        Completion/ownership is deliberately a boundary after one delivery per
+        proxy. No host invocation of guest callbacks is performed.
+        """
+        _, params = struct.unpack('<II', reader(arg, 8))
+        previous_cb, previous_user, previous_msg, index = struct.unpack('<4I', reader(params, 16))
+        if index >= 4:
+            return -22
+        if tid is None:
+            raise UnsupportedUipc('uipc_proxy_thread_identity_required')
+        owners = getattr(self, 'callback_proxy_owners', {})
+        if index in owners and owners[index] != tid:
+            return -22
+        owners[index] = tid
+        self.callback_proxy_owners = owners
+        inflight = getattr(self, 'callback_inflight', {})
+        if index in inflight:
+            raise UnsupportedUipc('uipc_callback_completion_not_implemented',
+                                  proxy=index, previous=inflight[index])
+        for handle, cb in self.callbacks.items():
+            messages = self.message_queues.get(cb['queue'], [])
+            if not messages:
+                continue
+            if sum(other['queue'] == cb['queue'] for other in self.callbacks.values()) != 1:
+                raise UnsupportedUipc('uipc_multiple_callbacks_not_implemented', queue=cb['queue'])
+            if cb['flags'] != 0:
+                raise UnsupportedUipc('uipc_sync_callback_not_implemented', handle=handle,
+                                      queue=cb['queue'], flags=cb['flags'])
+            if not cb['callback']:
+                raise UnsupportedUipc('uipc_null_callback', handle=handle)
+            msg = messages[0]
+            writer(params, struct.pack('<4I', cb['callback'], cb['user_data'], msg, index))
+            messages.pop(0)
+            inflight[index] = {'handle': handle, 'queue': cb['queue'], 'msg_ptr': msg}
+            self.callback_inflight = inflight
+            self.transactions.append({'type': 'wait_cb_delivery', 'proxy': index,
+                                      'callback': cb['callback'], 'user_data': cb['user_data'],
+                                      **inflight[index]})
+            return 0
         return None

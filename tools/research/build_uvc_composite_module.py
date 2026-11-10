@@ -38,7 +38,19 @@ def main():
     parser.add_argument('--shared-ptp-enumeration-candidate',action='store_true',
                         help='Build OFFLINE shared PTP/UVC enumeration candidate; video START/submission disabled')
     parser.add_argument('--trace-control',action='store_true',help='Bounded descriptor/native-ioctl logging; no extra kernel hooks')
+    parser.add_argument('--producer-admission',action='store_true',
+                        help='Opt-in producer admission ioctl (0x4008f004); Update/ENABLE/WAIT stay rejected')
+    parser.add_argument('--teardown-unconfigure-first',action='store_true',
+                        help='Opt-in end-path original clear-configuration before native pullup')
+    parser.add_argument('--liveview-consistency',action='store_true',
+                        help='Opt-in: drop UVC overlay and re-arm UDC on app liveview gadget re-create')
     args = parser.parse_args()
+    if args.producer_admission and not args.shared_ptp_enumeration_candidate:
+        parser.error('--producer-admission requires --shared-ptp-enumeration-candidate')
+    if args.teardown_unconfigure_first and not args.shared_ptp_enumeration_candidate:
+        parser.error('--teardown-unconfigure-first requires --shared-ptp-enumeration-candidate')
+    if args.liveview_consistency and not args.shared_ptp_enumeration_candidate:
+        parser.error('--liveview-consistency requires --shared-ptp-enumeration-candidate')
     if args.shared_ptp_enumeration_candidate:
         if args.experimental_fixed_buffer or args.native_buffer_allocation:
             parser.error('Shared enumeration candidate requires owned coherent allocation')
@@ -188,11 +200,20 @@ def main():
         legacy_flags=['-Da6400_uvc_gadgetcore_register_hook=a6400_legacy_register_hook',
                       '-Da6400_uvc_gadgetcore_unregister_hook=a6400_legacy_unregister_hook',
                       '-Da6400_uvc_video_core_ioctl=a6400_uvc_legacy_dma_ioctl']
+    if args.producer_admission:
+        cflags.append('-DA6400_UVC_PRODUCER_ADMISSION=1')
+    if args.teardown_unconfigure_first:
+        cflags.append('-DA6400_UVC_TEARDOWN_UNCONFIGURE_FIRST=1')
+    if args.liveview_consistency:
+        cflags.append('-DA6400_LIVEVIEW_CONSISTENCY=1')
     run('arm-linux-gnueabi-gcc', [*cflags,*legacy_flags, '-c', rel(shim_src), '-o', rel(compiled_shim)])
     run('arm-linux-gnueabi-gcc', [*cflags, '-c', rel(bridge_src), '-o', rel(compiled_bridge)])
     extra_objects=[];extra_sources=[]
     if args.shared_ptp_enumeration_candidate:
-        for name in ['uvc_ptp_mode_gate','uvc_ptp_ioctl_guard','uvc_ptp_stop_attest','uvc_ptp_route_lease','uvc_ptp_code_sync','uvc_ptp_route_dryrun','uvc_ptp_entry_hook','uvc_ptp_descriptors','uvc_ptp_descriptor_lease','uvc_ptp_adapter','uvc_ptp_session','uvc_ptp_native_backend','uvc_module_self_ref','uvc_ptp_module_shim']:
+        names=['uvc_ptp_mode_gate','uvc_ptp_ioctl_guard','uvc_ptp_stop_attest','uvc_ptp_route_lease','uvc_ptp_code_sync','uvc_ptp_route_dryrun','uvc_ptp_entry_hook','uvc_ptp_descriptors','uvc_ptp_descriptor_lease','uvc_ptp_adapter','uvc_ptp_session','uvc_ptp_native_backend','uvc_module_self_ref','uvc_ptp_module_shim']
+        if args.producer_admission:
+            names += ['uvc_frame_validate','uvc_producer_admission','uvc_producer_submit']
+        for name in names:
             source=ROOT/'tools/native_camera'/(name+'.c');obj=out/(name+'.o')
             run('arm-linux-gnueabi-gcc', [*cflags,'-Wno-unused-const-variable','-c',rel(source),'-o',rel(obj)])
             extra_sources.append(source);extra_objects.append(obj)

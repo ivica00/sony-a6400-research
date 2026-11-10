@@ -62,6 +62,12 @@ int a6400_uvc_ptp_session_end(struct a6400_uvc_ptp_session *s)
     if (a6400_uvc_ptp_session_releasable(s)) return 0;
     if (s!=owner || !s->gc) return -22;
     if (!s->stopped) {
+#ifdef A6400_UVC_TEARDOWN_UNCONFIGURE_FIRST
+        if (s->ops.unconfigure) {
+            ret=s->ops.unconfigure(s->gc);
+            if (ret) return hold(s,ret);
+        }
+#endif
         ret=s->ops.quiesce(s->gc);
         if (ret) return hold(s,ret);
         s->stopped=1;

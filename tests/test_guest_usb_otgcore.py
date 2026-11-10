@@ -1,3 +1,4 @@
+import struct
 import unittest
 from src.a6400.execution.guest_usb_otgcore import (
     GuestUsbOtgCore,
@@ -9,6 +10,14 @@ from src.a6400.execution.guest_usb_otgcore import (
     USB_OTGCORE_IOCTL_SET_CONFIG,
     USB_OTGCORE_IOCTL_GET_STATUS,
     USB_OTGCORE_IOCTL_GET_INFO,
+    USB_OTGCORE_IOCTL_SET_MODE,
+    USB_OTGCORE_IOCTL_SET_FLAG,
+    USB_OTGCORE_IOCTL_SET_SELECT_PORT,
+    USB_OTGCORE_IOCTL_SET_PARAM,
+    USB_OTGCORE_IOCTL_CMD_0XE305,
+    USB_OTGCORE_IOCTL_CMD_0XE312,
+    USB_OTGCORE_REPLY_POLICY_LEGACY,
+    USB_OTGCORE_REPLY_POLICY_VERIFIED,
 )
 
 
@@ -120,6 +129,173 @@ class TestGuestUsbOtgCore(unittest.TestCase):
         owner = self.dev.open(flags=2)
         ret = self.dev.ioctl(owner['owner_id'], 0xdeadbeef, 0, lambda a, s: b'', lambda a, d: None)
         self.assertEqual(ret, -22)
+
+
+class TestGuestUsbOtgCoreVerifiedPolicy(unittest.TestCase):
+    """Opt-in 'verified-connect' policy: authentic values or explicit boundary."""
+
+    def setUp(self):
+        self.dev = GuestUsbOtgCore(reply_policy=USB_OTGCORE_REPLY_POLICY_VERIFIED)
+        self.owner = self.dev.open(flags=2, caller_pid=1012, caller_tgid=1000)
+        self.mem = {}
+        self.written = {}
+
+    def mem_read(self, addr, size):
+        return self.mem[addr][:size]
+
+    def mem_write(self, addr, data):
+        self.written[addr] = bytes(data)
+
+    def ioctl(self, cmd, arg=0, payload=None):
+        if payload is not None:
+            self.mem[arg] = payload
+        return self.dev.ioctl(self.owner['owner_id'], cmd, arg, self.mem_read, self.mem_write)
+
+    # ---------------------------------------------------------- policy shape
+    def test_default_policy_is_legacy(self):
+        default = GuestUsbOtgCore()
+        self.assertEqual(default.reply_policy, USB_OTGCORE_REPLY_POLICY_LEGACY)
+        self.assertEqual(default.config_count, 0)
+        self.assertEqual(default.selected_port, 0)
+
+    def test_unknown_policy_rejected(self):
+        with self.assertRaises(ValueError):
+            GuestUsbOtgCore(reply_policy='invented')
+
+    # ------------------------------------------------------ verified setters
+    def test_verified_set_config_returns_zero_and_records_count(self):
+        payload = bytes([2]) + b'\x00' * 63
+        ret = self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, payload)
+        self.assertEqual(ret, 0)
+        self.assertEqual(self.dev.config, payload)
+        self.assertEqual(self.dev.config_count, 2)
+        self.assertEqual(self.dev.transactions[-1]['entry_count'], 2)
+
+    def test_verified_set_param_returns_zero(self):
+        payload = b'\xa5' * 16
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_PARAM, 0x3000, payload), 0)
+        self.assertEqual(self.dev.param, payload)
+
+    def test_verified_set_flag_returns_zero(self):
+        for flag in (1, 5, 10, 0, 11):
+            self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_FLAG, 0x4000, bytes([flag])), 0)
+        self.assertEqual(self.dev.flag, 11)
+
+    def test_verified_set_port_desc_first_and_busy(self):
+        payload = struct.pack('<I', 0x0002b5c0) + b'\xdd' * 32
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_PORT_DESC, 0x5000, payload), 0)
+        self.assertEqual(self.dev.port_desc, payload)
+        # A second registration before RESET reproduces the kernel -EBUSY path.
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_PORT_DESC, 0x5000, payload), -16)
+
+    def test_verified_set_port_desc_zero_word_is_einval(self):
+        payload = b'\x00' * 36
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_PORT_DESC, 0x5000, payload), -22)
+        self.assertIsNone(self.dev.port_desc)
+
+    def test_verified_select_port_zero(self):
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_SELECT_PORT, 0x6000,
+                                    struct.pack('<I', 0)), 0)
+        self.assertEqual(self.dev.selected_port, 0)
+
+    def test_verified_select_port_nonzero_is_boundary(self):
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            self.ioctl(USB_OTGCORE_IOCTL_SET_SELECT_PORT, 0x6000, struct.pack('<I', 1))
+        self.assertEqual(ctx.exception.details['reason'],
+                         'usb_otgcore_select_port_reply_not_derivable')
+        self.assertEqual(ctx.exception.details['request_field'], 'port=1')
+        self.assertEqual(self.dev.selected_port, 0)
+
+    # ------------------------------------------------------ verified queries
+    def test_verified_get_info_before_app_config_is_zero_struct(self):
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_GET_INFO, 0x7000), 0)
+        self.assertEqual(self.written[0x7000], b'\x00' * 8)
+
+    def test_verified_get_info_derived_from_set_config(self):
+        self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, bytes([1]) + b'\x00' * 63)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_GET_INFO, 0x7000), 0)
+        self.assertEqual(self.written[0x7000], struct.pack('<II', 1, 0))
+        self.assertEqual(self.dev.transactions[-1]['source'], 'derived-application-state')
+
+    def test_verified_get_info_reproduces_efault_for_count_above_two(self):
+        self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, bytes([3]) + b'\x00' * 63)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_GET_INFO, 0x7000), -14)
+        self.assertNotIn(0x7000, self.written)
+
+    def test_verified_get_status_is_explicit_boundary(self):
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            self.ioctl(USB_OTGCORE_IOCTL_GET_STATUS, 0x7000)
+        details = ctx.exception.details
+        self.assertEqual(details['reason'], 'usb_otgcore_get_status_reply_not_derivable')
+        self.assertEqual(details['cmd'], USB_OTGCORE_IOCTL_GET_STATUS)
+        self.assertEqual(details['requested_size'], 1)
+        self.assertNotIn(0x7000, self.written)
+
+    def test_verified_set_mode_invalid_value_is_einval(self):
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_MODE, 0x8000, b'\x03'), -22)
+
+    def test_verified_set_mode_valid_value_is_explicit_boundary(self):
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            self.ioctl(USB_OTGCORE_IOCTL_SET_MODE, 0x8000, b'\x02')
+        details = ctx.exception.details
+        self.assertEqual(details['reason'], 'usb_otgcore_set_mode_reply_not_derivable')
+        self.assertEqual(details['request_field'], 'mode=2')
+
+    def test_verified_callback_commands_are_boundaries(self):
+        for cmd in (USB_OTGCORE_IOCTL_CMD_0XE305, 0xe30e, 0xe308, 0xe309, 0xe30a, 0xe306):
+            with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+                self.ioctl(cmd)
+            self.assertEqual(ctx.exception.details['reason'],
+                             'usb_otgcore_driver_callback_reply_not_derivable', hex(cmd))
+
+    def test_verified_unknown_command_is_enotty(self):
+        self.assertEqual(self.ioctl(0xdeadbeef), -25)
+        self.assertEqual(self.dev.transactions[-1]['name'], 'UNKNOWN')
+
+    def test_verified_plain_noop_and_lifecycle(self):
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_CMD_0XE312), 0)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_START), 0)
+        self.assertTrue(self.dev.started)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_STOP), 0)
+        self.assertFalse(self.dev.started)
+
+    def test_verified_reset_clears_port_descriptor_for_reregistration(self):
+        payload = b'\x11' * 36
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_PORT_DESC, 0x5000, payload), 0)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_RESET), 0)
+        self.assertIsNone(self.dev.port_desc)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_PORT_DESC, 0x5000, payload), 0)
+
+    def test_verified_address_limits_still_enforced(self):
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            self.dev.ioctl(self.owner['owner_id'], USB_OTGCORE_IOCTL_GET_INFO, 0x60000000,
+                           self.mem_read, self.mem_write)
+        self.assertEqual(ctx.exception.details['reason'], 'user_pointer_outside_task_limit')
+
+    def test_verified_matches_retained_checkpoint_service_history(self):
+        """Replay the 312M checkpoint's exact otgcore history under the policy."""
+        payload = (b'\xc0\xb5\x02\x00' + b'\xdd\xb0\xf3\x52' * 6 + b'\x00\x00\x00\x00'
+                   + b'\xdd\xb0\xf3\x52')
+        self.assertEqual(len(payload), 36)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_PORT_DESC, 0x5000, payload), 0)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_PARAM, 0x6000, b'\x00' * 16), 0)
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_START), 0)
+        self.assertTrue(self.dev.started)
+
+    def test_legacy_policy_unchanged_zero_stub(self):
+        legacy = GuestUsbOtgCore()
+        owner = legacy.open(flags=2)
+        written = {}
+
+        def write_mem(addr, data):
+            written[addr] = data
+
+        self.assertEqual(legacy.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_GET_STATUS, 0x3000,
+                                      lambda a, s: b'', write_mem), 0)
+        self.assertEqual(written[0x3000], b'\x00')
+        self.assertEqual(legacy.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_GET_INFO, 0x4000,
+                                      lambda a, s: b'', write_mem), 0)
+        self.assertEqual(written[0x4000], b'\x00' * 8)
 
 
 if __name__ == '__main__':

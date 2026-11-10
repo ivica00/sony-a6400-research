@@ -120,7 +120,7 @@ def get_a6400_project_status_data() -> list[Panel]:
         Category("devno_nodes", 28, devnodes_count, weight=38.0),    # flash block nodes, sio, dmac, ldec
         Category("kernel_drivers", 10, 37, weight=26.0),     # drivers1 (devno, dmac, ldec, emmc) + drivers2
         Category("flash_parts", 7, 30, weight=25.0),         # nflasha1-30: verified partitions
-        Category("display_subsys", 1, 4, weight=30.0),       # Static display discovery only; initialization, submission and camera comparison unverified
+        Category("display_subsys", 2, 4, weight=30.0),       # Read-only OSD/Sugilite contract, provenance and GUI (E0297); live guest rendering, GPU execution and camera comparison unverified
         Category("sdhci_dma", 10, 10, weight=20.0),         # CMD17/18/24/25, SDHCI_PRESENT_STATE (0x2c), ADMA2 8-byte descriptors (0x58), scatterlist pipeline
         Category("etc_overlay", 4, 5, weight=16.0),          # vfat rw detection, empty rootfs, preload boundary
     ]

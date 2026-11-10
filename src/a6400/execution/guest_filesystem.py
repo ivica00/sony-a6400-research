@@ -90,7 +90,7 @@ class GuestFilesystem:
             raise ValueError(f'Unknown tmp overlay policy: {tmp_overlay}')
         if proc_overlay not in ('stop', 'experimental-empty'):
             raise ValueError(f'Unknown proc overlay policy: {proc_overlay}')
-        if setting_overlay not in ('stop', 'experimental-empty'):
+        if setting_overlay not in ('stop', 'experimental-empty', 'observed-gps'):
             raise ValueError(f'Unknown setting overlay policy: {setting_overlay}')
         self.setting_overlay = setting_overlay
         self.tmp_overlay = tmp_overlay
@@ -163,6 +163,10 @@ class GuestFilesystem:
 
     def _setting_overlay_request(self, number, event, path, args):
         """Experimental /setting mount contract. Returns an event or None."""
+        if (self.setting_overlay == 'observed-gps' and number == 33 and args[1] == 0
+                and path in ('/setting', '/setting/gps')):
+            return {**event, 'returned': 0, 'reason': 'exists_observed_setting_directory',
+                    'source': 'E0298 read-only camera directory observation'}
         if self.setting_overlay != 'experimental-empty' or not (path == '/setting' or path.startswith('/setting/')):
             return None
         note = {'experimental': 'setting overlay; empty /setting mountpoint (real partition 2 on nflasha2)'}
@@ -236,11 +240,23 @@ class GuestFilesystem:
         return self.fds[fd]
 
     def request(self, number, args):
-        names = {3: 'read', 5: 'open', 6: 'close', 19: 'lseek', 33: 'access', 195: 'stat64', 197: 'fstat64'}
+        names = {3: 'read', 5: 'open', 6: 'close', 19: 'lseek', 33: 'access', 39: 'mkdir',
+                 195: 'stat64', 197: 'fstat64'}
         if number not in names:
             raise UnsupportedFilesystem('unimplemented_file_syscall', number=number)
         event = {'syscall': names[number], 'arguments': list(args[:3])}
         try:
+            if number == 39:
+                path = self._path(args[0])
+                event['path'] = path
+                if args[1] & ~0o7777:
+                    raise PathError(22, 'EINVAL_mkdir_mode')
+                if self.setting_overlay == 'observed-gps' and path in ('/setting', '/setting/gps'):
+                    return {**event, 'returned': (-17) & 0xffffffff,
+                            'reason': 'EEXIST_observed_setting_directory',
+                            'experimental': ('observed camera /setting/gps directory; '
+                                             'not a writable camera filesystem')}
+                raise UnsupportedFilesystem('mkdir_path_not_in_observed_setting', path=path)
             if number in (5, 33, 195):
                 path = self._path(args[0])
                 event['path'] = path

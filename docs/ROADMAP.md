@@ -1,5 +1,7 @@
 # Firmware execution roadmap
 
+Emulator GUI path (2026-11-10): [E0300](evidence/0300-uipc-proxy-start-and-vbus-callback.md) fixes the missing UIPC pool option stores under an opt-in policy. Original firmware starts four proxies and consumes a verified VBUS notification. Next establish callback completion ownership and sync-registered queue 0x009c015b; preserve the completion guard because the VBUS callback frees its message. No GUI frame/OSD mapping. 782 tests pass; E0298's SMAPH-S30 rasterizer boundary remains.
+
 Current UVC/PTP overview (2026-11-09, through E0239): [UVC_PTP_STATUS.md](UVC_PTP_STATUS.md). E0234 physically answered one fixed read-only `IFSYS getdriveinfo A` query. E0236's physical journal write was refused before any file existed, and the camera self-rebooted intermittently around PC Remote entry, so physical collector sessions are stopped. E0237 executed the original path functions offline: the `0x80000041` was the 8.3 normalizer rejecting the long underscored filename, not an empty letter table. E0238 rebuilt the collector with the 8.3 target `A:/A6400J.DAT` and passes 21 ARM admission, 19 mocked collector cases and 624 tests, but it is not physically deployed. E0239 adds the first offline UVC contract: a bounded JPEG SOF dimension parser (15 host cases, ARM compile) that is not yet wired into the Update path. The SD journal remains unwritten; composite child enumeration is proven, sensor streaming and simultaneous camera-control transactions remain unfinished. Earlier entries below retain historical experiment status.
 
 [E0144](evidence/0144-native-jpeg-receiver-ownership-and-dma-allocation.md): Native JPEG receiver/queue ownership source-checked; reference DMM UnitType0x50e absent on a6400. Kernel-owned 256 KiB lifecycle succeeds, but must gain metadata/per-slot bounds before streaming. Next finish synchronous SET_PATH conversion, dimension/capacity and DMM ownership contracts, then acquire one native JPEG. No sensor configuration issued; module unloaded, debugger intact, 599 tests pass.
@@ -260,6 +262,16 @@ Deliverables: boot/service checkpoints, tested device contracts, trace replay fi
 Exit gate: the original stack required by the target screen starts without application-result mocks. If only a user-space slice runs, label it accordingly; the full-system startup gate remains open.
 
 ## Phase 4 — First original UI vertical slice
+
+Status 2026-11-10 (E0298): a read-only display contract covers OSD A/B
+(camera-verified, 640x480 RGBA4444); a safe ptrace capture of im.elf's existing
+mapping produced a complete PlayMemories USB MSC screen. The Sugilite buffer is
+internal, not a display; the original GPU is DMP SMAPH-S30 and its private ISA
+blocks a bounded rasterizer. The emulator now passes semtimedop(312) and the
+observed /setting/gps mkdir and reaches 312M instructions, but it still does
+not load viewUnified2/view resources or map OSD A/B; it waits for a verified
+USB connect/MSC event. No live guest-rendered UI frame is claimed. The E0297
+/dev/stream OSD method must not be repeated.
 
 Dependency: original prerequisites from Phase 3; a research user-space slice may be explored earlier without closing the full-system gate.
 

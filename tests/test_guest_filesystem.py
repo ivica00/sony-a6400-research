@@ -35,6 +35,25 @@ class FilesystemTests(unittest.TestCase):
     def open(self, value='/lib/file', flags=0):
         return self.fs.request(5, [self.path(value), flags, 0])
 
+    def test_observed_setting_mkdir_returns_eexist_only_for_known_dirs(self):
+        fs = GuestFilesystem(self.mu, self.nodes, lambda path, node: b'ABCDEF',
+                             setting_overlay='observed-gps')
+        event = fs.request(39, [self.path('/setting/gps'), 0o777, 0])
+        self.assertEqual(event['returned'], 0xffffffef)
+        self.assertEqual(event['reason'], 'EEXIST_observed_setting_directory')
+        event = fs.request(39, [self.path('/setting'), 0o777, 0])
+        self.assertEqual(event['returned'], 0xffffffef)
+        for path in ('/setting', '/setting/gps'):
+            self.assertEqual(fs.request(33, [self.path(path), 0, 0])['returned'], 0)
+            with self.assertRaises(UnsupportedFilesystem):
+                fs.request(33, [self.path(path), 4, 0])
+        with self.assertRaises(UnsupportedFilesystem):
+            fs.request(39, [self.path('/setting/other'), 0o777, 0])
+        self.assertEqual(fs.request(39, [self.path('/setting/gps'), 0o10000, 0])['returned'],
+                         0xffffffea)
+        with self.assertRaises(UnsupportedFilesystem):
+            self.fs.request(39, [self.path('/setting/gps'), 0o777, 0])
+
     def test_absent_static_path_is_enoent(self):
         event = self.fs.request(33, [self.path('/lib/missing'), 4, 0])
         self.assertEqual(event['returned'], 0xfffffffe)

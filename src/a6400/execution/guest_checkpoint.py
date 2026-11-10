@@ -83,6 +83,8 @@ def save_checkpoint(probe, filepath: Path) -> int:
             'search_low_base': probe.mmap.search_low_base,
         } if hasattr(probe, 'mmap') and probe.mmap else None,
         'stream_mappings': list(probe.stream.mappings) if hasattr(probe, 'stream') and hasattr(probe.stream, 'mappings') else None,
+        'stream': probe.stream.to_state() if getattr(probe, 'stream', None) is not None else None,
+        'display': probe.display.to_state() if getattr(probe, 'display', None) is not None else None,
         'stat64': {
             'bytes': dict(probe.stat64.bytes),
             'read_fields': dict(probe.stat64.read_fields),
@@ -219,6 +221,33 @@ def restore_checkpoint(probe, filepath: Path) -> None:
 
     if sub.get('stream_mappings') and hasattr(probe, 'stream') and hasattr(probe.stream, 'mappings'):
         probe.stream.mappings = sub['stream_mappings']
+
+    if sub.get('stream') and getattr(probe, 'stream', None) is not None:
+        probe.stream.from_state(sub['stream'])
+    if sub.get('display') and getattr(probe, 'display', None) is not None:
+        probe.display.from_state(sub['display'])
+        if not probe.display.installed_ranges:
+            probe._install_display_write_hooks()
+    if getattr(probe, 'display', None) is not None and not probe.display.mappings:
+        # Older checkpoints predate the persisted display/stream state.  The
+        # mmap table still carries the verified device entries; use only those,
+        # never an invented virtual address.  Register every /dev/stream
+        # mapping so OSD A/B remain visible to the display contract.
+        stream_entries = [entry for entry in getattr(probe.mmap, 'mappings', [])
+                          if entry.get('device') == 'stream' and entry.get('address') is not None]
+        for entry in stream_entries:
+            probe.display.register_mapping(int(entry['address']), int(entry['length']),
+                                           int(entry['physical_start']), 'stream')
+        preferred = next((entry for entry in stream_entries
+                          if entry.get('physical_start') == 0x202E0000), None)
+        if preferred is not None and getattr(probe, 'stream', None) is not None and probe.stream.mapping is None:
+            probe.stream.mapping = {'virtual_start': int(preferred['address']),
+                                    'physical_start': int(preferred['physical_start']),
+                                    'length': int(preferred['length']), 'pgoff': None,
+                                    'prot': int(preferred.get('prot', 3))}
+            probe.stream.mappings = [probe.stream.mapping]
+        if stream_entries:
+            probe._install_display_write_hooks()
 
     if sub.get('stat64') and hasattr(probe, 'stat64'):
         probe.stat64.bytes = sub['stat64']['bytes']

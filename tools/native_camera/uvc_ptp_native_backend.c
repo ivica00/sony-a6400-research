@@ -203,6 +203,14 @@ static int pullup(void *gc,int enable)
     if(ret)return ret;
     return ((int (*)(void *,int))0x602b1d3cu)(*(void **)gc,enable);
 }
+/* Original clear-configuration (E0211/E0250). Stops interfaces 0/1/2, clears
+ * configuration/alternate bookkeeping and calls the no-op gadget ioctl(1,0).
+ * It is not the UDC pullup; callers must not treat it as that. */
+static int unconfigure(void *gc)
+{
+    if (!valid_gc(gc) || !((unsigned char *)gc)[0x74]) return 0;
+    return ((int (*)(void *))0x602b90ccu)(gc);
+}
 static int quiesce(void *gc)
 {
     int ret;
@@ -277,7 +285,7 @@ int a6400_uvc_ptp_native_backend_init(struct a6400_uvc_ptp_native_backend *b,
     if(registry_count(gc,0,0)<0) return -116;
     b->session=s;b->source=p;b->gc=gc;b->hook_mask=0;b->descriptor_users=0;b->last_error=0;
     live=b;
-    ops->quiesce=quiesce;ops->resume=resume;ops->bind_ep0=bind_ep0;ops->unbind_ep0=unbind_ep0;
+    ops->quiesce=quiesce;ops->unconfigure=unconfigure;ops->resume=resume;ops->bind_ep0=bind_ep0;ops->unbind_ep0=unbind_ep0;
     ops->reg=register_driver;ops->unreg=unregister_driver;
     ops->descriptor.save=save_descriptors;ops->descriptor.free=free_descriptors;
     ops->check_error=check_error;

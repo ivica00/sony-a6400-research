@@ -141,6 +141,26 @@ class GuestStream:
         if details:
             raise UnverifiedGuestData(details)
 
+    def to_state(self):
+        """Serialisable state for checkpoints; the Unicorn object is not pickled."""
+        return {'mapping': self.mapping, 'mappings': list(self.mappings),
+                'offset': self.offset, 'unknown': list(self.unknown)}
+
+    def from_state(self, state):
+        """Restore mapping/guard state onto a probe built with the same stream options."""
+        if not isinstance(state, dict):
+            raise ValueError('Stream checkpoint state must be a mapping')
+        existing = set(self.unknown)
+        self.mapping = state.get('mapping')
+        self.mappings = list(state.get('mappings') or [])
+        self.offset = int(state.get('offset', 0))
+        self.unknown = [tuple(item) for item in (state.get('unknown') or [])]
+        for begin, end in self.unknown:
+            if (begin, end) in existing:
+                continue
+            self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read, begin=begin, end=end - 1)
+            self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write, begin=begin, end=end - 1)
+
     def report(self):
         return {'profile': self.profile, 'offset': self.offset, 'mapping': self.mapping,
                 'unknown_bytes': sum(end - start for start, end in self.unknown),
