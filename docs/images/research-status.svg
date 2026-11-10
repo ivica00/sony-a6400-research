@@ -1,144 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="822" viewBox="0 0 1000 822" role="img" aria-labelledby="title desc">
-<title id="title">Sony a6400 research status through E0296</title>
-<desc id="desc">669 tests passed in the last recorded full suite. E0289 showed the e0288 liveview-consistency module keeping the composite enumerated through liveview with a clean teardown. E0290-E0292 added GetObject diagnostics, found the host WPD COM shutdown at liveview start, and fixed the reconnect retry. E0293-E0295 showed the MI_00 WPD child installs but the WPD API list was empty, and fixed the snapshot timing. E0296: the device stayed enumerated, but the camera became unresponsive after liveview (operator restarted it); the reconnect budget was too short. Next: a minimal variant that drops the UVC overlay on the app stop but does not re-arm EP0/pullup in the start wrapper, then the snapshot3 test with a larger retry budget.</desc>
-<rect width="1000" height="822" rx="16" fill="#0d1117" />
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="670" viewBox="0 0 1000 670" role="img" aria-labelledby="title desc">
+<title id="title">Sony a6400 research status through E0300</title>
+<desc id="desc">782 local tests pass. Original UIPC proxy threads and VBUS callback execute. Callback completion remains open. No emulator OSD mapping or verified GUI frame. Independent evidence, no overall compatibility percentage.</desc>
+<rect width="1000" height="670" rx="16" fill="#0d1117"/>
 <g font-family="Segoe UI,Arial,sans-serif">
-<text x="28" y="39" fill="#f0f6fc" font-size="24" font-weight="700">Research status</text>
-<text x="972" y="37" text-anchor="end" fill="#9da7b3" font-size="13">2026-11-09 | E0296</text>
-<path d="M28 54H972" stroke="#30363d" />
-
-<rect x="28" y="72" width="280" height="63" rx="7" fill="#161b22" />
-<text x="42" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">SYSTEM PYTHON SUITE</text>
-<text x="42" y="120" fill="#36c88a" font-size="22" font-weight="700">624 passing</text>
-<rect x="320" y="72" width="310" height="63" rx="7" fill="#161b22" />
-<text x="334" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">MONITOR ARM CHECKS</text>
-<text x="334" y="120" fill="#bc9cff" font-size="22" font-weight="700">21 admission cases</text>
-<rect x="642" y="72" width="330" height="63" rx="7" fill="#161b22" />
-<text x="656" y="94" fill="#9da7b3" font-size="11" letter-spacing="1">UVC TEST PATTERN</text>
-<text x="656" y="120" fill="#58a6ff" font-size="22" font-weight="700">29.9592 FPS</text>
-<text x="28" y="150" fill="#9da7b3" font-size="11">Legend: green = verified contract · amber = open boundary · blue = host-written artifact (not firmware compatibility)</text>
-
-<rect x="28" y="164" width="466" height="104" rx="7" fill="#161b22" />
-<text x="42" y="188" fill="#f0f6fc" font-size="13" font-weight="700">GUEST EMULATION</text>
-<text x="480" y="188" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">ENTRY REACHED</text>
-<text x="42" y="210" fill="#9da7b3" font-size="12">im.elf entry; full boot not claimed</text>
-<text x="42" y="226" fill="#9da7b3" font-size="12">36/36 syscalls · 20/20 ext2 · 14/14 mmap</text>
-<text x="42" y="242" fill="#9da7b3" font-size="12">13/13 uIPC · 12/12 linker · 8/8 dispatch · 1/8 phases</text>
-
-<rect x="506" y="164" width="466" height="104" rx="7" fill="#161b22" />
-<text x="520" y="188" fill="#f0f6fc" font-size="13" font-weight="700">FIRMWARE SURFACE</text>
-<text x="958" y="188" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">MOSTLY UNEXPLORED</text>
-<text x="520" y="210" fill="#9da7b3" font-size="12">474 ELFs · 74,134 exported funcs</text>
-<text x="520" y="226" fill="#9da7b3" font-size="12">289 analyzed · 8,658 unique imports</text>
-<text x="520" y="242" fill="#9da7b3" font-size="12">0/198 plugins · 10/37 drivers · 7/30 parts</text>
-
-<rect x="28" y="282" width="466" height="104" rx="7" fill="#161b22" />
-<text x="42" y="306" fill="#f0f6fc" font-size="13" font-weight="700">CUSTOM MENU / FRAMEBUFFER</text>
-<text x="480" y="306" text-anchor="end" fill="#58a6ff" font-size="11" font-weight="700">HOST-WRITTEN</text>
-<text x="42" y="328" fill="#9da7b3" font-size="12">Custom UI drawn on the camera display</text>
-<text x="42" y="344" fill="#9da7b3" font-size="12">Not firmware compatibility or original menu</text>
-<rect x="42" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
-<rect x="96" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
-<rect x="150" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
-<rect x="204" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
-<rect x="258" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
-<rect x="312" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
-<rect x="366" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
-<rect x="420" y="360" width="48" height="8" rx="2" fill="#58a6ff" />
-
-<rect x="506" y="282" width="466" height="104" rx="7" fill="#161b22" />
-<text x="520" y="306" fill="#f0f6fc" font-size="13" font-weight="700">PTP LIVEVIEW / CONTROL</text>
-<text x="958" y="306" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">LIVEVIEW OK</text>
-<text x="520" y="328" fill="#9da7b3" font-size="12">Sensor JPEG 1024×680 over PTP</text>
-<text x="520" y="344" fill="#9da7b3" font-size="12">Control transactions unverified</text>
-<rect x="520" y="360" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="574" y="360" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="628" y="360" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="682" y="360" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="736" y="360" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="790" y="360" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="844" y="360" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="898" y="360" width="48" height="8" rx="2" fill="#f0bd55" />
-
-<rect x="28" y="400" width="466" height="104" rx="7" fill="#161b22" />
-<text x="42" y="424" fill="#f0f6fc" font-size="13" font-weight="700">UVC / MJPEG</text>
-<text x="480" y="424" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">720p / ~30 FPS</text>
-<text x="42" y="446" fill="#9da7b3" font-size="12">Static test pattern; no sensor frames</text>
-<rect x="42" y="478" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="96" y="478" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="150" y="478" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="204" y="478" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="258" y="478" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="312" y="478" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="366" y="478" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="420" y="478" width="48" height="8" rx="2" fill="#36c88a" />
-
-<rect x="506" y="400" width="466" height="104" rx="7" fill="#161b22" />
-<text x="520" y="424" fill="#f0f6fc" font-size="13" font-weight="700">COMPOSITE USB</text>
-<text x="958" y="424" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">PTP SESSION OPEN</text>
-<text x="520" y="446" fill="#9da7b3" font-size="12">LCD liveview on, no PTP frame; teardown stuck 2/3</text>
-<rect x="520" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="574" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="628" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="682" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="736" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="790" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="844" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="898" y="478" width="48" height="8" rx="2" fill="#f0bd55" />
-
-<rect x="28" y="518" width="466" height="104" rx="7" fill="#161b22" />
-<text x="42" y="542" fill="#f0f6fc" font-size="13" font-weight="700">NATIVE MONITOR</text>
-<text x="480" y="542" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">QUERY ANSWERED</text>
-<text x="42" y="564" fill="#9da7b3" font-size="12">IFSYS getdriveinfo A reply verified</text>
-<rect x="42" y="596" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="96" y="596" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="150" y="596" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="204" y="596" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="258" y="596" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="312" y="596" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="366" y="596" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="420" y="596" width="48" height="8" rx="2" fill="#36c88a" />
-
-<rect x="506" y="518" width="466" height="104" rx="7" fill="#161b22" />
-<text x="520" y="542" fill="#f0f6fc" font-size="13" font-weight="700">SD JOURNAL</text>
-<text x="958" y="542" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">NOT WRITTEN</text>
-<text x="520" y="564" fill="#9da7b3" font-size="12">Idle 3/3 stable; journal unwritten</text>
-<rect x="520" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="574" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="628" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="682" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="736" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="790" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="844" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="898" y="596" width="48" height="8" rx="2" fill="#f0bd55" />
-
-<rect x="28" y="636" width="466" height="104" rx="7" fill="#161b22" />
-<text x="42" y="660" fill="#f0f6fc" font-size="13" font-weight="700">SENSOR TO UVC</text>
-<text x="480" y="660" text-anchor="end" fill="#f0bd55" font-size="11" font-weight="700">FEEDER UNWIRED</text>
-<text x="42" y="682" fill="#9da7b3" font-size="12">Admission ioctl linked offline; feeder unwired</text>
-<rect x="42" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="96" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="150" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="204" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="258" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="312" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="366" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
-<rect x="420" y="714" width="48" height="8" rx="2" fill="#f0bd55" />
-
-<rect x="506" y="636" width="466" height="104" rx="7" fill="#161b22" />
-<text x="520" y="660" fill="#f0f6fc" font-size="13" font-weight="700">VALIDATION</text>
-<text x="958" y="660" text-anchor="end" fill="#36c88a" font-size="11" font-weight="700">624 PASSING</text>
-<text x="520" y="682" fill="#9da7b3" font-size="12">21 ARM admission · 19 mocked collector</text>
-<rect x="520" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="574" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="628" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="682" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="736" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="790" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="844" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-<rect x="898" y="714" width="48" height="8" rx="2" fill="#36c88a" />
-
-<text x="28" y="764" fill="#9da7b3" font-size="12">Tiles indicate bounded milestone state, not firmware coverage or percentage complete.</text>
-<text x="28" y="788" fill="#9da7b3" font-size="12">Firmware counts are a dynamic-symbol census; internal/static functions and unused tables remain unenumerated.</text>
-<text x="28" y="812" fill="#9da7b3" font-size="12">Physical results, fixture checks and open boundaries are detailed in the table below.</text>
-</g></svg>
+<text x="28" y="42" fill="#f0f6fc" font-size="26" font-weight="700">Research status</text>
+<text x="740" y="40" fill="#c9d1d9" font-size="17" font-weight="400">2026-11-10 | E0300</text>
+<text x="28" y="78" fill="#36c88a" font-size="18" font-weight="400">782 tests passed | Bounded contracts; full boot remains unproven</text>
+<rect x="28" y="103" width="944" height="114" rx="8" fill="#161b22"/>
+<text x="44" y="125" fill="#9da7b3" font-size="12" font-weight="400">OFFLINE ORIGINAL CODE</text>
+<text x="44" y="150" fill="#f0f6fc" font-size="19" font-weight="700">UIPC / USB</text>
+<text x="44" y="175" fill="#c9d1d9" font-size="16" font-weight="400">Four proxy threads; original VBUS callback returns.</text>
+<text x="44" y="200" fill="#f0bd55" font-size="16" font-weight="400">Open: completion ownership, sync delivery, control queue.</text>
+<rect x="28" y="230" width="944" height="114" rx="8" fill="#161b22"/>
+<text x="44" y="252" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL CAPTURE + OFFLINE CONTRACT</text>
+<text x="44" y="277" fill="#f0f6fc" font-size="19" font-weight="700">Display / GPU</text>
+<text x="44" y="302" fill="#c9d1d9" font-size="16" font-weight="400">Camera OSD A/B confirmed; GPU is DMP SMAPH-S30.</text>
+<text x="44" y="327" fill="#f0bd55" font-size="16" font-weight="400">Open: emulator OSD mappings, frame and rasterizer.</text>
+<rect x="28" y="357" width="944" height="114" rx="8" fill="#161b22"/>
+<text x="44" y="379" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL OBSERVATION</text>
+<text x="44" y="404" fill="#f0f6fc" font-size="19" font-weight="700">PTP / composite USB</text>
+<text x="44" y="429" fill="#c9d1d9" font-size="16" font-weight="400">PC Remote sensor JPEG; composite enumeration demonstrated.</text>
+<text x="44" y="454" fill="#f0bd55" font-size="16" font-weight="400">Open: composite frames and reliable teardown; paused.</text>
+<rect x="28" y="484" width="944" height="114" rx="8" fill="#161b22"/>
+<text x="44" y="506" fill="#9da7b3" font-size="12" font-weight="400">AUTHORED PATTERN + PHYSICAL TRANSPORT</text>
+<text x="44" y="531" fill="#f0f6fc" font-size="19" font-weight="700">UVC / custom menu</text>
+<text x="44" y="556" fill="#c9d1d9" font-size="16" font-weight="400">Static 720p UVC at 29.9592 FPS; authored menu displayed.</text>
+<text x="44" y="581" fill="#f0bd55" font-size="16" font-weight="400">Open: sensor feeder and original menu compatibility.</text>
+<text x="28" y="638" fill="#9da7b3" font-size="15" font-weight="400">Independent results, not a compatibility percentage. Evidence and limits linked in README.</text>
+</g>
+</svg>
