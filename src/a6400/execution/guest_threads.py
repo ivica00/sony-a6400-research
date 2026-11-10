@@ -84,6 +84,8 @@ class GuestThreads:
         self.uipc_waiters: Dict[int, List[int]] = {}
         self.fd_waiters: Dict[int, List[int]] = {}
         self.thread_log: List[Dict[str, object]] = []
+        # Optional observer for a guest-derived per-thread kernel task record.
+        self.on_clone = None
 
     def save_context(self, uc) -> None:
         """Saves current CPU registers into the active thread descriptor."""
@@ -147,6 +149,10 @@ class GuestThreads:
         )
         new_thread.regs = child_regs
         self.threads[tid] = new_thread
+        if self.on_clone is not None:
+            # The child TID is guest-derived by the emulated clone; a kernel
+            # task observation table may register the matching record here.
+            self.on_clone(tid, self.process_id)
 
         event = {
             'syscall': 'clone',

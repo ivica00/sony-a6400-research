@@ -64,10 +64,23 @@ Reply provenance (E0299 task-7):
     - SET_SELECT_PORT with a non-zero port index (needs the hardware port
       count in driver byte+0x2c).
 
+Gadget function-descriptor table (E0303 / task C5): the opt-in
+``function_policy='descriptor-table'`` (``configured_functions=('mass-storage',)``
+by default) parses the verified 64-byte SET_CONFIG layout and selects functions
+through ``GADGET_FUNCTION_TABLE``: the verified MSC entry (host descriptor
+E0084 + the app's builder signature) plus explicit PTP, UVC VideoControl,
+UVC VideoStreaming and composite PTP+UVC entries whose USB descriptors are from
+the retained host captures (E0258/E0240/E0210) but whose otgcore SET_CONFIG
+template is unresolved.  Unknown functions/descriptors raise explicit
+``UnsupportedUsbOtgCore`` boundaries instead of succeeding silently; the default
+``function_policy='legacy'`` path never consults the table and stays
+byte-identical.
+
 Strict task limits: all user pointers checked against address_limit
 (TASK_SIZE <= 0x5f000000).
 """
 import struct
+from collections import namedtuple
 
 USB_OTGCORE_IOCTL_SET_PORT_DESC = 0x4024e301  # _IOW(0xe3, 1, 36)
 USB_OTGCORE_IOCTL_RESET = 0x0000e302          # _IO(0xe3, 2)
@@ -106,6 +119,260 @@ USB_OTGCORE_VERIFIED_CALLBACK_BOUNDARY_COMMANDS = {
     USB_OTGCORE_IOCTL_CMD_0XE30E: '0xe30e (driver-ops callback +0x34/+0x38)',
 }
 
+# ---------------------------------------------------------------------------
+# Gadget function-descriptor table (E0303)
+#
+# SET_CONFIG (0x4040e311) wire format, decoded from the pinned kernel handler
+# (vmlinux usb_otgcore_ioctl 0x602b8008..0x602b8104):
+#
+#   config[0]              u8   function/entry count (the kernel stores it in
+#                               global+4 (word) and global+12 (byte); GET_INFO
+#                               field0 returns global+4 and rejects values > 2)
+#   config[1..3]           --   unused padding
+#   entry i (i < count)    24 B at config[4 + 24*i]:
+#       +0   u32  io_type_a  -> conv_io_type_otgcore2ups() -> global+16+24*i
+#       +4   u8              -> global+20+24*i
+#       +8   u32             -> global+24+24*i
+#       +12  u32  io_type_b  -> conv_io_type_otgcore2ups() -> global+28+24*i
+#       +16  u8              -> global+32+24*i
+#       +20  u32             -> global+36+24*i
+#   config[52]             u32  -> global+0x40
+#   config[56]             u8   -> global+0x44
+#   config[60]             u32  -> global+0x48
+#
+# conv_io_type_otgcore2ups (vmlinux 0x602b607c) is an identity for inputs
+# 0..4 and prints "<3>usb_otgcore: error" + returns 0 for anything else; the
+# valid io-type domain of 0..4 is therefore verified, the semantics of each
+# value are not.  The app's only retained SET_CONFIG producer is
+# CUsbSvc::read_port_desc_from_backup (libInfraUsbCmn.so 0xa70c), which builds
+# a fixed 2-entry descriptor: entry io-type pairs (2,4)/(0,4), fixed zero
+# fields, tail word 3, and six values read from backup property IDs
+# 0x00F90552/0x00F90553/0x00F90287/0x00F90288/0x00F902C7/0x00F902C8 after the
+# 0x010D0077 presence check.  Those properties carry no USB class/subclass
+# codes, so the mapping from an entry to a specific USB function (MSC/PTP/UVC)
+# is NOT derivable; see the artifacts/analysis/e0303 note.
+#
+# The table below therefore separates what is verified at USB-descriptor level
+# (host captures) from the otgcore entry template.  Only the MSC baseline has a
+# retained template (the app's mode-independent builder constants); the PTP and
+# UVC entries are explicit placeholders whose otgcore template is unresolved
+# and selecting them stops explicitly.
+# ---------------------------------------------------------------------------
+USB_OTGCORE_CONFIG_SIZE = 64
+USB_OTGCORE_CONFIG_COUNT_OFFSET = 0
+USB_OTGCORE_CONFIG_ENTRY_OFFSET = 4
+USB_OTGCORE_CONFIG_ENTRY_SIZE = 24
+USB_OTGCORE_CONFIG_MAX_ENTRIES = 2
+USB_OTGCORE_CONFIG_TAIL_OFFSET = 52
+USB_OTGCORE_IO_TYPE_VALUES = (0, 1, 2, 3, 4)
+
+USB_OTGCORE_FUNCTION_POLICY_LEGACY = 'legacy'
+USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE = 'descriptor-table'
+USB_OTGCORE_FUNCTION_POLICIES = (
+    USB_OTGCORE_FUNCTION_POLICY_LEGACY,
+    USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE,
+)
+
+UsbEndpoint = namedtuple(
+    'UsbEndpoint', 'address transfer_type max_packet_size interval')
+UsbInterface = namedtuple(
+    'UsbInterface', 'number alternate class_code subclass protocol endpoints')
+OtgcoreConfigTemplate = namedtuple(
+    'OtgcoreConfigTemplate',
+    'entry_count entry_io_type_pairs fixed_entry_fields tail_word '
+    'mutable_fields evidence unresolved_fields')
+GadgetFunctionDescriptor = namedtuple(
+    'GadgetFunctionDescriptor',
+    'name kind usb_class usb_subclass usb_protocol configuration_count '
+    'interfaces otgcore_template evidence unresolved_fields notes')
+GadgetConfigEntry = namedtuple(
+    'GadgetConfigEntry',
+    'index io_type_a byte_a word_a io_type_b byte_b word_b raw')
+
+_MSC_TEMPLATE = OtgcoreConfigTemplate(
+    entry_count=2,
+    entry_io_type_pairs=((2, 4), (0, 4)),
+    fixed_entry_fields=(
+        {'byte_4': 0x00, 'word_8': 0x00000000},
+        {'byte_4': 0x00, 'word_8': 0x00000000},
+    ),
+    tail_word=3,
+    mutable_fields=('entry[0].byte_16', 'entry[0].word_20',
+                    'entry[1].byte_16', 'entry[1].word_20',
+                    'tail_byte', 'tail_word2'),
+    evidence=('libInfraUsbCmn.so CUsbSvc::read_port_desc_from_backup 0xa70c '
+              'constants (count=2, io-type pairs (2,4)/(0,4), fixed zeros, tail '
+              'word 3); backup property values are mutable'),
+    unresolved_fields=(
+        'io_type values 0..4 semantics',
+        'backup property IDs 0x010D0077/0x00F90552/0x00F90553/0x00F90287/'
+        '0x00F90288/0x00F902C7/0x00F902C8 meanings',
+        'whether an otgcore entry denotes a USB function or a port descriptor',
+    ),
+)
+
+GADGET_FUNCTION_TABLE = {
+    'mass-storage': GadgetFunctionDescriptor(
+        name='mass-storage',
+        kind='usb-function',
+        usb_class=0x08,
+        usb_subclass=0x06,
+        usb_protocol=0x50,
+        configuration_count=1,
+        interfaces=(
+            UsbInterface(number=0, alternate=0, class_code=0x08, subclass=0x06,
+                         protocol=0x50,
+                         endpoints=(UsbEndpoint(0x81, 'bulk', 512, 0),
+                                    UsbEndpoint(0x02, 'bulk', 512, 0))),
+        ),
+        otgcore_template=_MSC_TEMPLATE,
+        evidence=('E0084 host enumeration VID_054C PID_0CA8, USB_CLASS_MSC '
+                  '8/6/0x50 Bulk-Only Transport, endpoints 0x81 IN / 0x02 OUT '
+                  '512 B; MSC entry is the existing verified-connect baseline'),
+        unresolved_fields=(
+            'configuration count 1 is inferred (single-configuration gadget; '
+            'not directly captured for 0CA8)',
+        ),
+        notes=('verified MSC function; SET_CONFIG template is the app port-'
+               'descriptor builder signature, not a per-function class code'),
+    ),
+    'ptp': GadgetFunctionDescriptor(
+        name='ptp',
+        kind='usb-interface',
+        usb_class=0x06,
+        usb_subclass=0x01,
+        usb_protocol=0x01,
+        configuration_count=1,
+        interfaces=(
+            UsbInterface(number=0, alternate=0, class_code=0x06, subclass=0x01,
+                         protocol=0x01,
+                         endpoints=(UsbEndpoint(0x81, 'bulk', 512, 0),
+                                    UsbEndpoint(0x02, 'bulk', 512, 0),
+                                    UsbEndpoint(0x83, 'interrupt', 32, 7))),
+        ),
+        otgcore_template=None,
+        evidence=('E0258/E0240 host descriptor captures (VID_054C PID_0CAA PC '
+                  'Remote): 1 configuration, interface 0 class 6/1/1, endpoints '
+                  '0x81 bulk 512 / 0x02 bulk 512 / 0x83 interrupt 32 interval 7'),
+        unresolved_fields=(
+            'otgcore SET_CONFIG entry template (count, io_type pairs, fixed '
+            'fields) for a PTP selected function',
+            'mapping of otgcore entry io_type values to this interface',
+        ),
+        notes='USB descriptor verified; otgcore function selection unresolved',
+    ),
+    'uvc-control': GadgetFunctionDescriptor(
+        name='uvc-control',
+        kind='usb-interface',
+        usb_class=0x0E,
+        usb_subclass=0x01,
+        usb_protocol=0x00,
+        configuration_count=1,
+        interfaces=(
+            UsbInterface(number=1, alternate=0, class_code=0x0E, subclass=0x01,
+                         protocol=0x00, endpoints=()),
+        ),
+        otgcore_template=None,
+        evidence=('E0258/E0240 composite capture: interface 1 UVC '
+                  'VideoControl class 14/1, no endpoints; IAD {8,11,1,2,14,3}'),
+        unresolved_fields=(
+            'otgcore SET_CONFIG entry template for the UVC control function',
+            'interface-association/IAD mapping to otgcore descriptor entries',
+        ),
+        notes='USB VC descriptor verified; function selection unresolved',
+    ),
+    'uvc-streaming': GadgetFunctionDescriptor(
+        name='uvc-streaming',
+        kind='usb-interface',
+        usb_class=0x0E,
+        usb_subclass=0x02,
+        usb_protocol=0x00,
+        configuration_count=1,
+        interfaces=(
+            UsbInterface(number=2, alternate=0, class_code=0x0E, subclass=0x02,
+                         protocol=0x00,
+                         endpoints=(UsbEndpoint(0x84, 'bulk', 512, 0),)),
+        ),
+        otgcore_template=None,
+        evidence=('E0240 statically audited candidate + E0258 composite capture: '
+                  'interface 2 VideoStreaming class 14/2, bulk IN endpoint 0x84 '
+                  '512 B (0x82 conflicts with PTP OUT directionless address)'),
+        unresolved_fields=(
+            'stock-camera UVC-only topology (captures are the experimental '
+            'composite; transfer type/alternate settings unverified for stock)',
+            'otgcore SET_CONFIG entry template for UVC streaming',
+        ),
+        notes='USB VS descriptor from the experimental composite, not stock UVC',
+    ),
+    'composite-ptp-uvc': GadgetFunctionDescriptor(
+        name='composite-ptp-uvc',
+        kind='usb-composite',
+        usb_class=0xEF,
+        usb_subclass=0x02,
+        usb_protocol=0x01,
+        configuration_count=1,
+        interfaces=(
+            UsbInterface(number=0, alternate=0, class_code=0x06, subclass=0x01,
+                         protocol=0x01,
+                         endpoints=(UsbEndpoint(0x81, 'bulk', 512, 0),
+                                    UsbEndpoint(0x02, 'bulk', 512, 0),
+                                    UsbEndpoint(0x83, 'interrupt', 32, 7))),
+            UsbInterface(number=1, alternate=0, class_code=0x0E, subclass=0x01,
+                         protocol=0x00, endpoints=()),
+            UsbInterface(number=2, alternate=0, class_code=0x0E, subclass=0x02,
+                         protocol=0x00,
+                         endpoints=(UsbEndpoint(0x84, 'bulk', 512, 0),)),
+        ),
+        otgcore_template=None,
+        evidence=('E0258 descriptor diff: device class 0xEF/2/1, 3 interfaces, '
+                  'IAD present, PTP interface identical, UVC VC/VS added'),
+        unresolved_fields=(
+            'otgcore SET_CONFIG entry template for a composite configuration',
+            'IAD descriptor bytes beyond class/subclass ({8,11,1,2,14,3})',
+        ),
+        notes='composite host evidence only; no otgcore selection evidence',
+    ),
+}
+
+
+def parse_otgcore_config(raw):
+    """Parse the pinned 64-byte SET_CONFIG layout.
+
+    Returns ``(count, entries, tail)`` with ``entries`` a tuple of
+    :class:`GadgetConfigEntry` and ``tail`` holding the raw tail fields
+    (``word``/``byte``/``word2``).  Pure parsing; no validation is implied.
+    """
+    if len(raw) != USB_OTGCORE_CONFIG_SIZE:
+        raise ValueError(f'expected {USB_OTGCORE_CONFIG_SIZE}-byte otgcore config')
+    count = raw[USB_OTGCORE_CONFIG_COUNT_OFFSET]
+    entries = []
+    for index in range(min(count, USB_OTGCORE_CONFIG_MAX_ENTRIES)):
+        base = USB_OTGCORE_CONFIG_ENTRY_OFFSET + index * USB_OTGCORE_CONFIG_ENTRY_SIZE
+        entries.append(GadgetConfigEntry(
+            index=index,
+            io_type_a=struct.unpack_from('<I', raw, base + 0)[0],
+            byte_a=raw[base + 4],
+            word_a=struct.unpack_from('<I', raw, base + 8)[0],
+            io_type_b=struct.unpack_from('<I', raw, base + 12)[0],
+            byte_b=raw[base + 16],
+            word_b=struct.unpack_from('<I', raw, base + 20)[0],
+            raw=bytes(raw[base:base + USB_OTGCORE_CONFIG_ENTRY_SIZE]),
+        ))
+    tail = {
+        'word': struct.unpack_from('<I', raw, USB_OTGCORE_CONFIG_TAIL_OFFSET)[0],
+        'byte': raw[USB_OTGCORE_CONFIG_TAIL_OFFSET + 4],
+        'word2': struct.unpack_from('<I', raw, USB_OTGCORE_CONFIG_TAIL_OFFSET + 8)[0],
+    }
+    return count, tuple(entries), tail
+
+
+def gadget_function(name):
+    """Return the :class:`GadgetFunctionDescriptor` for ``name``."""
+    try:
+        return GADGET_FUNCTION_TABLE[name]
+    except KeyError:
+        raise ValueError(f'unknown gadget function: {name!r}') from None
+
 
 class UnsupportedUsbOtgCore(RuntimeError):
     def __init__(self, reason, **details):
@@ -117,9 +384,19 @@ class GuestUsbOtgCore:
     """Emulates /dev/usb/otgcore character device (242:2)."""
 
     def __init__(self, address_limit=0x5f000000,
-                 reply_policy=USB_OTGCORE_REPLY_POLICY_LEGACY):
+                 reply_policy=USB_OTGCORE_REPLY_POLICY_LEGACY,
+                 function_policy=USB_OTGCORE_FUNCTION_POLICY_LEGACY,
+                 configured_functions=None):
         if reply_policy not in USB_OTGCORE_REPLY_POLICIES:
             raise ValueError(f'unsupported usb otgcore reply policy: {reply_policy!r}')
+        if function_policy not in USB_OTGCORE_FUNCTION_POLICIES:
+            raise ValueError(f'unsupported usb otgcore function policy: {function_policy!r}')
+        if configured_functions is None:
+            configured_functions = ('mass-storage',)
+        configured_functions = tuple(configured_functions)
+        for name in configured_functions:
+            if name not in GADGET_FUNCTION_TABLE:
+                raise ValueError(f'unknown gadget function: {name!r}')
         self.address_limit = address_limit
         self.major = 242
         self.minor = 2
@@ -129,7 +406,13 @@ class GuestUsbOtgCore:
         self.config = None
         self.transactions = []
         self.reply_policy = reply_policy
-        # Kernel-state mirrors needed by the verified GET_INFO derivation.
+        self.function_policy = function_policy
+        self.configured_functions = configured_functions
+        # Function selection results (empty until SET_CONFIG under the
+        # descriptor-table policy); kernel-state mirrors for GET_INFO below.
+        self.selected_functions = ()
+        self.config_entries = ()
+        self.config_tail = None
         self.config_count = 0   # kernel global+4, written by SET_CONFIG byte 0
         self.selected_port = 0  # kernel global+8, written by SET_SELECT_PORT
         self.param = None       # kernel global+0x4c, written by SET_PARAM
@@ -320,6 +603,10 @@ class GuestUsbOtgCore:
         if cmd == USB_OTGCORE_IOCTL_SET_CONFIG:
             self._check_user_pointer(arg)
             raw = mem_read(arg, 64)
+            if getattr(self, 'function_policy',
+                       USB_OTGCORE_FUNCTION_POLICY_LEGACY) == \
+                    USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE:
+                return self._configure_gadget_functions(cmd, raw)
             self.config = raw
             self.config_count = raw[0]
             self.transactions.append({'operation': 'ioctl', 'cmd': cmd,
@@ -415,6 +702,8 @@ class GuestUsbOtgCore:
                                       'name': 'USB_OTGCORE_IOCTL_GET_INFO',
                                       'config_count': config_count,
                                       'selected_port': selected_port,
+                                      'selected_functions': list(
+                                          getattr(self, 'selected_functions', ())),
                                       'reply_bytes': struct.pack('<II', config_count, selected_port).hex(),
                                       'source': 'derived-application-state',
                                       'returned': 0})
@@ -468,6 +757,147 @@ class GuestUsbOtgCore:
         self.transactions.append({'operation': 'ioctl', 'cmd': cmd, 'name': 'UNKNOWN',
                                   'returned': -25})
         return -25
+
+    # ------------------------------------------- gadget function selection
+    @staticmethod
+    def _matches_otgcore_template(count, entries, tail, template):
+        if template is None or count != template.entry_count:
+            return False
+        pairs = tuple((entry.io_type_a, entry.io_type_b) for entry in entries)
+        if pairs != template.entry_io_type_pairs:
+            return False
+        for entry, fixed in zip(entries, template.fixed_entry_fields):
+            if entry.byte_a != fixed['byte_4'] or entry.word_a != fixed['word_8']:
+                return False
+        return tail['word'] == template.tail_word
+
+    def _store_otgcore_config(self, raw, count, entries, tail, selected):
+        self.config = raw
+        self.config_count = count
+        self.config_entries = entries
+        self.config_tail = tail
+        self.selected_functions = tuple(selected)
+        self.transactions.append({
+            'operation': 'ioctl',
+            'cmd': USB_OTGCORE_IOCTL_SET_CONFIG,
+            'name': 'USB_OTGCORE_IOCTL_SET_CONFIG',
+            'size': USB_OTGCORE_CONFIG_SIZE,
+            'entry_count': count,
+            'selected_functions': list(selected),
+            'descriptor_resolution': ('mass-storage-template' if selected else 'no-functions'),
+            'returned': 0,
+        })
+
+    def _configure_gadget_functions(self, cmd, raw):
+        """SET_CONFIG under function_policy='descriptor-table'.
+
+        Parses the pinned wire layout, validates the verified io-type domain,
+        and selects functions through :data:`GADGET_FUNCTION_TABLE`.  Any
+        descriptor that is not backed by retained evidence raises an explicit
+        boundary; there is no silent success for an unknown function.
+        """
+        count, entries, tail = parse_otgcore_config(raw)
+        entry_rows = [{
+            'index': entry.index,
+            'io_type_a': entry.io_type_a,
+            'byte_4': entry.byte_a,
+            'word_8': entry.word_a,
+            'io_type_b': entry.io_type_b,
+            'byte_16': entry.byte_b,
+            'word_20': entry.word_b,
+            'raw_hex': entry.raw.hex(),
+        } for entry in entries]
+        configured = tuple(getattr(self, 'configured_functions', ('mass-storage',)))
+        common = {
+            'cmd': cmd,
+            'cmd_name': 'USB_OTGCORE_IOCTL_SET_CONFIG',
+            'config_size': USB_OTGCORE_CONFIG_SIZE,
+            'config_hex': raw.hex(),
+            'entry_count': count,
+            'entries': entry_rows,
+            'tail': tail,
+            'configured_functions': list(configured),
+        }
+
+        if count > USB_OTGCORE_CONFIG_MAX_ENTRIES:
+            raise UnsupportedUsbOtgCore(
+                'usb_otgcore_gadget_function_count_unsupported',
+                **common,
+                max_supported=USB_OTGCORE_CONFIG_MAX_ENTRIES,
+                kernel_evidence=('vmlinux SET_CONFIG stores count in global+4/+12; '
+                                 'GET_INFO accepts only 0..2'),
+                missing_evidence=('no retained configuration with more than two '
+                                  'otgcore descriptor entries'))
+
+        for entry in entries:
+            for io_type in (entry.io_type_a, entry.io_type_b):
+                if io_type not in USB_OTGCORE_IO_TYPE_VALUES:
+                    raise UnsupportedUsbOtgCore(
+                        'usb_otgcore_gadget_io_type_unsupported',
+                        **common,
+                        entry_index=entry.index,
+                        io_type=io_type,
+                        valid_io_types=list(USB_OTGCORE_IO_TYPE_VALUES),
+                        kernel_evidence=('vmlinux conv_io_type_otgcore2ups 0x602b607c is '
+                                         'identity for 0..4 and prints '
+                                         '"<3>usb_otgcore: error" then returns 0 above 4'),
+                        missing_evidence=('the semantics of io-type values 0..4 are not '
+                                          'retained; only the valid domain is verified'))
+
+        unresolved = [name for name in configured
+                      if GADGET_FUNCTION_TABLE[name].otgcore_template is None]
+        if unresolved:
+            missing = []
+            for name in unresolved:
+                missing.extend(f'{name}: {field}'
+                               for field in GADGET_FUNCTION_TABLE[name].unresolved_fields)
+            raise UnsupportedUsbOtgCore(
+                'usb_otgcore_gadget_function_descriptor_unresolved',
+                **common,
+                unresolved_functions=unresolved,
+                missing_fields=missing,
+                descriptor_evidence={name: GADGET_FUNCTION_TABLE[name].evidence
+                                     for name in unresolved})
+
+        if count == 0:
+            if configured:
+                raise UnsupportedUsbOtgCore(
+                    'usb_otgcore_gadget_function_selection_mismatch',
+                    **common,
+                    selected_functions=[],
+                    expected='config entry count 0 for an empty function set')
+            self._store_otgcore_config(raw, 0, entries, tail, ())
+            return 0
+
+        if not configured:
+            raise UnsupportedUsbOtgCore(
+                'usb_otgcore_gadget_function_selection_mismatch',
+                **common,
+                selected_functions=[],
+                expected='an explicit function selection for a non-empty config')
+
+        template = GADGET_FUNCTION_TABLE['mass-storage'].otgcore_template
+        if configured == ('mass-storage',) and \
+                self._matches_otgcore_template(count, entries, tail, template):
+            self._store_otgcore_config(raw, count, entries, tail, ('mass-storage',))
+            return 0
+
+        raise UnsupportedUsbOtgCore(
+            'usb_otgcore_gadget_function_descriptor_unknown',
+            **common,
+            selected_functions=[],
+            expected_template={
+                'entry_count': template.entry_count,
+                'entry_io_type_pairs': [list(pair) for pair in
+                                        template.entry_io_type_pairs],
+                'fixed_entry_fields': list(template.fixed_entry_fields),
+                'tail_word': template.tail_word,
+                'mutable_fields': list(template.mutable_fields),
+                'evidence': template.evidence,
+            },
+            missing_evidence=('the otgcore entry template for any non-baseline '
+                              'function is not retained; the entry io types carry '
+                              'no USB class/subclass code'))
 
     # ----------------------------------------------------------------- close
     def close(self, owner_id):

@@ -21,6 +21,36 @@ ARM_CHECKPOINT_REGS = (
 )
 
 
+def checkpoint_resume_state(probe):
+    """Preserve a stopped, unanswered SVC as a retry, never a supplied reply."""
+    status = probe.report.get('status')
+    boundary = probe.report.get('boundary', {})
+    result = {'status': status, 'boundary': boundary, 'retry_pc': None}
+    if status not in ('syscall_boundary', 'blocked_uipc', 'unsupported_filesystem',
+                      'unsupported_uipc_contract', 'unsupported_gles_contract',
+                      'unsupported_stream_contract', 'unsupported_usb_contract', 'unsupported_kikilog_contract',
+                      'unsupported_nflasha4_contract'):
+        return result
+    pc = probe.mu.reg_read(arm.UC_ARM_REG_PC)
+    thumb = bool(probe.mu.reg_read(arm.UC_ARM_REG_CPSR) & 0x20)
+    size = 2 if thumb else 4
+    address = boundary.get('instruction_address', boundary.get('pc', pc) - size)
+    if address not in (pc, pc - size):
+        result['retry_error'] = 'stop_pc_does_not_match_boundary'
+        return result
+    expected = b'\x00\xdf' if thumb else b'\x00\x00\x00\xef'
+    try:
+        instruction = bytes(probe.mu.mem_read(address, size))
+    except unicorn.UcError:
+        instruction = None
+    if instruction != expected:
+        result['retry_error'] = 'boundary_is_not_verified_eabi_svc_zero'
+        return result
+    result['retry_pc'] = address
+    result['r7'] = probe.mu.reg_read(arm.UC_ARM_REG_R7)
+    return result
+
+
 def save_checkpoint(probe, filepath: Path) -> int:
     """Serializes the exact Unicorn memory mappings, CPU context, and Python subsystem state."""
     filepath = Path(filepath)
@@ -96,7 +126,7 @@ def save_checkpoint(probe, filepath: Path) -> int:
     }
 
     devices = {}
-    for dev_attr in ('gpio', 'usb_buspower', 'usb_event', 'usb_otgcore', 'hdmi', 'cec', 'mmca_char', 'pipes', 'fb', 'gles'):
+    for dev_attr in ('gpio', 'kikilog', 'usb_buspower', 'usb_event', 'usb_otgcore', 'hdmi', 'cec', 'mmca_char', 'pipes', 'fb', 'gles'):
         if hasattr(probe, dev_attr):
             val = getattr(probe, dev_attr)
             if val is not None:
@@ -104,11 +134,12 @@ def save_checkpoint(probe, filepath: Path) -> int:
     subsystems['devices'] = devices
 
     payload = {
-        'version': 1,
+        'version': 2,
         'context': ctx_bytes,
         'registers': regs,
         'regions': regions,
         'subsystems': subsystems,
+        'resume_state': checkpoint_resume_state(probe),
     }
 
     raw_bundle = pickle.dumps(payload)
@@ -116,14 +147,19 @@ def save_checkpoint(probe, filepath: Path) -> int:
     return len(raw_bundle)
 
 
-def restore_checkpoint(probe, filepath: Path) -> None:
+def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
     """Restores Unicorn memory mappings, CPU context, and subsystem states into an initialized probe."""
     filepath = Path(filepath)
     raw_bundle = filepath.read_bytes()
     payload = pickle.loads(raw_bundle)
 
-    if payload.get('version') != 1:
+    if payload.get('version') not in (1, 2):
         raise ValueError(f"Unsupported checkpoint version: {payload.get('version')}")
+    if exact and payload.get('version') != 2:
+        raise ValueError('Exact resume requires a version-2 checkpoint with recorded stop semantics; use a fresh boot')
+    resume = payload.get('resume_state', {})
+    if resume.get('retry_error'):
+        raise ValueError('Checkpoint cannot safely resume: ' + resume['retry_error'])
 
     # 1. Unmap all current regions in probe.mu (if any)
     for begin, end, _ in list(probe.mu.mem_regions()):
@@ -148,21 +184,22 @@ def restore_checkpoint(probe, filepath: Path) -> None:
         except unicorn.UcError:
             pass
 
-    # Ensure authentic MonDrv::mp_output log buffer is initialized if libMWF.so is mapped
-    try:
-        mp_out_bytes = probe.mu.mem_read(0x52201fe0, 4)
-        if mp_out_bytes == b'\x00\x00\x00\x00':
-            import struct
-            queue_obj = 0x1a190000
-            read_idx_ptr = queue_obj + 0x10
-            write_idx_ptr = queue_obj + 0x14
-            buf_ptr = queue_obj + 0x20
-            capacity = 0x7bf0
-            probe.mu.mem_write(queue_obj, struct.pack('<IIII', read_idx_ptr, write_idx_ptr, buf_ptr, capacity))
-            probe.mu.mem_write(read_idx_ptr, struct.pack('<II', 0, 0))
-            probe.mu.mem_write(0x52201fe0, struct.pack('<I', queue_obj))
-    except (unicorn.UcError, Exception):
-        pass
+    if not exact:
+        # Ensure authentic MonDrv::mp_output log buffer is initialized if libMWF.so is mapped
+        try:
+            mp_out_bytes = probe.mu.mem_read(0x52201fe0, 4)
+            if mp_out_bytes == b'\x00\x00\x00\x00':
+                import struct
+                queue_obj = 0x1a190000
+                read_idx_ptr = queue_obj + 0x10
+                write_idx_ptr = queue_obj + 0x14
+                buf_ptr = queue_obj + 0x20
+                capacity = 0x7bf0
+                probe.mu.mem_write(queue_obj, struct.pack('<IIII', read_idx_ptr, write_idx_ptr, buf_ptr, capacity))
+                probe.mu.mem_write(read_idx_ptr, struct.pack('<II', 0, 0))
+                probe.mu.mem_write(0x52201fe0, struct.pack('<I', queue_obj))
+        except (unicorn.UcError, Exception):
+            pass
 
     # 3. Restore Unicorn CPU context and explicit ARM register state (with Thumb/CPSR handling)
     ctx = pickle.loads(payload['context'])
@@ -277,3 +314,13 @@ def restore_checkpoint(probe, filepath: Path) -> None:
             if address < 16:
                 uc.mem_write(0, bytes(16))
         probe.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, _null_page_keep_zero, begin=0, end=15)
+
+    retry_pc = resume.get('retry_pc')
+    if retry_pc is not None:
+        thumb = bool(probe.mu.reg_read(arm.UC_ARM_REG_CPSR) & 0x20)
+        probe.entry = retry_pc | int(thumb)
+        probe.mu.reg_write(arm.UC_ARM_REG_PC, probe.entry)
+        if getattr(probe, 'threads', None) is not None:
+            probe.threads.save_context(probe.mu)
+    probe.report['checkpoint_resume'] = {'version': payload['version'], 'exact': exact,
+                                         **resume}

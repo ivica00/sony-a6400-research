@@ -32,6 +32,14 @@ def build_parser():
     parser.add_argument('--tmp-overlay', choices=('stop', 'experimental-empty'), default='stop', help='stop on /tmp (default); experimental-empty answers stat/access of /tmp and ENOENT below it with INVENTED metadata; not camera state')
     parser.add_argument('--stream-device', choices=('stop', 'image-driver'), default='stop',
                         help='image-driver selects verified 249:7 ABI; physical stream bytes remain guarded')
+    parser.add_argument('--stream2-device', choices=('stop', 'open-only'), default='stop',
+                        help='open-only accepts the observed /dev/stream2 (249:8) O_RDWR|O_DSYNC open and stops at the first ioctl/mmap')
+    parser.add_argument('--nflasha4-device', choices=('stop', 'open-only', 'observed-dump'), default='stop',
+                        help='stop on /dev/nflasha4 (default); open-only accepts the observed O_RDWR open and stops at the first data/ioctl/mmap; observed-dump serves reads from the hash-checked 12 MiB MPR dump and answers only the observed read-only ioctl 0x80014123 (writes/mmap/other ioctls stay boundaries)')
+    parser.add_argument('--mount-service', choices=('stop', 'observed-nflasha1'), default='stop',
+                        help='stop on mount(2) (default); observed-nflasha1 serves only the observed read-only mount("/dev/nflasha1","/mnt","vfat",...,"posix_attr") and materializes the hash-checked nflasha1 vfat dump as read-only guest nodes')
+    parser.add_argument('--setting-service', choices=('stop', 'observed-nflasha2'), default='stop',
+                        help='stop on the /setting namespace (default); observed-nflasha2 materializes the hash-checked read-only nflasha2 vfat dump under /setting (boot-mounted partition; no write path)')
     parser.add_argument('--regular-inode-rdev', action='store_true', help='supply the kernel-derived zero st_rdev for regular image files only')
     parser.add_argument('--readonly-image-times', action='store_true', help='select hash-checked ext2 image timestamps under original read-only mount records; not observed camera state')
     parser.add_argument('--backup-service', choices=('stop', 'unverified-ack', 'preset-backed'), default='stop',
@@ -44,7 +52,7 @@ def build_parser():
                         help='stop on NULL pointer access (default); read-zero maps read-only zero page at 0x0 (handling MonCtrl debug print flag checks in libMWF)')
     parser.add_argument('--proc-overlay', choices=('stop', 'experimental-empty'), default='stop',
                         help='stop on /proc (default); experimental-empty provides virtual /proc directory and ENOENT for missing runtime nodes')
-    parser.add_argument('--setting-overlay', choices=('stop', 'experimental-empty', 'observed-gps'), default='stop',
+    parser.add_argument('--setting-overlay', choices=('stop', 'experimental-empty', 'observed-gps', 'observed-e0301'), default='stop',
                         help='stop on /setting (default); experimental-empty provides a virtual /setting mountpoint; observed-gps also answers mkdir for the camera-observed /setting/gps directory')
     parser.add_argument('--media-service', choices=('stop', 'authentic-sd'), default='stop',
                         help='stop on MediaCommonDriver queue 0x00d9016e (default); authentic-sd provides SD presence reply')
@@ -52,6 +60,8 @@ def build_parser():
                         help='stop on init_module (default); verified-image allows authentic insertion of hash-matched kernel modules')
     parser.add_argument('--gpio-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/gpio (default); driver-bound binds /dev/gpio (240:0) with verified ioctl contracts')
+    parser.add_argument('--kikilog-device', choices=('stop', 'open-only', 'observed-running-e0301'), default='stop',
+                        help='opt-in verified kikilog open/close; stop at unsupplied logging/notification state')
     parser.add_argument('--usb-buspower-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/usb/buspwr (default); driver-bound binds /dev/usb/buspwr (248:13) with verified ioctl contracts')
     parser.add_argument('--usb-event-device', choices=('stop', 'driver-bound'), default='stop',
@@ -62,25 +72,53 @@ def build_parser():
                         help='file containing the verified /dev/usb/event record bytes')
     parser.add_argument('--usb-connect-at', type=int, default=0,
                         help='deliver the USB event only after this instruction count')
+    parser.add_argument('--guest-env', action='append', default=[], metavar='KEY=VALUE',
+                        help='explicit guest environment entry (repeatable); default is empty, reproducing prior runs')
+    parser.add_argument('--trace-loader-lookup', action='store_true',
+                        help='observe-only hook on the original ld.so _dl_lookup_symbol_x entry')
+    parser.add_argument('--trace-loader-address', type=lambda value: int(value, 0),
+                        default=0x4000B200,
+                        help='guest address range start for loader lookup observation (default 0x4000B200)')
+    parser.add_argument('--trace-loader-symbol', default='',
+                        help='symbol name to capture; empty uses the Dataflow OSD mute symbol')
+    parser.add_argument('--trace-address', type=lambda value: int(value, 0), default=None,
+                        help='observe-only stop at one guest guest address and record the last instructions')
+    parser.add_argument('--trace-gles-bar', action='store_true',
+                        help='observe-only MMIO read/write logging on the resumed dmpgles2 BAR mapping')
+    parser.add_argument('--gles-engine-model', choices=('none', 'command-completion'), default='none',
+                        help='opt-in GPES device-work model: command submitted in BAR+0xE8 header '
+                             'yields the physically observed IRQ status class 0x40000000 (decoded ack; '
+                             'no guest ctx completion)')
     parser.add_argument('--uipc-inject-queue', type=lambda value: int(value, 0), default=None,
                         help='verified UIPC target queue id for one scripted message (opt-in)')
     parser.add_argument('--uipc-inject-payload', default=None,
                         help='hex payload for the one scripted UIPC message')
-    parser.add_argument('--uipc-pool-options', choices=('legacy-empty', 'kernel-e0300'),
-                        default='legacy-empty', help='opt-in original kernel option stores; callback delivery remains a strict boundary')
+    parser.add_argument('--uipc-pool-options', choices=('legacy-empty', 'kernel-e0300', 'kernel-e0301', 'kernel-e0303'),
+                        default='legacy-empty', help='opt-in kernel options; e0300 keeps completion boundary, e0301 adds ordinary async completion, same-process sync callbacks and kernel dynamic IDs, e0303 adds generic multi-consumer/broadcast completion, sync queue 0x009c015b and allocator-driven CONNECT/dynamic IDs')
     parser.add_argument('--usb-otgcore-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/usb/otgcore (default); driver-bound binds /dev/usb/otgcore (242:2) with verified ioctl contracts')
     parser.add_argument('--usb-reply-policy', choices=('legacy-zero-stubs', 'verified-connect'),
                         default='legacy-zero-stubs',
                         help='USB buspwr/otgcore reply policy; verified-connect implements only evidence-backed replies and stops on undecoded hardware queries')
+    parser.add_argument('--usb-function-policy', choices=('legacy', 'descriptor-table'), default='legacy',
+                        help='otgcore gadget function selection: default legacy keeps existing SET_CONFIG replies; descriptor-table parses the verified 64-byte layout and selects from GADGET_FUNCTION_TABLE (MSC verified; PTP/UVC stop at descriptor_unresolved)')
+    parser.add_argument('--usb-configured-functions',
+                        type=lambda value: tuple(part for part in value.split(',') if part),
+                        default=('mass-storage',),
+                        help='comma-separated GADGET_FUNCTION_TABLE rows for --usb-function-policy descriptor-table')
     parser.add_argument('--hdmi-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/hdmi (default); driver-bound binds /dev/hdmi (248:25) with verified ioctl contracts')
     parser.add_argument('--cec-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/cec (default); driver-bound binds /dev/cec (248:27) with verified ioctl contracts')
     parser.add_argument('--mmca-char-device', choices=('stop', 'driver-bound'), default='stop',
                         help='stop on /dev/mmca-char (default); driver-bound binds /dev/mmca-char (250:0..2) and /dev/ms-char (249:0)')
-    parser.add_argument('--gles-device', choices=('stop', 'kernel-bound'), default='stop',
-                        help='stop on /dev/dmpgles2 (default); kernel-bound binds /dev/dmpgles2 with verified TASK_SIZE 0x5f000000')
+    parser.add_argument('--gles-device', choices=('stop', 'kernel-bound', 'kernel-bound-decoded'), default='stop',
+                        help='stop on /dev/dmpgles2 (default); kernel-bound binds /dev/dmpgles2 with verified '
+                             'TASK_SIZE 0x5f000000; kernel-bound-decoded additionally uses the grm_gles.ko-decoded '
+                             'GPES ioctl semantics (E0337/E0341: 0x8004820A suspend-status, 0xC004820D wait-completion)')
+    parser.add_argument('--nanosleep-policy', choices=('immediate', 'block'), default='immediate',
+                        help='threads policy sleep handling: immediate return (default baseline) or block the '
+                             'caller in blocked_sleep (no virtual deadline; opt-in for E0310/E0339 monitor loops)')
     parser.add_argument('--mmap-base', type=lambda x: int(x, 0), default=None,
                         help='explicit mmap allocation base; defaults to 0x04000000 when gles-device is kernel-bound')
     parser.add_argument('--log-interval', type=int, default=5000000,
@@ -103,6 +141,40 @@ def main():
 
     session = build_boot_session(args, parser)
     probe = session.probe
+    probe.gles_bar_trace = bool(getattr(args, 'trace_gles_bar', False))
+    if getattr(args, 'gles_engine_model', 'none') != 'none':
+        probe.gles.engine_model = True
+        # A resumed checkpoint may already contain a submitted command and the
+        # prior run's completion bookkeeping; the device state is re-evaluated
+        # for this run (descriptor presence drives the completion again).
+        probe.gles.engine_command_seen = False
+        probe.gles.dev_a8 = 0
+        probe.gles.engine_completions = 0
+        probe.report['gles_engine_model'] = args.gles_engine_model
+        ranges = probe.discover_resumed_gles_bar()
+        if ranges:
+            print(f'[*] GPES engine model enabled: {args.gles_engine_model} '
+                  f'(BAR 0x{ranges[0][0]:x}+0x{ranges[0][1]:x}; command-completion -> '
+                  'observed IRQ class 0x40000000; no guest ctx completion).')
+            probe.install_resumed_gles_bar_hooks()
+        else:
+            print(f'[*] GPES engine model enabled: {args.gles_engine_model} '
+                  '(no resumed BAR range yet; fresh mmap will bind it).')
+    if getattr(args, 'trace_loader_lookup', False):
+        from src.a6400.execution.loader_trace import (DEFAULT_SYMBOL,
+                                                       install_loader_lookup_trace)
+        install_loader_lookup_trace(probe, args.trace_loader_address,
+                                    args.trace_loader_symbol or DEFAULT_SYMBOL)
+        print(f'[*] Observing original loader lookup at 0x{args.trace_loader_address:08x}.')
+    if getattr(args, 'trace_gles_bar', False):
+        ranges = probe.install_resumed_gles_bar_hooks()
+        if ranges:
+            print(f'[*] Observing GPES BAR at {["0x%x+0x%x" % item for item in ranges]}.')
+        else:
+            print('[!] --trace-gles-bar: no resumed dmpgles2 device range found.')
+    if getattr(args, 'trace_address', None) is not None:
+        probe.install_trace_address(args.trace_address)
+        print(f'[*] Observing one guest address at 0x{args.trace_address:08x}.')
     manifest = session.manifest
     if session.usb_connect_event:
         probe.arm_usb_connect_event(session.usb_connect_event, session.usb_connect_at)

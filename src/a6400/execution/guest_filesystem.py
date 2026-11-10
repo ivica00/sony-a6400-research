@@ -1,5 +1,6 @@
 """Bounded read-only guest file contracts over an explicit image namespace."""
 import hashlib
+import struct
 
 import unicorn
 from src.a6400.images.guest_paths import resolve_guest
@@ -90,7 +91,7 @@ class GuestFilesystem:
             raise ValueError(f'Unknown tmp overlay policy: {tmp_overlay}')
         if proc_overlay not in ('stop', 'experimental-empty'):
             raise ValueError(f'Unknown proc overlay policy: {proc_overlay}')
-        if setting_overlay not in ('stop', 'experimental-empty', 'observed-gps'):
+        if setting_overlay not in ('stop', 'experimental-empty', 'observed-gps', 'observed-e0301'):
             raise ValueError(f'Unknown setting overlay policy: {setting_overlay}')
         self.setting_overlay = setting_overlay
         self.tmp_overlay = tmp_overlay
@@ -105,6 +106,7 @@ class GuestFilesystem:
         self.urandom_seed = urandom_seed
         self.fds = {}
         self.cache = {}
+        self.vfat_mounts = {}
 
     def _tmp_overlay_request(self, number, event, path, args):
         """Experimental empty /tmp (read-only metadata queries only). Returns an event or None."""
@@ -163,10 +165,14 @@ class GuestFilesystem:
 
     def _setting_overlay_request(self, number, event, path, args):
         """Experimental /setting mount contract. Returns an event or None."""
-        if (self.setting_overlay == 'observed-gps' and number == 33 and args[1] == 0
+        if (self.setting_overlay in ('observed-gps', 'observed-e0301') and number == 33 and args[1] == 0
                 and path in ('/setting', '/setting/gps')):
             return {**event, 'returned': 0, 'reason': 'exists_observed_setting_directory',
                     'source': 'E0298 read-only camera directory observation'}
+        if (self.setting_overlay == 'observed-e0301' and number == 33 and args[1] == 0
+                and path in ('/setting/sen', '/setting/sen/smode')):
+            return {**event, 'returned': (-2) & 0xffffffff, 'reason': 'ENOENT_observed_setting_path',
+                    'source': 'E0301 USB debugger ls -ld; camera observation, not a filesystem image'}
         if self.setting_overlay != 'experimental-empty' or not (path == '/setting' or path.startswith('/setting/')):
             return None
         note = {'experimental': 'setting overlay; empty /setting mountpoint (real partition 2 on nflasha2)'}
@@ -184,8 +190,69 @@ class GuestFilesystem:
         return {**event, **note, **result, 'experimental_values': dict(self.EXPERIMENTAL_SETTING_METADATA)}
 
     def _scope(self, path):
+        for target in getattr(self, 'vfat_mounts', {}):
+            if path == target or path.startswith(target + '/'):
+                return
         if any(path == root or path.startswith(root + '/') for root in self.unknown_roots):
             raise UnsupportedFilesystem('runtime_namespace_not_supplied', path=path)
+
+    def mount_vfat(self, target, image):
+        """Materialize a read-only vfat image under an observed mount target.
+
+        Only file/directory nodes and their bytes are added; no write node and no
+        host filesystem access is involved. The image identity is recorded so the
+        report can attribute the mounted namespace.
+        """
+        if not target.startswith('/') or target == '/':
+            raise UnsupportedFilesystem('vfat_mount_target_invalid', target=target)
+        if target in getattr(self, 'vfat_mounts', {}):
+            raise UnsupportedFilesystem('vfat_mount_already_present', target=target)
+        counts = {'files': 0, 'directories': 0, 'bytes': 0}
+        added = []
+        original_node = self.nodes.get(target)
+        self.nodes[target] = {'kind': 'directory', 'mode': 0o040755,
+                              'uid': 0, 'gid': 0, 'size': 0,
+                              'image': 'nflasha1-vfat'}
+        counts['directories'] += 1
+        for relative, entry in image.walk():
+            full = target + '/' + relative
+            if entry.is_dir:
+                self.nodes[full] = {'kind': 'directory', 'mode': 0o040755,
+                                    'uid': 0, 'gid': 0, 'size': 0,
+                                    'image': 'nflasha1-vfat'}
+                counts['directories'] += 1
+            else:
+                data = image.read_file(entry)
+                self.nodes[full] = {'kind': 'file', 'mode': 0o100644,
+                                    'uid': 0, 'gid': 0, 'size': len(data),
+                                    'image': 'nflasha1-vfat'}
+                self.cache[full] = data
+                counts['files'] += 1
+                counts['bytes'] += len(data)
+            added.append(full)
+        self.vfat_mounts[target] = {'source': '/dev/nflasha1',
+                                    'image_sha256': image.image_sha256,
+                                    'added': added,
+                                    'original_node': original_node,
+                                    **counts}
+        return {key: value for key, value in self.vfat_mounts[target].items()
+                if key not in ('added', 'original_node')}
+
+    def umount_vfat(self, target):
+        mounted = getattr(self, 'vfat_mounts', {}).pop(target, None)
+        if mounted is None:
+            raise UnsupportedFilesystem('vfat_umount_not_mounted', target=target)
+        for path in mounted['added']:
+            self.nodes.pop(path, None)
+            self.cache.pop(path, None)
+        original = mounted.get('original_node')
+        if original is not None:
+            self.nodes[target] = original
+        else:
+            self.nodes.pop(target, None)
+        return {'source': mounted['source'], 'image_sha256': mounted['image_sha256'],
+                'files': mounted['files'], 'directories': mounted['directories'],
+                'bytes': mounted['bytes']}
 
     def _permission(self, node, requested):
         shift = 6 if node['uid'] == self.uid else 3 if node['gid'] == self.gid else 0
@@ -239,19 +306,72 @@ class GuestFilesystem:
             raise PathError(9, 'EBADF')
         return self.fds[fd]
 
+    def _directory_children(self, path):
+        prefix = path.rstrip('/') + '/'
+        children = []
+        for key, node in self.nodes.items():
+            if key == path or not key.startswith(prefix):
+                continue
+            name = key[len(prefix):]
+            if '/' in name or not name:
+                continue
+            children.append({'name': name, 'kind': node['kind']})
+        children.sort(key=lambda item: item['name'])
+        return children
+
+    def _getdents64(self, descriptor, pointer, count):
+        """Emit bounded linux_dirent64 records for an opened read-only directory."""
+        if count <= 0 or count > 1024 * 1024:
+            raise UnsupportedFilesystem('getdents64_buffer_limit', count=count)
+        entries = ([{'name': '.', 'kind': 'directory'}, {'name': '..', 'kind': 'directory'}]
+                   + list(descriptor.get('children', [])))
+        start = descriptor.get('offset', 0)
+        position = start
+        out = bytearray()
+        emitted = []
+        while position < len(entries):
+            entry = entries[position]
+            encoded = entry['name'].encode('ascii', 'backslashreplace')[:255] + b'\0'
+            record_length = (19 + len(encoded) + 7) & ~7
+            if len(out) + record_length > count:
+                if not out:
+                    raise PathError(22, 'EINVAL_getdents64_buffer')
+                break
+            inode = position + 1
+            dtype = 4 if entry['kind'] == 'directory' else 8 if entry['kind'] == 'file' else 0
+            record = struct.pack('<QqHB', inode, position + 1, record_length, dtype) + encoded
+            out.extend(record.ljust(record_length, b'\0'))
+            emitted.append(entry['name'])
+            position += 1
+        if out:
+            if not accessible(self.mu, pointer, len(out), unicorn.UC_PROT_WRITE):
+                raise PathError(14, 'EFAULT_getdents64_buffer')
+            self.mu.mem_write(pointer, bytes(out))
+            if self.after_write:
+                self.after_write(pointer, len(out))
+        descriptor['offset'] = position
+        return {'returned': len(out), 'count': count, 'offset': start,
+                'entries': emitted, 'reason': 'getdents64_readonly_directory'}
+
     def request(self, number, args):
         names = {3: 'read', 5: 'open', 6: 'close', 19: 'lseek', 33: 'access', 39: 'mkdir',
-                 195: 'stat64', 197: 'fstat64'}
+                 195: 'stat64', 197: 'fstat64', 217: 'getdents64'}
         if number not in names:
             raise UnsupportedFilesystem('unimplemented_file_syscall', number=number)
         event = {'syscall': names[number], 'arguments': list(args[:3])}
+        if number == 217:
+            descriptor = self._descriptor(args[0])
+            if descriptor.get('device') != 'directory':
+                raise PathError(20, 'ENOTDIR_getdents64')
+            result = self._getdents64(descriptor, args[1], args[2])
+            return {**event, 'path': descriptor['path'], **result}
         try:
             if number == 39:
                 path = self._path(args[0])
                 event['path'] = path
                 if args[1] & ~0o7777:
                     raise PathError(22, 'EINVAL_mkdir_mode')
-                if self.setting_overlay == 'observed-gps' and path in ('/setting', '/setting/gps'):
+                if self.setting_overlay in ('observed-gps', 'observed-e0301') and path in ('/setting', '/setting/gps'):
                     return {**event, 'returned': (-17) & 0xffffffff,
                             'reason': 'EEXIST_observed_setting_directory',
                             'experimental': ('observed camera /setting/gps directory; '
@@ -297,6 +417,17 @@ class GuestFilesystem:
                             'device_number': metadata['device_number']}
 
                 event['resolved_path'] = resolved
+                if number == 5 and node['kind'] == 'directory':
+                    self._permission(node, 4)
+                    fd = next((candidate for candidate in range(3, 259)
+                               if candidate not in self.fds), None)
+                    if fd is None:
+                        raise UnsupportedFilesystem('experimental_descriptor_limit')
+                    children = self._directory_children(resolved)
+                    self.fds[fd] = {'path': resolved, 'device': 'directory',
+                                    'flags': args[1], 'offset': 0, 'children': children}
+                    return {**event, 'returned': fd, 'reason': 'opened_readonly_directory',
+                            'children': len(children)}
                 if number == 195:
                     if self.stat_contract is None:
                         raise UnsupportedFilesystem('stat64_success_structure_not_implemented', path=resolved)

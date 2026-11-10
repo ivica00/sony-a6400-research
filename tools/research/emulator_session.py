@@ -50,6 +50,34 @@ class BootSession:
     uipc_inject_payload: Optional[bytes] = None
 
 
+def usb_otgcore_options(args):
+    """Resolve the opt-in otgcore gadget-function policy from session args.
+
+    The default keeps ``function_policy='legacy'`` (byte-identical SET_CONFIG
+    replies); ``descriptor-table`` parses the verified 64-byte layout and
+    selects from ``GADGET_FUNCTION_TABLE`` (MSC verified, PTP/UVC explicit
+    ``descriptor_unresolved`` boundaries).  No guest reply is fabricated for
+    an unresolved function.
+    """
+    return {
+        'reply_policy': getattr(args, 'usb_reply_policy', 'legacy-zero-stubs'),
+        'function_policy': getattr(args, 'usb_function_policy', 'legacy'),
+        'configured_functions': getattr(args, 'usb_configured_functions', None),
+    }
+
+
+def live_uipc_receiver(probe):
+    """Resolve the current transport at call time, including after restore.
+
+    A bound method captured before restore would keep reading an abandoned
+    empty GuestUipc instance instead of the checkpoint's queues.
+    """
+    def receive(memory_reader, memory_writer, arg_ptr):
+        device = probe.uipc
+        return type(device).handle_rcv_msg_tmo(device, memory_reader, memory_writer, arg_ptr)
+    return receive
+
+
 def build_boot_session(args, parser=None) -> BootSession:
     """Build the prepared probe and its explicit experimental state.
 
@@ -142,7 +170,9 @@ def build_boot_session(args, parser=None) -> BootSession:
     display_profile = None if contract_name in (None, '', 'none') else display_contract(contract_name)
 
     mmap_base = args.mmap_base
-    mmap_search_low = 0x10000000 if args.gles_device == 'kernel-bound' else None
+    gles_kernel_bound = getattr(args, 'gles_device', 'stop').startswith('kernel-bound')
+    gles_decoded = getattr(args, 'gles_device', 'stop') == 'kernel-bound-decoded'
+    mmap_search_low = 0x10000000 if gles_kernel_bound else None
     probe = InterpreterProbe(syscall_policy='threads', uname_profile=uname_profile,
                              filesystem=filesystem, kuser_template=kuser_template,
                              madvise_policy='private-anonymous-dontneed' if args.madvise_dontneed else 'stop',
@@ -156,22 +186,31 @@ def build_boot_session(args, parser=None) -> BootSession:
                              mmap_search_low=mmap_search_low,
                              display_profile=display_profile,
                              grm_pool_policy=getattr(args, 'grm_pools', 'gl-common-only'))
-    stack_bottom = 0x5e390000 if args.gles_device == 'kernel-bound' else 0x7fe00000
-    stack_size = 0x800000 if args.gles_device == 'kernel-bound' else 0x100000
+    probe.thread_sleep_policy = getattr(args, 'nanosleep_policy', 'immediate')
+    stack_bottom = 0x5e390000 if gles_kernel_bound else 0x7fe00000
+    stack_size = 0x800000 if gles_kernel_bound else 0x100000
     probe.prepare(app, interp, ['/usr/bin/im.elf', *args.argument],
-                  stack_bottom=stack_bottom, stack_size=stack_size)
-    if args.gles_device == 'kernel-bound':
+                  stack_bottom=stack_bottom, stack_size=stack_size,
+                  environment=getattr(args, 'guest_env', None))
+    if gles_kernel_bound:
         from src.a6400.execution.guest_gles import GuestGles, GlesBinding
-        from src.a6400.execution.kernel_task_identity import KernelTaskObservation
-        header = struct.pack('<6I', 0, 1, 0x5f000000, 0x8000, 0, 0)
-        task_bytes = bytearray(0x10c)
-        struct.pack_into('<I', task_bytes, 8, 0x2000)
-        struct.pack_into('<2I', task_bytes, 0x104, 1003, 1000)
-        task_obs = KernelTaskObservation.read(lambda a, s: header if a == 0x2000 else task_bytes, 0x2000)
-        probe.gles = GuestGles(GlesBinding(task_obs))
+        from src.a6400.execution.kernel_task_identity import KernelTaskIdentityTable
+        kernel_table = KernelTaskIdentityTable(address_limit=0x5f000000)
+        if getattr(probe, 'threads', None) is not None:
+            for thread_id in probe.threads.threads:
+                kernel_table.register(thread_id, probe.threads.process_id)
+            probe.threads.on_clone = kernel_table.register
+        probe.kernel_tasks = kernel_table
+        probe.gles = GuestGles(GlesBinding(table=kernel_table))
     if args.gpio_device == 'driver-bound':
         from src.a6400.execution.guest_gpio import GuestGpio
         probe.gpio = GuestGpio()
+    if getattr(args, 'kikilog_device', 'stop') != 'stop':
+        from src.a6400.execution.guest_kikilog import GuestKikilog
+        target = 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/kikilog.ko'
+        identity = next(item['sha256'] for item in inventory if item['path'] == target)
+        checked_input(PROJECT_ROOT, target, identity)
+        probe.kikilog = GuestKikilog(identity, policy=args.kikilog_device)
     if args.usb_buspower_device == 'driver-bound':
         from src.a6400.execution.guest_usb_buspower import GuestUsbBusPower
         probe.usb_buspower = GuestUsbBusPower(
@@ -181,8 +220,13 @@ def build_boot_session(args, parser=None) -> BootSession:
         probe.usb_event = GuestUsbEvent()
     if args.usb_otgcore_device == 'driver-bound':
         from src.a6400.execution.guest_usb_otgcore import GuestUsbOtgCore
-        probe.usb_otgcore = GuestUsbOtgCore(
-            reply_policy=getattr(args, 'usb_reply_policy', 'legacy-zero-stubs'))
+        options = usb_otgcore_options(args)
+        probe.usb_otgcore = GuestUsbOtgCore(**options)
+        probe.report['usb_otgcore_function_policy'] = {
+            'reply_policy': options['reply_policy'],
+            'function_policy': options['function_policy'],
+            'configured_functions': list(options['configured_functions'] or ()),
+        }
     if args.hdmi_device == 'driver-bound':
         from src.a6400.execution.guest_hdmi import GuestHdmi
         probe.hdmi = GuestHdmi()
@@ -234,7 +278,7 @@ def build_boot_session(args, parser=None) -> BootSession:
             raise ValueError('Watched words must be aligned ARM32 addresses')
         probe.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, watch_write, begin=word - 15, end=word + 3)
 
-    original_rcv = probe.uipc.handle_rcv_msg_tmo
+    original_rcv = live_uipc_receiver(probe)
     boot_events_to_inject = ([0x00940007, 0x0092014b, 0x00940036, 0x00940038, 0x00920152]
                              if args.stimulus == 'experimental-events' else [])
     injected = []
@@ -271,12 +315,22 @@ def build_boot_session(args, parser=None) -> BootSession:
 
     from src.a6400.execution.guest_checkpoint import restore_checkpoint
     probe.uipc.pool_options_policy = getattr(args, 'uipc_pool_options', 'legacy-empty')
-    if args.load_checkpoint and args.load_checkpoint.exists():
+    if args.load_checkpoint and not args.load_checkpoint.exists():
+        # A missing checkpoint previously fell through silently and cold-booted,
+        # which produced misleading "continuation" experiments.
+        raise SystemExit(f'load-checkpoint not found: {args.load_checkpoint}')
+    if args.load_checkpoint:
         print(f'[*] Restoring checkpoint from: {args.load_checkpoint}...')
-        restore_checkpoint(probe, args.load_checkpoint)
-        if (getattr(args, 'uipc_pool_options', 'legacy-empty') == 'kernel-e0300'
-                and getattr(probe.uipc, 'pool_options_policy', 'legacy-empty') != 'kernel-e0300'):
-            raise ValueError('kernel-e0300 requires a fresh boot or a checkpoint created with that policy; old startup cannot be repaired retroactively')
+        restore_checkpoint(probe, args.load_checkpoint,
+                           exact=getattr(args, 'uipc_pool_options', '') in ('kernel-e0301', 'kernel-e0303'))
+        requested_uipc = getattr(args, 'uipc_pool_options', 'legacy-empty')
+        if requested_uipc in ('kernel-e0300', 'kernel-e0301', 'kernel-e0303') and not probe.uipc.kernel_pool_options:
+            raise ValueError('Kernel UIPC options require a fresh boot or a checkpoint created with a kernel policy; old startup cannot be repaired retroactively')
+        if requested_uipc in ('kernel-e0301', 'kernel-e0303'):
+            if (getattr(probe.uipc, 'kernel_contract_revision', None) != 1
+                    or getattr(probe.uipc, 'pool_options_policy', '') != requested_uipc):
+                raise ValueError('kernel-e0301/e0303 contract requires a fresh boot or a matching revision checkpoint')
+            probe.uipc.pool_options_policy = requested_uipc
         probe.uipc.handle_rcv_msg_tmo = patched_rcv_msg_tmo
         active_tid = probe.threads.current_tid if hasattr(probe, 'threads') else 1000
         print(f'[*] Checkpoint restored! Resuming at instruction {probe.instructions:,} (active TID {active_tid}).')
@@ -292,6 +346,20 @@ def build_boot_session(args, parser=None) -> BootSession:
                 probe.uipc.enqueue_message(reply_queue, reply_ptr)
                 probe.threads.handle_uipc_wake(reply_queue)
                 print(f"[+] Re-serviced authentic mcmn SetOsalIdForMediaNotify reply on queue 0x{reply_queue:08x}; TID 1004 is now runnable!")
+    if (gles_kernel_bound
+            and getattr(probe, 'gles', None) is not None):
+        from src.a6400.execution.guest_gles import GlesBinding
+        from src.a6400.execution.kernel_task_identity import KernelTaskIdentityTable
+        kernel_table = getattr(probe, 'kernel_tasks', None)
+        if kernel_table is None:
+            kernel_table = KernelTaskIdentityTable(address_limit=0x5f000000)
+        if getattr(probe, 'threads', None) is not None:
+            for thread_id in probe.threads.threads:
+                kernel_table.register(thread_id, probe.threads.process_id)
+            probe.threads.on_clone = kernel_table.register
+        probe.kernel_tasks = kernel_table
+        probe.gles.binding = GlesBinding(table=kernel_table)
+        probe.gles.decoded_semantics = gles_decoded
     usb_reply_policy = getattr(args, 'usb_reply_policy', 'legacy-zero-stubs')
     for device_attr in ('usb_buspower', 'usb_otgcore'):
         device = getattr(probe, device_attr, None)
@@ -327,6 +395,49 @@ def build_boot_session(args, parser=None) -> BootSession:
             raise ValueError('UIPC injection payload is empty')
     if (uipc_inject_queue is None) != (uipc_inject_payload is None):
         raise ValueError('UIPC injection requires both --uipc-inject-queue and --uipc-inject-payload')
+
+    probe.stream2_device_policy = getattr(args, 'stream2_device', 'stop')
+    probe.nflasha4_device_policy = getattr(args, 'nflasha4_device', 'stop')
+    probe.nflasha4_dump = None
+    if probe.nflasha4_device_policy == 'observed-dump':
+        from src.a6400.execution.guest_nflasha4 import Nflasha4Dump
+        probe.nflasha4_dump = Nflasha4Dump.from_evidence(PROJECT_ROOT)
+        probe.report['nflasha4_dump_policy'] = {
+            'policy': 'observed-dump',
+            'image_sha256': probe.nflasha4_dump.image_sha256,
+            'size': probe.nflasha4_dump.size,
+            'erased_state_byte': probe.nflasha4_dump.erased_state_byte,
+            'evidence': probe.nflasha4_dump.evidence,
+        }
+    probe.mount_service_policy = getattr(args, 'mount_service', 'stop')
+    probe.vfat_image = None
+    if probe.mount_service_policy == 'observed-nflasha1':
+        from src.a6400.execution.guest_vfat import VfatImage
+        probe.vfat_image = VfatImage.from_evidence(PROJECT_ROOT)
+        probe.report['mount_service_policy'] = {
+            'policy': 'observed-nflasha1',
+            'image_sha256': probe.vfat_image.image_sha256,
+            'size': len(probe.vfat_image.image),
+            'fat_type': probe.vfat_image.fat_type,
+            'evidence': probe.vfat_image.evidence,
+        }
+    probe.setting_service_policy = getattr(args, 'setting_service', 'stop')
+    if probe.setting_service_policy == 'observed-nflasha2':
+        from src.a6400.execution.guest_vfat import VfatImage
+        setting_image = VfatImage.from_evidence(
+            PROJECT_ROOT,
+            manifest_relative='artifacts/hardware/nflasha2-readonly/manifest.json',
+            image_relative='artifacts/hardware/nflasha2-readonly/nflasha2-20971520.bin',
+            expected_size=20971520)
+        mounted = probe.filesystem.mount_vfat('/setting', setting_image)
+        probe.report['setting_service_policy'] = {
+            'policy': 'observed-nflasha2',
+            'image_sha256': setting_image.image_sha256,
+            'size': len(setting_image.image),
+            'fat_type': setting_image.fat_type,
+            'evidence': setting_image.evidence,
+            'mounted': mounted,
+        }
 
     return BootSession(probe=probe, manifest=manifest, filesystem=filesystem,
                        boot_events_to_inject=boot_events_to_inject,

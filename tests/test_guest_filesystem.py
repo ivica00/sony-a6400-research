@@ -155,12 +155,14 @@ class FilesystemTests(unittest.TestCase):
         for path in ('/lib/file/child', '/lib/file/', '/alias/.'):
             self.assertEqual(self.open(path)['returned'], (-20) & 0xffffffff)
 
-    def test_stat_absence_only_and_directory_open_stops(self):
+    def test_stat_absence_only_and_directory_open_is_read_only_fd(self):
         self.assertEqual(self.fs.request(195, [self.path('/missing'), 0x5000, 0])['returned'], (-2) & 0xffffffff)
         with self.assertRaises(UnsupportedFilesystem):
             self.fs.request(195, [self.path('/lib'), 0x5000, 0])
-        with self.assertRaises(UnsupportedFilesystem):
-            self.open('/lib')
+        opened = self.open('/lib')
+        self.assertEqual(opened['reason'], 'opened_readonly_directory')
+        self.assertIn(opened['returned'], self.fs.fds)
+        self.assertEqual(self.fs.fds[opened['returned']]['device'], 'directory')
 
     def test_permissions_are_not_inferred_from_host(self):
         self.nodes['/lib/file']['mode'] = stat.S_IFREG

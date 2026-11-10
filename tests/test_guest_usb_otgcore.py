@@ -18,6 +18,13 @@ from src.a6400.execution.guest_usb_otgcore import (
     USB_OTGCORE_IOCTL_CMD_0XE312,
     USB_OTGCORE_REPLY_POLICY_LEGACY,
     USB_OTGCORE_REPLY_POLICY_VERIFIED,
+    USB_OTGCORE_FUNCTION_POLICY_LEGACY,
+    USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE,
+    USB_OTGCORE_CONFIG_SIZE,
+    USB_OTGCORE_CONFIG_MAX_ENTRIES,
+    GADGET_FUNCTION_TABLE,
+    gadget_function,
+    parse_otgcore_config,
 )
 
 
@@ -296,6 +303,290 @@ class TestGuestUsbOtgCoreVerifiedPolicy(unittest.TestCase):
         self.assertEqual(legacy.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_GET_INFO, 0x4000,
                                       lambda a, s: b'', write_mem), 0)
         self.assertEqual(written[0x4000], b'\x00' * 8)
+
+
+class TestGuestUsbOtgCoreGadgetFunctions(unittest.TestCase):
+    """Opt-in descriptor-table policy: function descriptors and selection."""
+
+    @staticmethod
+    def msc_config(entry0_byte16=0x11, entry0_word20=0x11111111,
+                   entry1_byte16=0x22, entry1_word20=0x22222222,
+                   tail_byte=0x33, tail_word2=0x33333333):
+        """The app's read_port_desc_from_backup 0xa70c builder signature."""
+        raw = bytearray(USB_OTGCORE_CONFIG_SIZE)
+        raw[0] = 2
+        struct.pack_into('<I', raw, 4, 2)       # entry0 io_type_a
+        raw[8] = 0                              # entry0 byte_4
+        struct.pack_into('<I', raw, 12, 0)      # entry0 word_8
+        struct.pack_into('<I', raw, 16, 4)      # entry0 io_type_b
+        raw[20] = entry0_byte16                  # backup value
+        struct.pack_into('<I', raw, 24, entry0_word20)
+        struct.pack_into('<I', raw, 28, 0)      # entry1 io_type_a
+        raw[32] = 0                              # entry1 byte_4
+        struct.pack_into('<I', raw, 36, 0)      # entry1 word_8
+        struct.pack_into('<I', raw, 40, 4)      # entry1 io_type_b
+        raw[44] = entry1_byte16                  # backup value
+        struct.pack_into('<I', raw, 48, entry1_word20)
+        struct.pack_into('<I', raw, 52, 3)      # fixed tail word
+        raw[56] = tail_byte                      # backup value
+        struct.pack_into('<I', raw, 60, tail_word2)
+        return bytes(raw)
+
+    def setUp(self):
+        self.dev = GuestUsbOtgCore(
+            reply_policy=USB_OTGCORE_REPLY_POLICY_VERIFIED,
+            function_policy=USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE)
+        self.owner = self.dev.open(flags=2)
+        self.mem = {}
+        self.written = {}
+
+    def ioctl(self, cmd, arg=0, payload=None):
+        if payload is not None:
+            self.mem[arg] = payload
+        return self.dev.ioctl(self.owner['owner_id'], cmd, arg,
+                              lambda addr, size: self.mem[addr][:size],
+                              lambda addr, data: self.written.__setitem__(addr, bytes(data)))
+
+    # ------------------------------------------------------- opt-in gating
+    def test_default_policy_is_legacy_and_byte_identical(self):
+        default = GuestUsbOtgCore()
+        self.assertEqual(default.function_policy, USB_OTGCORE_FUNCTION_POLICY_LEGACY)
+        self.assertEqual(default.configured_functions, ('mass-storage',))
+        self.assertEqual(default.selected_functions, ())
+        owner = default.open(flags=2)
+        payload = bytes([1]) + b'\x00' * 63
+        self.mem[0x2000] = payload
+        self.assertEqual(default.ioctl(
+            owner['owner_id'], USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000,
+            lambda a, s: self.mem[a][:s], lambda a, d: self.written.__setitem__(a, d)), 0)
+        self.assertEqual(default.config, payload)
+        # Default is the legacy zero-stub policy: GET_INFO is 8 zero bytes.
+        self.assertEqual(default.ioctl(
+            owner['owner_id'], USB_OTGCORE_IOCTL_GET_INFO, 0x7000,
+            lambda a, s: b'', lambda a, d: self.written.__setitem__(a, d)), 0)
+        self.assertEqual(self.written[0x7000], b'\x00' * 8)
+
+        # verified-connect without the descriptor-table opt-in keeps the exact
+        # previous MSC SET_CONFIG/GET_INFO behaviour.
+        verified = GuestUsbOtgCore(reply_policy=USB_OTGCORE_REPLY_POLICY_VERIFIED)
+        vowner = verified.open(flags=2)
+        self.assertEqual(verified.ioctl(
+            vowner['owner_id'], USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000,
+            lambda a, s: self.mem[a][:s], lambda a, d: self.written.__setitem__(a, d)), 0)
+        self.assertEqual(verified.config_count, 1)
+        self.assertEqual(verified.selected_functions, ())
+        self.assertEqual(verified.ioctl(
+            vowner['owner_id'], USB_OTGCORE_IOCTL_GET_INFO, 0x7000,
+            lambda a, s: b'', lambda a, d: self.written.__setitem__(a, d)), 0)
+        self.assertEqual(self.written[0x7000], struct.pack('<II', 1, 0))
+
+    def test_function_policy_validation(self):
+        with self.assertRaises(ValueError):
+            GuestUsbOtgCore(function_policy='invented')
+        with self.assertRaises(ValueError):
+            GuestUsbOtgCore(
+                function_policy=USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE,
+                configured_functions=('ptp', 'not-a-function'))
+        with self.assertRaises(ValueError):
+            gadget_function('not-a-function')
+
+    # ------------------------------------------------ descriptor table
+    def test_mass_storage_entry_is_verified(self):
+        entry = gadget_function('mass-storage')
+        self.assertEqual(entry.usb_class, 0x08)
+        self.assertEqual(entry.usb_subclass, 0x06)
+        self.assertEqual(entry.usb_protocol, 0x50)
+        self.assertEqual(entry.configuration_count, 1)
+        self.assertEqual(len(entry.interfaces), 1)
+        interface = entry.interfaces[0]
+        self.assertEqual((interface.class_code, interface.subclass, interface.protocol),
+                         (0x08, 0x06, 0x50))
+        self.assertEqual([endpoint.address for endpoint in interface.endpoints],
+                         [0x81, 0x02])
+        self.assertEqual([endpoint.transfer_type for endpoint in interface.endpoints],
+                         ['bulk', 'bulk'])
+        self.assertEqual([endpoint.max_packet_size for endpoint in interface.endpoints],
+                         [512, 512])
+        template = entry.otgcore_template
+        self.assertEqual(template.entry_count, 2)
+        self.assertEqual(template.entry_io_type_pairs, ((2, 4), (0, 4)))
+        self.assertEqual(template.tail_word, 3)
+        self.assertIn('E0084', entry.evidence)
+        self.assertIn('read_port_desc_from_backup', template.evidence)
+
+    def test_ptp_interface_descriptor_entry(self):
+        entry = gadget_function('ptp')
+        self.assertEqual((entry.usb_class, entry.usb_subclass, entry.usb_protocol),
+                         (0x06, 0x01, 0x01))
+        self.assertEqual(entry.configuration_count, 1)
+        self.assertEqual(len(entry.interfaces), 1)
+        endpoints = entry.interfaces[0].endpoints
+        self.assertEqual([(endpoint.address, endpoint.transfer_type,
+                           endpoint.max_packet_size, endpoint.interval)
+                          for endpoint in endpoints],
+                         [(0x81, 'bulk', 512, 0), (0x02, 'bulk', 512, 0),
+                          (0x83, 'interrupt', 32, 7)])
+        self.assertIsNone(entry.otgcore_template)
+        self.assertTrue(entry.unresolved_fields)
+        self.assertIn('E0258', entry.evidence)
+
+    def test_uvc_control_and_streaming_descriptor_entries(self):
+        control = gadget_function('uvc-control')
+        self.assertEqual((control.usb_class, control.usb_subclass), (0x0E, 0x01))
+        self.assertEqual(len(control.interfaces), 1)
+        self.assertEqual(control.interfaces[0].endpoints, ())
+        streaming = gadget_function('uvc-streaming')
+        self.assertEqual((streaming.usb_class, streaming.usb_subclass), (0x0E, 0x02))
+        endpoints = streaming.interfaces[0].endpoints
+        self.assertEqual([(endpoint.address, endpoint.transfer_type,
+                           endpoint.max_packet_size) for endpoint in endpoints],
+                         [(0x84, 'bulk', 512)])
+        composite = gadget_function('composite-ptp-uvc')
+        self.assertEqual((composite.usb_class, composite.usb_subclass,
+                          composite.usb_protocol), (0xEF, 0x02, 0x01))
+        self.assertEqual(len(composite.interfaces), 3)
+        for entry in (control, streaming):
+            self.assertIsNone(entry.otgcore_template)
+            self.assertTrue(entry.unresolved_fields)
+
+    # ------------------------------------------------- function selection
+    def test_mass_storage_function_selection(self):
+        payload = self.msc_config()
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, payload), 0)
+        self.assertEqual(self.dev.selected_functions, ('mass-storage',))
+        self.assertEqual(self.dev.config, payload)
+        self.assertEqual(self.dev.config_count, 2)
+        self.assertEqual(len(self.dev.config_entries), 2)
+        self.assertEqual(self.dev.config_entries[0].io_type_a, 2)
+        self.assertEqual(self.dev.config_entries[0].byte_b, 0x11)
+        self.assertEqual(self.dev.transactions[-1]['selected_functions'],
+                         ['mass-storage'])
+        self.assertEqual(self.dev.transactions[-1]['descriptor_resolution'],
+                         'mass-storage-template')
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_GET_INFO, 0x7000), 0)
+        self.assertEqual(self.written[0x7000], struct.pack('<II', 2, 0))
+
+    def test_no_functions_selection(self):
+        dev = GuestUsbOtgCore(
+            reply_policy=USB_OTGCORE_REPLY_POLICY_VERIFIED,
+            function_policy=USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE,
+            configured_functions=())
+        owner = dev.open(flags=2)
+        payload = bytes(USB_OTGCORE_CONFIG_SIZE)
+        self.mem[0x2000] = payload
+        self.assertEqual(dev.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000,
+                                   lambda a, s: self.mem[a][:s],
+                                   lambda a, d: self.written.__setitem__(a, d)), 0)
+        self.assertEqual(dev.selected_functions, ())
+        self.assertEqual(dev.config_count, 0)
+        self.assertEqual(dev.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_GET_INFO, 0x7000,
+                                   lambda a, s: b'',
+                                   lambda a, d: self.written.__setitem__(a, d)), 0)
+        self.assertEqual(self.written[0x7000], struct.pack('<II', 0, 0))
+
+    def test_ptp_selection_stops_explicitly(self):
+        dev = GuestUsbOtgCore(
+            reply_policy=USB_OTGCORE_REPLY_POLICY_VERIFIED,
+            function_policy=USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE,
+            configured_functions=('ptp',))
+        owner = dev.open(flags=2)
+        payload = self.msc_config()
+        self.mem[0x2000] = payload
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            dev.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000,
+                      lambda a, s: self.mem[a][:s],
+                      lambda a, d: self.written.__setitem__(a, d))
+        details = ctx.exception.details
+        self.assertEqual(details['reason'],
+                         'usb_otgcore_gadget_function_descriptor_unresolved')
+        self.assertEqual(details['unresolved_functions'], ['ptp'])
+        self.assertTrue(any('otgcore SET_CONFIG entry template' in field
+                            for field in details['missing_fields']))
+        self.assertEqual(details['entry_count'], 2)
+        self.assertIn('entries', details)
+
+    def test_uvc_selection_stops_explicitly(self):
+        dev = GuestUsbOtgCore(
+            reply_policy=USB_OTGCORE_REPLY_POLICY_VERIFIED,
+            function_policy=USB_OTGCORE_FUNCTION_POLICY_DESCRIPTOR_TABLE,
+            configured_functions=('uvc-control', 'uvc-streaming'))
+        owner = dev.open(flags=2)
+        self.mem[0x2000] = self.msc_config()
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            dev.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000,
+                      lambda a, s: self.mem[a][:s],
+                      lambda a, d: self.written.__setitem__(a, d))
+        details = ctx.exception.details
+        self.assertEqual(details['reason'],
+                         'usb_otgcore_gadget_function_descriptor_unresolved')
+        self.assertEqual(set(details['unresolved_functions']),
+                         {'uvc-control', 'uvc-streaming'})
+
+    def test_unknown_descriptor_stops(self):
+        # count 1 is not the verified baseline signature.
+        payload = bytes([1]) + b'\x00' * 63
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, payload)
+        self.assertEqual(ctx.exception.details['reason'],
+                         'usb_otgcore_gadget_function_descriptor_unknown')
+        self.assertEqual(ctx.exception.details['entry_count'], 1)
+        # invalid io type (> 4) is outside the verified conv domain.
+        payload = bytearray(self.msc_config())
+        struct.pack_into('<I', payload, 4, 5)
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, bytes(payload))
+        self.assertEqual(ctx.exception.details['reason'],
+                         'usb_otgcore_gadget_io_type_unsupported')
+        self.assertEqual(ctx.exception.details['io_type'], 5)
+        self.assertEqual(ctx.exception.details['valid_io_types'], [0, 1, 2, 3, 4])
+        # count above the verified maximum of two.
+        payload = bytearray(self.msc_config())
+        payload[0] = 3
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, bytes(payload))
+        self.assertEqual(ctx.exception.details['reason'],
+                         'usb_otgcore_gadget_function_count_unsupported')
+        self.assertEqual(ctx.exception.details['max_supported'],
+                         USB_OTGCORE_CONFIG_MAX_ENTRIES)
+
+    def test_selection_mismatch_stops(self):
+        payload = bytes(USB_OTGCORE_CONFIG_SIZE)
+        with self.assertRaises(UnsupportedUsbOtgCore) as ctx:
+            self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, payload)
+        self.assertEqual(ctx.exception.details['reason'],
+                         'usb_otgcore_gadget_function_selection_mismatch')
+
+    def test_get_info_counts(self):
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_GET_INFO, 0x7000), 0)
+        self.assertEqual(self.written[0x7000], struct.pack('<II', 0, 0))
+        self.ioctl(USB_OTGCORE_IOCTL_SET_CONFIG, 0x2000, self.msc_config())
+        self.assertEqual(self.ioctl(USB_OTGCORE_IOCTL_GET_INFO, 0x7000), 0)
+        self.assertEqual(self.written[0x7000], struct.pack('<II', 2, 0))
+        # verified-connect (no descriptor-table policy) still reproduces the
+        # authentic -EFAULT for a count above two.
+        plain = GuestUsbOtgCore(reply_policy=USB_OTGCORE_REPLY_POLICY_VERIFIED)
+        owner = plain.open(flags=2)
+        self.mem[0x3000] = bytes([3]) + b'\x00' * 63
+        plain.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_SET_CONFIG, 0x3000,
+                    lambda a, s: self.mem[a][:s], lambda a, d: None)
+        self.assertEqual(plain.ioctl(owner['owner_id'], USB_OTGCORE_IOCTL_GET_INFO, 0x4000,
+                                     lambda a, s: b'', lambda a, d: None), -14)
+
+    def test_parse_otgcore_config_wire_layout(self):
+        payload = self.msc_config()
+        count, entries, tail = parse_otgcore_config(payload)
+        self.assertEqual(count, 2)
+        self.assertEqual(entries[0].io_type_a, 2)
+        self.assertEqual(entries[0].byte_a, 0)
+        self.assertEqual(entries[0].word_a, 0)
+        self.assertEqual(entries[0].io_type_b, 4)
+        self.assertEqual(entries[0].byte_b, 0x11)
+        self.assertEqual(entries[0].word_b, 0x11111111)
+        self.assertEqual(entries[1].io_type_a, 0)
+        self.assertEqual(entries[1].io_type_b, 4)
+        self.assertEqual(tail, {'word': 3, 'byte': 0x33, 'word2': 0x33333333})
+        with self.assertRaises(ValueError):
+            parse_otgcore_config(b'\x00' * 32)
 
 
 if __name__ == '__main__':

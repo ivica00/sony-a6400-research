@@ -253,6 +253,24 @@ class TestGuestUipc(unittest.TestCase):
         self.assertEqual(count, 2)
         self.assertEqual(max_msgs, 128)
 
+    def test_positive_timeout_blocks_only_under_kernel_policy(self):
+        from src.a6400.execution.guest_uipc import UIPC_CMD_RCV_MSG_TMO
+        uipc = GuestUipc()
+        queue = 0x012c032f
+        arg_ptr = 0x1000
+        self._writer(arg_ptr, struct.pack('<IIII', queue, 0x2000, 0, 60000))
+        # Legacy default keeps the immediate-timeout baseline.
+        self.assertEqual(uipc.handle_ioctl(self._reader, self._writer, UIPC_CMD_RCV_MSG_TMO, arg_ptr), -1022)
+        uipc.pool_options_policy = 'kernel-e0301'
+        self.assertIsNone(uipc.handle_ioctl(self._reader, self._writer, UIPC_CMD_RCV_MSG_TMO, arg_ptr))
+        transaction = uipc.transactions[-1]
+        self.assertEqual(transaction['status'], 'blocked_timeout_not_modeled')
+        self.assertEqual(transaction['timeout'], 60000)
+        self.assertEqual(transaction['queue'], queue)
+        # tmo=0 remains a non-blocking poll that reports timeout.
+        self._writer(arg_ptr, struct.pack('<IIII', queue, 0x2000, 0, 0))
+        self.assertEqual(uipc.handle_ioctl(self._reader, self._writer, UIPC_CMD_RCV_MSG_TMO, arg_ptr), -1022)
+
     def test_message_queue_receive_with_out_msg_dest(self):
         from src.a6400.execution.guest_uipc import UIPC_CMD_RCV_MSG_TMO
         uipc = GuestUipc()
@@ -337,6 +355,128 @@ class TestGuestUipc(unittest.TestCase):
         self.assertTrue(uipc.transactions[-1]['indirect'])
 
 
+class TestGuestUipcKernelE0303(unittest.TestCase):
+    """E0303 generic completion policy: allocator-driven CONNECT/dynamic IDs.
+
+    The policy must not hardcode the CONNECT fourth word or a dynamic receive
+    id; both come from the E0301 original kernel dynamic-ID geometry. The
+    default, kernel-e0300 and kernel-e0301 baselines must stay byte-identical.
+    """
+
+    def setUp(self):
+        self.memory = {}
+
+    def _reader(self, addr, size):
+        return bytes(self.memory.get(addr + i, 0) for i in range(size))
+
+    def _writer(self, addr, data):
+        for index, value in enumerate(data):
+            self.memory[addr + index] = value
+
+    def _connect(self, uipc, arg_ptr=0x1000, buf_ptr=0x2000):
+        self._writer(arg_ptr, struct.pack('<II', 0x10, buf_ptr))
+        ret = uipc.handle_ioctl(self._reader, self._writer, UIPC_CMD_CONNECT, arg_ptr)
+        total, vpool, fblock, control = struct.unpack('<4I', self._reader(buf_ptr, 16))
+        return ret, (total, vpool, fblock, control)
+
+    def _dynamic(self, uipc, kind, key, out_ptr, arg_ptr=0x1000):
+        self._writer(arg_ptr, struct.pack('<III', kind, key, out_ptr))
+        ret = uipc.handle_ioctl(self._reader, self._writer, 0x8000000c, arg_ptr)
+        value = struct.unpack('<I', self._reader(out_ptr, 4))[0] if out_ptr else None
+        return ret, value
+
+    def _dynamic_indirect(self, uipc, kind, key, out_ptr, arg_ptr=0x1000, params_ptr=0x1800):
+        self._writer(params_ptr, struct.pack('<III', kind, key, out_ptr))
+        self._writer(arg_ptr, struct.pack('<II', 0, params_ptr))
+        ret = uipc.handle_ioctl(self._reader, self._writer, 0x8000000c, arg_ptr)
+        value = struct.unpack('<I', self._reader(out_ptr, 4))[0] if out_ptr else None
+        return ret, value
+
+    def test_connect_fourth_word_is_allocator_value_not_constant(self):
+        from src.a6400.execution.guest_uipc import UnsupportedUipc
+        uipc = GuestUipc()
+        uipc.pool_options_policy = 'kernel-e0303'
+        self.assertTrue(uipc.kernel_pool_options)
+        ret, words = self._connect(uipc)
+        self.assertEqual(ret, 0)
+        self.assertEqual(words[3], 0x003F6000)
+        self.assertEqual(uipc.connect_callback_control_queue, 0x003F6000)
+        self.assertEqual(uipc.transactions[-1]['callback_control_queue'], 0x003F6000)
+        with self.assertRaisesRegex(UnsupportedUipc, 'repeated_connect'):
+            self._connect(uipc)
+
+        # Prior dynamic allocations move the allocated slot: the fourth word is
+        # driven by the allocator, never a hardcoded 0x003f6000/0.
+        second = GuestUipc()
+        second.pool_options_policy = 'kernel-e0303'
+        ret, allocated = self._dynamic(second, 0x2a, 0x3f, 0x2000)
+        self.assertEqual((ret, allocated), (0, 0x003F6000))
+        self.memory.clear()
+        ret, words = self._connect(second)
+        self.assertEqual(ret, 0)
+        self.assertEqual(words[3], 0x003F6001)
+        self.assertEqual(words[3], allocated + 1)
+
+    def test_kernel_e0303_dynamic_id_geometry_direct_and_indirect(self):
+        from src.a6400.execution.guest_uipc import UnsupportedUipc
+        uipc = GuestUipc()
+        uipc.pool_options_policy = 'kernel-e0303'
+        # Direct legacy struct: ordinary queue, broadcast queue, semaphore.
+        self.assertEqual(self._dynamic(uipc, 0x2a, 0x3f, 0x2000), (0, 0x003F6000))
+        self.assertEqual(self._dynamic(uipc, 6, 0x55, 0x2004), (0, 0x557000))
+        self.assertEqual(self._dynamic(uipc, 0x12, 0x88, 0x2008), (0, 0x886000))
+        # Indirect [cmd, params_ptr] ABI: another ordinary slot.
+        self.assertEqual(self._dynamic_indirect(uipc, 2, 0x77, 0x200C), (0, 0x776001))
+        # Invalid allocation inputs are explicit negative results, no write.
+        self.assertEqual(self._dynamic(uipc, 0, 1, 0x2010), (-1024, 0))
+        self.assertEqual(self._dynamic(uipc, 2, 1, 0), (-1024, None))
+        # Release is allocator-driven and provenance-guarded.
+        self._writer(0x1000, struct.pack('<III', 0x42, 0, 0x003F6000))
+        self.assertEqual(uipc.handle_ioctl(self._reader, self._writer,
+                                           0x8000000c, 0x1000), 0)
+        with self.assertRaisesRegex(UnsupportedUipc, 'not_owned_or_already_released'):
+            self._writer(0x1000, struct.pack('<III', 0x42, 0, 0x003F6000))
+            uipc.handle_ioctl(self._reader, self._writer, 0x8000000c, 0x1000)
+        ret, _value = self._dynamic(uipc, 0x40, 0, 0x003F6000)
+        self.assertEqual(ret, -1024)
+        self.assertEqual(self._dynamic(uipc, 0x41, 0, 0), (-1024, None))
+
+    def test_default_e0300_e0301_baselines_unchanged(self):
+        default = GuestUipc()
+        self.assertFalse(default.kernel_pool_options)
+        self.assertEqual(self._dynamic(default, 0x00, 0x1234, 0x2000), (0, 0x80001001))
+        self.assertEqual(self._connect(default)[1][3], 0)
+
+        e0300 = GuestUipc()
+        e0300.pool_options_policy = 'kernel-e0300'
+        self.assertEqual(self._connect(e0300)[1][3], 0)
+        self.assertEqual(self._dynamic(e0300, 0x00, 0x1234, 0x2000), (0, 0x80001001))
+
+        e0301 = GuestUipc()
+        e0301.pool_options_policy = 'kernel-e0301'
+        self.assertEqual(self._connect(e0301)[1][3], 0x003F6000)
+        self.memory.clear()
+        self.assertEqual(self._dynamic(e0301, 0x00, 0x1234, 0x2000), (-1024, 0))
+        self.assertEqual(self._dynamic_indirect(e0301, 0x2a, 0x3f, 0x2000),
+                         (0, 0x003F6001))
+
+    def test_pool_options_writes_are_identical_for_e0301_and_e0303(self):
+        def initialize(policy):
+            uipc = GuestUipc()
+            uipc.pool_options_policy = policy
+            uipc.pool_base = 0x50330000
+            uipc.initialize_pool_options(self._writer)
+            return {address: self.memory[address] for address in range(0x50330000, 0x50330040)
+                    if address in self.memory}
+
+        self.memory.clear()
+        e0301 = initialize('kernel-e0301')
+        self.memory.clear()
+        e0303 = initialize('kernel-e0303')
+        self.assertEqual(e0303, e0301)
+        written = bytes(self.memory.get(0x50330000 + index, 0) for index in range(0x40))
+        self.assertEqual(written[0x10:0x14], b'\x04\x00\x00\x00')
+
+
 if __name__ == '__main__':
     unittest.main()
-

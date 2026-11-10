@@ -2,6 +2,7 @@
 
 import struct
 from typing import Dict, List, Optional, Tuple
+from src.a6400.execution.guest_uipc_ids import KernelDynamicIds, UnsupportedDynamicId
 
 # Linux ARM ioctl commands recognized by osal_uipc.ko
 UIPC_CMD_STAT_SEM = 0x80000000
@@ -32,6 +33,16 @@ DMM_SERVICE_QUEUE = 0x0061003c
 MEDIA_COMMON_DRIVER_QUEUE = 0x00d9016e
 # Scheduler-only wait key; never exposed as a guest queue identifier.
 CALLBACK_WAIT_KEY = -1
+
+# E0303 opt-in: generic async-callback completion. The original kernel
+# dynamic-ID descriptors (E0301 ARM controls) put ordinary queues in
+# 0x6000..0x6fff and broadcast queues in 0x7000..0x7fff; a CONNECT callback
+# control queue is type 0x2a/key 0x3f and is allocated from that ordinary
+# dynamic pool (camera observation 0x003f6091, fresh model 0x003f6000).
+KERNEL_E0303 = 'kernel-e0303'
+CONNECT_CALLBACK_CONTROL_TYPE = 0x2a
+CONNECT_CALLBACK_CONTROL_KEY = 0x3f
+BROADCAST_QUEUE_RANGE = (0x7000, 0x8000)
 
 
 class UnsupportedUipc(RuntimeError):
@@ -91,6 +102,12 @@ class GuestUipc:
         self.next_dynamic_id = 0x80001001
         self.dynamic_ids: Dict[int, int] = {}
         self.transactions: List[Dict[str, object]] = []
+        self.kernel_contract_revision = 1
+        self.kernel_dynamic_ids = KernelDynamicIds()
+        # E0303 generic completion bookkeeping (unused by earlier policies).
+        self.connect_callback_control_queue: Optional[int] = None
+        self.queue_consumer_cursor: Dict[int, int] = {}
+        self.broadcast_message_deliveries: Dict[Tuple[int, int], set] = {}
 
     def handle_connect(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x80000010 (__k_4u_connect).
@@ -100,11 +117,35 @@ class GuestUipc:
         """
         raw_arg = memory_reader(arg_ptr, 8)
         _, buf_ptr = struct.unpack('<II', raw_arg)
-        pool_info = struct.pack('<4I', self.total_pool_size, self.vpool_size, self.fblock_size, 0)
+        callback_control = 0
+        if getattr(self, 'pool_options_policy', '') == 'kernel-e0301':
+            if self.connected:
+                raise UnsupportedUipc('uipc_repeated_connect_not_implemented')
+            _, callback_control = self.kernel_dynamic_ids.allocate(0x2a, 0x3f)
+        elif getattr(self, 'pool_options_policy', '') == KERNEL_E0303:
+            # E0303: the CONNECT fourth word is never a constant. It is the
+            # original dynamic-ID allocator's ordinary-queue slot for the
+            # verified callback-control descriptor type 0x2a/key 0x3f. When
+            # prior allocations occupy slots, the value changes accordingly.
+            if self.connected:
+                raise UnsupportedUipc('uipc_repeated_connect_not_implemented')
+            result, callback_control = self.kernel_dynamic_ids.allocate(
+                CONNECT_CALLBACK_CONTROL_TYPE, CONNECT_CALLBACK_CONTROL_KEY)
+            if result != 0 or callback_control is None:
+                raise UnsupportedUipc('uipc_connect_callback_control_alloc_failed',
+                                      returned=result)
+            self.connect_callback_control_queue = callback_control
+        pool_info = struct.pack('<4I', self.total_pool_size, self.vpool_size, self.fblock_size, callback_control)
         memory_writer(buf_ptr, pool_info)
         self.connected = True
-        self.transactions.append({'type': 'connect', 'total_pool': self.total_pool_size, 'buf_ptr': buf_ptr})
+        self.transactions.append({'type': 'connect', 'total_pool': self.total_pool_size, 'buf_ptr': buf_ptr,
+                                  'callback_control_queue': callback_control})
         return 0
+
+    @property
+    def kernel_pool_options(self):
+        return getattr(self, 'pool_options_policy', 'legacy-empty') in (
+            'kernel-e0300', 'kernel-e0301', KERNEL_E0303)
 
     def initialize_pool_options(self, memory_writer):
         """Write only k_uipc_init's verified option stores (E0300, opt-in).
@@ -112,7 +153,7 @@ class GuestUipc:
         This is not the kernel allocator/RT-pool initialization. Bytes not
         explicitly stored by the original instructions are left untouched.
         """
-        if getattr(self, 'pool_options_policy', 'legacy-empty') != 'kernel-e0300':
+        if not self.kernel_pool_options:
             return
         if self.pool_base is None or (self.total_pool_size, self.vpool_size,
                                       self.fblock_size) != (0x100000, 0x40000, 0x8000):
@@ -120,7 +161,7 @@ class GuestUipc:
         memory_writer(self.pool_base, struct.pack('<5I', 0x100000, 0x20000,
                                                  0x40000, 0x8000, 4))
         memory_writer(self.pool_base + 0x15, b'\x01\x00')
-        self.transactions.append({'type': 'pool_options', 'policy': 'kernel-e0300',
+        self.transactions.append({'type': 'pool_options', 'policy': self.pool_options_policy,
                                   'base': self.pool_base, 'proxy_threads': 4,
                                   'kernel_allocator_initialized': False})
 
@@ -180,7 +221,7 @@ class GuestUipc:
         })
         return 0
 
-    def handle_snd_sync_msg(self, memory_reader, arg_ptr: int, memory_writer=None) -> int:
+    def handle_snd_sync_msg(self, memory_reader, arg_ptr: int, memory_writer=None, tid=None) -> int:
         """Handles ioctl 0x80000005 (__k_4u_snd_sync_msg).
         
         arg_ptr points to struct { uint32_t target_queue; void *params; }.
@@ -190,6 +231,39 @@ class GuestUipc:
         target_queue, params_ptr = struct.unpack('<II', raw_arg)
         raw_params = memory_reader(params_ptr, 12)
         msg_ptr, tmo, flag = struct.unpack('<III', raw_params)
+
+        if getattr(self, 'pool_options_policy', '') in ('kernel-e0301', KERNEL_E0303):
+            sync = [(handle, cb) for handle, cb in self.callbacks.items()
+                    if cb['queue'] == target_queue and cb['flags'] == 1]
+            if sync:
+                if len(sync) != 1 or tid is None or memory_writer is None:
+                    raise UnsupportedUipc('uipc_sync_callback_identity_not_supplied', queue=target_queue)
+                handle, cb = sync[0]
+                if not cb['callback'] or msg_ptr not in self.allocated_msgs:
+                    raise UnsupportedUipc('uipc_sync_callback_invalid_message_or_function',
+                                          queue=target_queue, msg_ptr=msg_ptr)
+                active = getattr(self, 'sync_callback_inflight', {})
+                key = (tid, target_queue, msg_ptr)
+                header_flags = memory_reader(msg_ptr - 7, 1)[0]
+                if tmo:
+                    if (active.get(key) != handle or tmo != cb['callback'] or flag != cb['user_data']
+                            or not header_flags & 0x80):
+                        raise UnsupportedUipc('uipc_sync_callback_completion_mismatch', queue=target_queue)
+                    memory_writer(msg_ptr - 7, bytes([header_flags & 0x7f]))
+                    del active[key]
+                    self.transactions.append({'type': 'sync_cb_completion', 'queue': target_queue,
+                                              'msg_ptr': msg_ptr, 'tid': tid, 'handle': handle})
+                    return 0
+                if key in active or header_flags & 0x80:
+                    raise UnsupportedUipc('uipc_sync_callback_already_active', queue=target_queue)
+                active[key] = handle
+                self.sync_callback_inflight = active
+                memory_writer(msg_ptr - 7, bytes([header_flags | 0x80]))
+                memory_writer(params_ptr, struct.pack('<3I', msg_ptr, cb['callback'], cb['user_data']))
+                self.transactions.append({'type': 'sync_cb_delivery', 'queue': target_queue,
+                                          'msg_ptr': msg_ptr, 'callback': cb['callback'],
+                                          'user_data': cb['user_data'], 'tid': tid, 'handle': handle})
+                return 0
 
         # Read message header/body preview
         msg_preview = memory_reader(msg_ptr, min(64, self.allocated_msgs.get(msg_ptr, 32)))
@@ -292,6 +366,32 @@ class GuestUipc:
             'user_data': user_data,
             'flags': flags
         })
+        return 0
+
+    def handle_unreg_msg_queue_cb(self, memory_reader, arg_ptr: int) -> int:
+        """Handles ioctl 0x80000009 (__k_4u_unreg_msg_queue_cb).
+
+        E0306 observed the original call with a struct whose first two words are
+        the registered queue id and the callback handle (0x4b024e / 0x104a,
+        matching callbacks[4170]).  Only a registered, non-inflight callback is
+        removed; identity mismatches stay explicit boundaries.
+        """
+        if getattr(self, 'pool_options_policy', '') not in ('kernel-e0301', KERNEL_E0303):
+            raise UnsupportedUipc('uipc_unregister_requires_kernel_policy')
+        raw_arg = memory_reader(arg_ptr, 8)
+        queue, handle = struct.unpack('<II', raw_arg)
+        registered = self.callbacks.get(handle)
+        if registered is None or registered['queue'] != queue:
+            raise UnsupportedUipc('uipc_unreg_callback_identity_not_supplied',
+                                  queue=queue, handle=handle)
+        inflight = getattr(self, 'callback_inflight', {})
+        if any(entry.get('handle') == handle for entry in inflight.values()):
+            raise UnsupportedUipc('uipc_unreg_callback_inflight', handle=handle)
+        sync_inflight = getattr(self, 'sync_callback_inflight', {})
+        if any(callback_handle == handle for callback_handle in sync_inflight.values()):
+            raise UnsupportedUipc('uipc_unreg_callback_inflight', handle=handle)
+        del self.callbacks[handle]
+        self.transactions.append({'type': 'unreg_cb', 'queue': queue, 'handle': handle})
         return 0
 
     def handle_snd_sync_direct(self, memory_reader, arg_ptr: int) -> int:
@@ -493,6 +593,16 @@ class GuestUipc:
         else:
             if timeout == 0xFFFFFFFF:
                 return None
+            if timeout > 0 and getattr(self, 'pool_options_policy', '') in ('kernel-e0301', KERNEL_E0303):
+                # No virtual-time model: a positive timeout blocks until a message
+                # arrives; expiry is not modeled and is recorded explicitly.
+                self.transactions.append({
+                    'type': 'rcv_msg_tmo',
+                    'queue': queue,
+                    'status': 'blocked_timeout_not_modeled',
+                    'timeout': timeout
+                })
+                return None
             self.transactions.append({
                 'type': 'rcv_msg_tmo',
                 'queue': queue,
@@ -526,6 +636,63 @@ class GuestUipc:
           params points to struct { uint32_t type; uint32_t key; uint32_t *out_id_ptr; }.
         Also accepts direct struct for test compatibility.
         """
+        if getattr(self, 'pool_options_policy', '') == KERNEL_E0303:
+            # E0303: every dynamic-ID request is served by the original
+            # allocator geometry, for both the indirect [cmd,params_ptr] ABI and
+            # the legacy direct struct. No synthetic/hardcoded receive id is
+            # issued on this policy.
+            raw_arg = memory_reader(arg_ptr, 12)
+            w0, w1, w2 = struct.unpack('<III', raw_arg)
+            is_indirect = False
+            if 0x1000 <= w1 < 0xc0000000:
+                try:
+                    cand_type, cand_key, cand_out = struct.unpack('<III', memory_reader(w1, 12))
+                    if 0x1000 <= cand_out < 0xc0000000:
+                        type_val, key, out_ptr = cand_type, cand_key, cand_out
+                        is_indirect = True
+                except Exception:
+                    pass
+            if not is_indirect:
+                type_val, key, out_ptr = w0, w1, w2
+            try:
+                if type_val & 0x40:
+                    result = self.kernel_dynamic_ids.release(type_val, out_ptr)
+                    self.transactions.append({'type': 'kernel_dynamic_id_free', 'type_val': type_val,
+                                              'id': out_ptr, 'returned': result,
+                                              'indirect': is_indirect})
+                    return result
+                if not out_ptr:
+                    return -1024
+                result, value = self.kernel_dynamic_ids.allocate(type_val, key)
+                if result == 0 and value is not None:
+                    memory_writer(out_ptr, struct.pack('<I', value))
+                self.transactions.append({'type': 'kernel_dynamic_id_alloc', 'type_val': type_val,
+                                          'key': key, 'allocated_id': value, 'returned': result,
+                                          'indirect': is_indirect,
+                                          'namespace': 'emulated-empty-kernel-allocator'})
+                return result
+            except UnsupportedDynamicId as error:
+                raise UnsupportedUipc(str(error)) from error
+        if getattr(self, 'pool_options_policy', '') == 'kernel-e0301':
+            _, params = struct.unpack('<II', memory_reader(arg_ptr, 8))
+            kind, key, output = struct.unpack('<3I', memory_reader(params, 12))
+            try:
+                if kind & 0x40:
+                    result = self.kernel_dynamic_ids.release(kind, output)
+                    self.transactions.append({'type': 'kernel_dynamic_id_free', 'type_val': kind,
+                                              'id': output, 'returned': result})
+                    return result
+                if not output:
+                    return -1024
+                result, value = self.kernel_dynamic_ids.allocate(kind, key)
+                if result == 0:
+                    memory_writer(output, struct.pack('<I', value))
+                self.transactions.append({'type': 'kernel_dynamic_id_alloc', 'type_val': kind,
+                                          'key': key, 'allocated_id': value, 'returned': result,
+                                          'namespace': 'emulated-empty-kernel-allocator'})
+                return result
+            except UnsupportedDynamicId as error:
+                raise UnsupportedUipc(str(error)) from error
         raw_arg = memory_reader(arg_ptr, 12)
         w0, w1, w2 = struct.unpack('<III', raw_arg)
         is_indirect = False
@@ -568,14 +735,14 @@ class GuestUipc:
 
     def handle_ioctl(self, memory_reader, memory_writer, cmd: int, arg: int, tid=None) -> Optional[int]:
         """Dispatches supported UIPC ioctl commands."""
-        if cmd == UIPC_CMD_WAIT_CB and getattr(self, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300':
+        if cmd == UIPC_CMD_WAIT_CB and self.kernel_pool_options:
             return self.handle_wait_cb(memory_reader, memory_writer, arg, tid=tid)
         if cmd == UIPC_CMD_CONNECT:
             return self.handle_connect(memory_reader, memory_writer, arg)
         elif cmd == UIPC_CMD_VALLOC_MSG_WAIT:
             return self.handle_valloc_msg_wait(memory_reader, memory_writer, arg)
         elif cmd == UIPC_CMD_SND_SYNC_MSG:
-            return self.handle_snd_sync_msg(memory_reader, arg, memory_writer=memory_writer)
+            return self.handle_snd_sync_msg(memory_reader, arg, memory_writer=memory_writer, tid=tid)
         elif cmd == UIPC_CMD_SND_MSG:
             return self.handle_snd_msg(memory_reader, arg, memory_writer=memory_writer)
         elif cmd == UIPC_CMD_RCV_MSG_TMO:
@@ -586,6 +753,8 @@ class GuestUipc:
             return self.handle_free_msg(memory_reader, arg)
         elif cmd == UIPC_CMD_REG_MSG_QUEUE_CB:
             return self.handle_reg_msg_queue_cb(memory_reader, memory_writer, arg)
+        elif cmd == UIPC_CMD_UNREG_MSG_QUEUE_CB:
+            return self.handle_unreg_msg_queue_cb(memory_reader, arg)
         elif cmd == UIPC_CMD_SND_SYNC_DIRECT:
             return self.handle_snd_sync_direct(memory_reader, arg)
         elif cmd == UIPC_CMD_WAI_SEM_TMO:
@@ -599,14 +768,33 @@ class GuestUipc:
         return None
 
     def callback_ready(self):
+        policy = getattr(self, 'pool_options_policy', '')
+        if policy == KERNEL_E0303:
+            # E0303: any registered async consumer of a non-busy queue with a
+            # pending message makes the proxy loop ready; multiple consumers
+            # and broadcast queues are no longer boundaries.
+            busy = {entry['queue'] for entry in getattr(self, 'callback_inflight', {}).values()}
+            return any(cb['flags'] == 0 and cb['queue'] not in busy
+                       and self.message_queues.get(cb['queue'])
+                       for cb in self.callbacks.values())
+        if policy == 'kernel-e0301':
+            busy = {entry['queue'] for entry in getattr(self, 'callback_inflight', {}).values()}
+            return any(cb['flags'] == 0 and cb['queue'] not in busy
+                       and self.message_queues.get(cb['queue']) for cb in self.callbacks.values())
         return any(self.message_queues.get(cb['queue']) for cb in self.callbacks.values())
 
     def handle_wait_cb(self, reader, writer, arg, tid=None):
         """E0300 __k_4u_wait_cb: return a tuple to the original proxy loop.
 
-        Completion/ownership is deliberately a boundary after one delivery per
-        proxy. No host invocation of guest callbacks is performed.
+        Completion/ownership for the default and kernel-e0300/e0301 policies is
+        unchanged.  ``kernel-e0303`` adds generic async completion: multiple
+        async consumers per queue, broadcast delivery of one message to every
+        registered consumer, round-robin dispatch for non-broadcast multi-
+        consumer queues, and sync-registered queues are never consumed by the
+        async path.  No host invocation of guest callbacks is performed and the
+        completion guard never inspects, writes or frees the message buffer.
         """
+        policy = getattr(self, 'pool_options_policy', '')
         _, params = struct.unpack('<II', reader(arg, 8))
         previous_cb, previous_user, previous_msg, index = struct.unpack('<4I', reader(params, 16))
         if index >= 4:
@@ -620,14 +808,63 @@ class GuestUipc:
         self.callback_proxy_owners = owners
         inflight = getattr(self, 'callback_inflight', {})
         if index in inflight:
-            raise UnsupportedUipc('uipc_callback_completion_not_implemented',
-                                  proxy=index, previous=inflight[index])
+            previous = inflight[index]
+            if policy not in ('kernel-e0301', KERNEL_E0303):
+                raise UnsupportedUipc('uipc_callback_completion_not_implemented',
+                                      proxy=index, previous=previous)
+            registered = self.callbacks.get(previous['handle'])
+            if policy == KERNEL_E0303:
+                # Generic completion: original finish_callback decrements the
+                # callback activity and redispatches; it neither inspects nor
+                # frees the message (the original consumer owns that). The
+                # guard rejects identity/queue/registration mismatches so a
+                # stale or forged proxy index cannot complete another call.
+                if (registered is None or registered['flags'] != 0
+                        or registered['queue'] != previous['queue']):
+                    raise UnsupportedUipc('uipc_callback_completion_mode_not_implemented',
+                                          proxy=index, previous=previous)
+                self.transactions.append({'type': 'wait_cb_completion', 'proxy': index,
+                                          'message_touched': False,
+                                          'broadcast': bool(previous.get('broadcast')),
+                                          'handle': previous['handle'],
+                                          'queue': previous['queue'],
+                                          'msg_ptr': previous['msg_ptr']})
+                del inflight[index]
+                self.callback_inflight = inflight
+            else:
+                low_id = previous['queue'] & 0xffff
+                if (registered is None or registered['flags'] != 0
+                        or registered['queue'] != previous['queue']
+                        or 0x4000 <= low_id < 0x6000 or low_id >= 0x7000):
+                    raise UnsupportedUipc('uipc_callback_completion_mode_not_implemented',
+                                          proxy=index, previous=previous)
+                # E0301 finish_callback .text+0x41d4..0x42c4: ordinary queue
+                # clears callback activity/queue busy and redispatches. It does
+                # not inspect or free the message, which may already be freed.
+                self.transactions.append({'type': 'wait_cb_completion', 'proxy': index,
+                                          'message_touched': False, **previous})
+                del inflight[index]
+        if policy == KERNEL_E0303:
+            return self._deliver_generic_callback(reader, writer, params, index)
         for handle, cb in self.callbacks.items():
+            if getattr(self, 'pool_options_policy', '') == 'kernel-e0301':
+                # Async list is queue+8; sync registration lives at queue+24.
+                if cb['flags'] != 0:
+                    continue
+                if any(entry['queue'] == cb['queue'] for entry in inflight.values()):
+                    continue
             messages = self.message_queues.get(cb['queue'], [])
             if not messages:
                 continue
-            if sum(other['queue'] == cb['queue'] for other in self.callbacks.values()) != 1:
+            count = sum(other['queue'] == cb['queue'] and
+                        (getattr(self, 'pool_options_policy', '') != 'kernel-e0301' or other['flags'] == 0)
+                        for other in self.callbacks.values())
+            if count != 1:
                 raise UnsupportedUipc('uipc_multiple_callbacks_not_implemented', queue=cb['queue'])
+            low_id = cb['queue'] & 0xffff
+            if (getattr(self, 'pool_options_policy', '') == 'kernel-e0301'
+                    and (0x4000 <= low_id < 0x6000 or low_id >= 0x7000)):
+                raise UnsupportedUipc('uipc_callback_queue_mode_not_implemented', queue=cb['queue'])
             if cb['flags'] != 0:
                 raise UnsupportedUipc('uipc_sync_callback_not_implemented', handle=handle,
                                       queue=cb['queue'], flags=cb['flags'])
@@ -641,5 +878,72 @@ class GuestUipc:
             self.transactions.append({'type': 'wait_cb_delivery', 'proxy': index,
                                       'callback': cb['callback'], 'user_data': cb['user_data'],
                                       **inflight[index]})
+            return 0
+        return None
+
+    def _deliver_generic_callback(self, reader, writer, params, index):
+        """E0303 delivery rules layered on the original E0301 evidence.
+
+        Implemented (bounded on the retained finish_callback/dynamic-ID ARM
+        controls): ordinary queues keep one owner per message (round-robin among
+        registered async consumers); broadcast queues (dynamic slot
+        0x7000..0x7fff) deliver the same message to every registered async
+        consumer once; a queue is serialized across proxies while a callback is
+        inflight; delivery writes only the original four-word tuple and never
+        reads, writes or frees the message buffer; sync-registered callbacks are
+        never consumed here. Remaining UNKNOWN: the kernel's exact consumer
+        selection order and broadcast refcount/free timing are not observed, so
+        the message is only removed from the model queue after every registered
+        consumer has been handed it (no double-free is possible because the
+        completion path never touches the message).
+        """
+        inflight = getattr(self, 'callback_inflight', {})
+        busy = {entry['queue'] for entry in inflight.values()}
+        by_queue: Dict[int, List[Tuple[int, Dict[str, object]]]] = {}
+        for handle, cb in self.callbacks.items():
+            if cb['flags'] != 0:
+                continue
+            by_queue.setdefault(cb['queue'], []).append((handle, cb))
+        for queue, entries in by_queue.items():
+            if queue in busy:
+                continue
+            messages = self.message_queues.get(queue)
+            if not messages:
+                continue
+            low_id = queue & 0xffff
+            broadcast = BROADCAST_QUEUE_RANGE[0] <= low_id < BROADCAST_QUEUE_RANGE[1]
+            msg = messages[0]
+            if broadcast:
+                delivered = self.broadcast_message_deliveries.setdefault((queue, msg), set())
+                entry = next(((handle, cb) for handle, cb in entries if handle not in delivered),
+                             None)
+                if entry is None:
+                    # All registered consumers already received this message;
+                    # consume it from the model queue without touching it.
+                    messages.pop(0)
+                    self.broadcast_message_deliveries.pop((queue, msg), None)
+                    continue
+                handle, cb = entry
+            else:
+                cursor = self.queue_consumer_cursor.get(queue, 0) % len(entries)
+                handle, cb = entries[cursor]
+                self.queue_consumer_cursor[queue] = (cursor + 1) % len(entries)
+            if not cb['callback']:
+                raise UnsupportedUipc('uipc_null_callback', handle=handle, queue=queue)
+            writer(params, struct.pack('<4I', cb['callback'], cb['user_data'], msg, index))
+            if broadcast:
+                delivered.add(handle)
+                consumer_handles = {consumer for consumer, _cb in entries}
+                if consumer_handles <= delivered:
+                    messages.pop(0)
+                    self.broadcast_message_deliveries.pop((queue, msg), None)
+            else:
+                messages.pop(0)
+            inflight[index] = {'handle': handle, 'queue': queue, 'msg_ptr': msg,
+                               'broadcast': broadcast}
+            self.callback_inflight = inflight
+            self.transactions.append({'type': 'wait_cb_delivery', 'proxy': index,
+                                      'callback': cb['callback'], 'user_data': cb['user_data'],
+                                      'broadcast': broadcast, **inflight[index]})
             return 0
         return None

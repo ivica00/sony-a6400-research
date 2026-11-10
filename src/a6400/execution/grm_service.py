@@ -18,6 +18,21 @@ reciprocal list (first name match in captured list order, matching
 lookup. Unknown names, units and allocation handles are reported as explicit
 failures instead of being mapped to ``gl_common``. Allocation offsets are kept
 per captured pool, because the captured objects are separate allocators.
+
+Telemetry policy
+----------------
+``telemetry_policy='off'`` (default) adds nothing: replies, events and framing
+are byte-identical to the pool policy alone.
+
+``telemetry_policy='e0302-grm'`` is an explicit opt-in observer. It records one
+structured entry per synchronous open/findbyname/malloc/close request and per
+asynchronous DMM request in ``self.telemetry``: opcode, transport, raw request
+bytes, unit/name/handle/size, selected captured pool (base/size/kernel handle/
+allocation offset), result, explicit error reason and provenance. Records are
+also attached to the returned event as ``event['telemetry']`` and summarised by
+``telemetry_report()``. Telemetry never changes a reply: an unsupported DMM
+unit is recorded as unsupported (the existing legacy DMM reply is unchanged and
+flagged with its provenance), and no pool is invented for it.
 """
 
 import struct
@@ -44,6 +59,15 @@ GRM_UNIT_GL_COMMON = 0x0280
 POOL_POLICY_GL_COMMON_ONLY = 'gl-common-only'
 POOL_POLICY_CAPTURED_E0044 = 'captured-e0044'
 POOL_POLICIES = (POOL_POLICY_GL_COMMON_ONLY, POOL_POLICY_CAPTURED_E0044)
+
+TELEMETRY_OFF = 'off'
+TELEMETRY_E0302 = 'e0302-grm'
+TELEMETRY_POLICIES = (TELEMETRY_OFF, TELEMETRY_E0302)
+
+# Verified OSD A/B /dev/stream/display physical bases (E0074, E0297, E0298).
+# They equal the two zero-named 'empty' allocator pools of the captured E0044
+# list, so a request selecting either of those pools is an OSD-pool request.
+OSD_POOL_PHYS_BASES = (0x23A80000, 0x23B16000)
 
 # E0044 records each allocator object's physical address; embedded list links
 # are cached kernel pointers equal to object physical + 0x60000000 + 0x14.
@@ -101,6 +125,24 @@ def _captured_pool_by_unit(unit: int) -> Optional[CapturedPool]:
     return _captured_pool_by_name('gl_common')
 
 
+def _captured_pool_by_base(phys_base: Optional[int]) -> Optional[CapturedPool]:
+    """Unique captured-pool lookup by physical base (the 'empty' rows differ)."""
+    for pool in CAPTURED_E0044_POOLS:
+        if pool.phys_base == phys_base:
+            return pool
+    return None
+
+
+def _hex_int(value: Any) -> Optional[int]:
+    """Convert the service's hex-string address fields back to ints."""
+    if isinstance(value, str):
+        try:
+            return int(value, 16)
+        except ValueError:
+            return None
+    return value
+
+
 class GrmMaService:
     """Services synchronous UIPC requests to GRM-MA (queue 0x014c0424).
 
@@ -110,17 +152,21 @@ class GrmMaService:
     - Opcode 7: ma_findbyname_impl (lookup gl_common)
     - Opcode 9: ma_malloc_impl (allocate buffer from gl_common pool)
 
-    ``pool_policy`` selects the pool contract; see the module docstring. The
-    default ``gl-common-only`` behaviour and all reply offsets are unchanged.
+    ``pool_policy`` selects the pool contract and ``telemetry_policy`` selects
+    optional observation; see the module docstring. Defaults keep the
+    ``gl-common-only`` behaviour and all reply offsets byte-identical.
     """
 
     def __init__(self,
                  phys_base: int = GRM_POOL_PHYS_BASE,
                  pool_size: int = GRM_POOL_SIZE,
                  kernel_handle: int = GRM_KERNEL_HANDLE,
-                 pool_policy: str = POOL_POLICY_GL_COMMON_ONLY):
+                 pool_policy: str = POOL_POLICY_GL_COMMON_ONLY,
+                 telemetry_policy: str = TELEMETRY_OFF):
         if pool_policy not in POOL_POLICIES:
             raise ValueError('Unknown GRM pool policy')
+        if telemetry_policy not in TELEMETRY_POLICIES:
+            raise ValueError('Unknown GRM telemetry policy')
         if pool_policy == POOL_POLICY_CAPTURED_E0044 and (
                 phys_base, pool_size, kernel_handle) != (
                     GRM_POOL_PHYS_BASE, GRM_POOL_SIZE, GRM_KERNEL_HANDLE):
@@ -131,10 +177,22 @@ class GrmMaService:
         self.pool_size = pool_size
         self.kernel_handle = kernel_handle
         self.pool_policy = pool_policy
+        self.telemetry_policy = telemetry_policy
         self.next_alloc_offset = 0
         # Captured-e0044 allocation offsets, keyed by captured object physical.
         self.pool_alloc_offsets: Dict[int, int] = {}
+        # Opt-in e0302-grm request observer; empty unless telemetry is enabled.
+        self.telemetry: List[Dict[str, Any]] = []
         self.events: List[Dict[str, Any]] = []
+
+    def __setstate__(self, state):
+        # Checkpoints created before the telemetry policy existed must restore
+        # without changing their reply behavior.
+        self.__dict__.update(state)
+        if 'telemetry_policy' not in self.__dict__:
+            self.telemetry_policy = TELEMETRY_OFF
+        if 'telemetry' not in self.__dict__:
+            self.telemetry = []
 
     def handle_uipc_sync_message(self, memory_reader, memory_writer, msg_ptr: int, alloc_size: int = 64) -> int:
         """Dispatches an incoming synchronous UIPC message to GRM-MA."""
@@ -349,8 +407,202 @@ class GrmMaService:
                 'status': -1
             })
 
+        if self.telemetry_policy != TELEMETRY_OFF:
+            event['telemetry'] = self._record_sync_telemetry(opcode, raw_msg, event)
         self.events.append(event)
         return 0
+
+    def _record_sync_telemetry(self, opcode: int, raw_msg: bytes,
+                               event: Dict[str, Any]) -> Dict[str, Any]:
+        """Record one synchronous request; never modifies the reply."""
+        request: Dict[str, Any] = {'unit': None, 'name': None, 'handle': None, 'size': None}
+        if opcode == 1:
+            request['unit'] = struct.unpack_from('<I', raw_msg, 4)[0] if len(raw_msg) >= 8 else 0
+            if len(raw_msg) > 9 and raw_msg[9] != 0:
+                raw_name = raw_msg[9:25].split(b'\x00')[0]
+            else:
+                raw_name = raw_msg[8:24].split(b'\x00')[0] if len(raw_msg) >= 24 else b''
+            request['name'] = raw_name.decode('latin1', errors='ignore')
+        elif opcode == 7:
+            raw_name = raw_msg[4:20].split(b'\x00')[0] if len(raw_msg) >= 20 else b''
+            request['name'] = raw_name.decode('latin1', errors='ignore')
+        elif opcode == 9:
+            request['handle'] = struct.unpack_from('<I', raw_msg, 4)[0] if len(raw_msg) >= 8 else 0
+            request['size'] = struct.unpack_from('<I', raw_msg, 8)[0] if len(raw_msg) >= 12 else 0
+
+        selection: Dict[str, Any] = {'pool_name': None, 'phys_base': None, 'pool_size': None,
+                                     'handle': None, 'alloc_offset': None, 'alloc_addr': None}
+        action = event.get('action')
+        result, error_reason = 'served', None
+        if action == 'ma_dmm_open_impl':
+            selection.update(pool_name=event.get('pool_name') or 'gl_common',
+                             phys_base=_hex_int(event.get('phys_base')),
+                             pool_size=event.get('pool_size'),
+                             handle=_hex_int(event.get('handle')))
+            provenance = ('captured-e0044-unit-0x0280'
+                          if self.pool_policy == POOL_POLICY_CAPTURED_E0044
+                          else 'default-gl-common-contract')
+        elif action == 'ma_findbyname_impl':
+            selection.update(pool_name=event.get('pool_name') or 'gl_common',
+                             phys_base=_hex_int(event.get('phys_base')),
+                             pool_size=event.get('pool_size'),
+                             handle=_hex_int(event.get('handle')))
+            provenance = ('captured-e0044-name-table-first-match'
+                          if self.pool_policy == POOL_POLICY_CAPTURED_E0044
+                          else 'default-gl-common-contract')
+        elif action == 'ma_malloc_impl':
+            alloc_addr = _hex_int(event.get('alloc_addr'))
+            if self.pool_policy == POOL_POLICY_CAPTURED_E0044:
+                offset = event.get('pool_offset')
+                phys_base = (alloc_addr - offset
+                             if alloc_addr is not None and offset is not None else None)
+                pool = _captured_pool_by_base(phys_base)
+                selection.update(pool_name=event.get('pool_name'), phys_base=phys_base,
+                                 pool_size=pool.pool_size if pool else None,
+                                 handle=pool.kernel_handle if pool else None,
+                                 alloc_offset=offset, alloc_addr=alloc_addr)
+                provenance = 'captured-e0044-per-pool-allocator'
+            else:
+                offset = (alloc_addr - self.phys_base if alloc_addr is not None else None)
+                selection.update(pool_name='gl_common', phys_base=self.phys_base,
+                                 pool_size=self.pool_size, handle=self.kernel_handle,
+                                 alloc_offset=offset, alloc_addr=alloc_addr)
+                provenance = 'default-gl-common-allocator'
+        elif action == 'ma_dmm_open_impl_unsupported_unit':
+            result, error_reason = 'error', 'unit_not_mapped_by_captured_e0044_policy'
+            provenance = 'captured-e0044-policy-refusal'
+        elif action == 'ma_findbyname_impl_unknown_name':
+            result, error_reason = 'error', 'name_not_in_captured_e0044_table'
+            provenance = 'captured-e0044-policy-refusal'
+        elif action == 'ma_malloc_impl_unknown_handle':
+            result, error_reason = 'error', 'handle_not_in_captured_e0044_table'
+            provenance = 'captured-e0044-policy-refusal'
+        elif action == 'ma_dmm_close_impl':
+            provenance = 'close-acknowledgement; no pool selected'
+        else:
+            result, error_reason = 'error', 'unsupported_opcode'
+            provenance = 'dispatch-refusal'
+        osd_pool = (selection['pool_name'] == 'empty'
+                    or selection['phys_base'] in OSD_POOL_PHYS_BASES)
+        record = {
+            'seq': len(self.telemetry),
+            'transport': 'sync',
+            'opcode': opcode,
+            'msg_ptr': event.get('msg_ptr'),
+            'action': action,
+            'request_hex': bytes(raw_msg[:24]).hex(),
+            'request': request,
+            'pool_policy': self.pool_policy,
+            'selection': selection,
+            'result': result,
+            'error': error_reason,
+            'status': event.get('status'),
+            'unsupported': result == 'error' and action != 'unsupported_opcode',
+            'osd_pool': osd_pool,
+            'provenance': provenance,
+        }
+        self.telemetry.append(record)
+        return record
+
+    def telemetry_report(self) -> Dict[str, Any]:
+        """Summary of the opt-in telemetry records for the Lead's runner."""
+        by_action: Dict[str, int] = {}
+        by_result: Dict[str, int] = {}
+        pools = set()
+        for record in self.telemetry:
+            by_action[record['action']] = by_action.get(record['action'], 0) + 1
+            by_result[record['result']] = by_result.get(record['result'], 0) + 1
+            name = (record.get('selection') or {}).get('pool_name')
+            if name:
+                pools.add(name)
+        unsupported = [record for record in self.telemetry
+                       if record.get('unsupported') or record.get('result') == 'error']
+        return {
+            'telemetry_policy': self.telemetry_policy,
+            'pool_policy': self.pool_policy,
+            'request_count': len(self.telemetry),
+            'by_action': by_action,
+            'by_result': by_result,
+            'pools_selected': sorted(pools),
+            'unsupported_request_count': len(unsupported),
+            'unsupported_requests': unsupported,
+            'osd_pool_requests': [record for record in self.telemetry if record.get('osd_pool')],
+            'requests': self.telemetry,
+        }
+
+    def _record_dmm_telemetry(self, event: Dict[str, Any], raw_req: bytes,
+                              msg_ptr: int) -> Dict[str, Any]:
+        """Record one asynchronous DMM request; never modifies the reply."""
+        unit = _hex_int(event.get('unit'))
+        selection: Dict[str, Any] = {'pool_name': None, 'phys_base': None,
+                                     'pool_size': None, 'handle': None}
+        result, error_reason = 'served', None
+        unsupported = False
+        if self.pool_policy == POOL_POLICY_CAPTURED_E0044:
+            pool = _captured_pool_by_unit(unit)
+            if pool is None:
+                # The legacy DMM completion reply is unit-independent; it is
+                # not evidence that this unit selected gl_common. Keep the
+                # verified wire behaviour and expose the missing mapping.
+                result = 'served_legacy_unit_independent'
+                error_reason = 'dmm_unit_not_mapped_by_captured_e0044_policy'
+                unsupported = True
+                provenance = ('legacy-dmm-unit-independent-gl_common reply; '
+                              'captured-e0044 has no DMM unit table')
+            else:
+                selection.update(pool_name=pool.name, phys_base=pool.phys_base,
+                                 pool_size=pool.pool_size, handle=GRM_DMM_HANDLE)
+                provenance = 'captured-e0044-unit-0x0280-dmm-handle'
+        else:
+            selection.update(pool_name='gl_common', phys_base=self.phys_base,
+                             pool_size=self.pool_size, handle=GRM_DMM_HANDLE)
+            provenance = 'default-gl-common-dmm-contract'
+        osd_pool = (selection['pool_name'] == 'empty'
+                    or selection['phys_base'] in OSD_POOL_PHYS_BASES)
+        record = {
+            'seq': len(self.telemetry),
+            'transport': 'dmm',
+            'opcode': event.get('opcode'),
+            'action': 'dmm_ctrl_AllocUnitNewHdlr',
+            'msg_ptr': msg_ptr,
+            'queue': event.get('queue'),
+            'reply_queue': event.get('reply_queue'),
+            'req_id': event.get('req_id'),
+            'request_hex': bytes(raw_req[:24]).hex(),
+            'request': {'unit': unit, 'name': None, 'handle': None, 'size': None},
+            'pool_policy': self.pool_policy,
+            'reply': {'ret_code': event.get('ret_code'),
+                      'handle': _hex_int(event.get('handle')),
+                      'phys_base': self.phys_base, 'pool_size': self.pool_size,
+                      'reply_ptr': event.get('reply_ptr')},
+            'selection': selection,
+            'result': result,
+            'error': error_reason,
+            'unsupported': unsupported,
+            'osd_pool': osd_pool,
+            'provenance': provenance,
+        }
+        self.telemetry.append(record)
+        return record
+
+    def _record_dmm_rejection(self, raw_req: bytes, msg_ptr: int, reason: str) -> None:
+        opcode = struct.unpack_from('<H', raw_req, 0)[0] if len(raw_req) >= 2 else None
+        self.telemetry.append({
+            'seq': len(self.telemetry),
+            'transport': 'dmm',
+            'opcode': opcode,
+            'msg_ptr': msg_ptr,
+            'action': 'dmm_request_rejected',
+            'request_hex': bytes(raw_req[:24]).hex(),
+            'request': {'unit': None, 'name': None, 'handle': None, 'size': None},
+            'pool_policy': self.pool_policy,
+            'selection': None,
+            'result': 'error',
+            'error': reason,
+            'unsupported': True,
+            'osd_pool': False,
+            'provenance': 'legacy-dmm-contract-guard',
+        })
 
     def handle_dmm_message(self, memory_reader, memory_writer, msg_ptr: int, uipc) -> Optional[Dict[str, Any]]:
         """Handles an asynchronous DMM service request (queue 0x0061003c).
@@ -360,6 +612,8 @@ class GrmMaService:
         """
         raw_req = memory_reader(msg_ptr, min(64, uipc.allocated_msgs.get(msg_ptr, 32)))
         if len(raw_req) < 24:
+            if self.telemetry_policy != TELEMETRY_OFF:
+                self._record_dmm_rejection(raw_req, msg_ptr, 'short_dmm_request')
             return None
 
         opcode = struct.unpack_from('<H', raw_req, 0)[0]
@@ -368,6 +622,8 @@ class GrmMaService:
         req_id = struct.unpack_from('<H', raw_req, 20)[0]
 
         if reply_queue == 0:
+            if self.telemetry_policy != TELEMETRY_OFF:
+                self._record_dmm_rejection(raw_req, msg_ptr, 'missing_reply_queue')
             return None
 
         # Allocate reply message in shared UIPC pool
@@ -407,6 +663,8 @@ class GrmMaService:
             'ret_code': 0,
             'reply_ptr': reply_ptr
         }
+        if self.telemetry_policy != TELEMETRY_OFF:
+            event['telemetry'] = self._record_dmm_telemetry(event, raw_req, msg_ptr)
         self.events.append(event)
         return event
 

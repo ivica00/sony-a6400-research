@@ -3,13 +3,15 @@ import hashlib
 import struct
 import unittest
 
+import unicorn
 from unicorn import Uc, UcError, UC_ARCH_ARM, UC_MODE_ARM
 from unicorn import arm_const as arm
+from unittest import mock
 
 from project_paths import PROJECT_ROOT
 from src.a6400.images.process_elf import inspect_image, map_image
 from src.a6400.execution.process_entry import build_stack, AT_PHDR, AT_BASE, AT_ENTRY, AT_NULL
-from src.a6400.execution.interpreter_probe import InterpreterProbe
+from src.a6400.execution.interpreter_probe import InterpreterProbe, summarize_loader_stop
 from src.a6400.execution.guest_kuser import extract_kuser_template
 
 
@@ -30,12 +32,20 @@ class InterpreterProbeTests(unittest.TestCase):
         self.folder = PROJECT_ROOT / 'artifacts/tests/process-probe'
         self.folder.mkdir(parents=True, exist_ok=True)
 
-    def probe(self, code=bytes.fromhex('2d27002000df'), thumb=True, syscall_policy='stop', uname_profile=None, filesystem=None, kuser_template=None):
+    def probe(self, code=bytes.fromhex('2d27002000df'), thumb=True, syscall_policy='stop', uname_profile=None, filesystem=None, kuser_template=None, environment=None):
         app = make_elf(self.folder / 'app.elf', b'\xfe\xe7', dynamic=False)
         interpreter = make_elf(self.folder / 'linker.elf', code, thumb=thumb)
         probe = InterpreterProbe(syscall_policy=syscall_policy, uname_profile=uname_profile, filesystem=filesystem, kuser_template=kuser_template)
-        probe.prepare(app, interpreter, ['/usr/bin/test'])
+        probe.prepare(app, interpreter, ['/usr/bin/test'], environment=environment)
         return probe
+
+    def test_prepare_records_explicit_guest_environment(self):
+        probe = self.probe(environment=['LD_PRELOAD=/usr/lib/x.so', 'A=B'])
+        self.assertEqual(probe.report['stack']['environment'],
+                         ['LD_PRELOAD=/usr/lib/x.so', 'A=B'])
+
+    def test_prepare_default_environment_is_empty(self):
+        self.assertEqual(self.probe().report['stack']['environment'], [])
 
     def test_thumb_syscall_stops_without_response(self):
         probe = self.probe()
@@ -659,6 +669,72 @@ class InterpreterProbeTests(unittest.TestCase):
         self.assertEqual(nano_ev['tv_nsec'], 500000)
         self.assertEqual(nano_ev['returned'], 0)
 
+    def test_threads_policy_block_nanosleep_parks_caller(self):
+        filesystem = {
+            'nodes': {},
+            'content_loader': lambda p, n: b''
+        }
+        raw = b''.join(s.ljust(65, b'\0') for s in
+                       (b'Linux', b'(none)', b'3.0.27', b'#1', b'arm', b'(none)'))
+        kernel_path = PROJECT_ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin'
+        if not kernel_path.exists():
+            self.skipTest('Kernel image not available')
+        template = extract_kuser_template(kernel_path)
+        code = struct.pack('<8I',
+                           0xe3a00001,          # mov r0, #1 (tv_sec)
+                           0xe58d0000,          # str r0, [sp]
+                           0xe3a00000,          # mov r0, #0 (tv_nsec)
+                           0xe58d0004,          # str r0, [sp, #4]
+                           0xe1a0000d,          # mov r0, sp (req)
+                           0xe3a01000,          # mov r1, #0 (rem)
+                           0xe3a070a2,          # mov r7, #162 (nanosleep)
+                           0xef000000           # svc 0
+                           )
+        probe = self.probe(code, thumb=False, syscall_policy='threads',
+                           uname_profile={'raw_hex': raw.hex()},
+                           filesystem=filesystem, kuser_template=template)
+        probe.thread_sleep_policy = 'block'
+        report = probe.run()
+        self.assertEqual(report['status'], 'blocked_sleep')
+        self.assertEqual(report['boundary']['reason'], 'nanosleep_no_virtual_deadline')
+        self.assertEqual(report['boundary']['tv_sec'], 1)
+        nano_ev = next(s for s in report['serviced_syscalls'] if s['syscall'] == 'nanosleep')
+        self.assertEqual(nano_ev['blocked_tid'], 1000)
+        self.assertEqual(nano_ev['returned'], 0)
+        self.assertEqual(report['threads']['1000']['state'], 'blocked_sleep')
+
+    def test_threads_policy_block_nanosleep_keeps_short_sleeps_immediate(self):
+        filesystem = {'nodes': {}, 'content_loader': lambda p, n: b''}
+        raw = b''.join(s.ljust(65, b'\0') for s in
+                       (b'Linux', b'(none)', b'3.0.27', b'#1', b'arm', b'(none)'))
+        kernel_path = PROJECT_ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin'
+        if not kernel_path.exists():
+            self.skipTest('Kernel image not available')
+        template = extract_kuser_template(kernel_path)
+        code = struct.pack('<10I',
+                           0xe3a00000,          # mov r0, #0 (tv_sec)
+                           0xe58d0000,          # str r0, [sp]
+                           0xe3040240,          # movw r0, #0x4240
+                           0xe340000f,          # movt r0, #0x000f -> tv_nsec = 1_000_000 (1 ms)
+                           0xe58d0004,          # str r0, [sp, #4]
+                           0xe1a0000d,          # mov r0, sp (req)
+                           0xe3a01000,          # mov r1, #0 (rem)
+                           0xe3a070a2,          # mov r7, #162 (nanosleep)
+                           0xef000000,          # svc 0
+                           0xe3a07001           # mov r7, #1 (exit)
+                           ) + struct.pack('<2I', 0xef000000, 0xeafffffe)
+        probe = self.probe(code, thumb=False, syscall_policy='threads',
+                           uname_profile={'raw_hex': raw.hex()},
+                           filesystem=filesystem, kuser_template=template)
+        probe.thread_sleep_policy = 'block'
+        report = probe.run()
+        # 1 ms is a polling hint: it returns immediately instead of parking the
+        # RM executor thread (E0355), so execution reaches the exit boundary.
+        self.assertEqual(report['status'], 'syscall_boundary')
+        self.assertEqual(report['boundary']['r7'], 1)
+        nano_ev = next(s for s in report['serviced_syscalls'] if s['syscall'] == 'nanosleep')
+        self.assertEqual(nano_ev['reason'], 'short_sleep_immediate')
+
     def test_sigill_delivery_to_registered_guest_handler(self):
         filesystem = {
             'nodes': {},
@@ -802,6 +878,29 @@ class ProbeSliceAndDisplayTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             probe.run_slice(10)
 
+    def test_begin_schedules_a_woken_thread_instead_of_running_blocked_caller(self):
+        from src.a6400.execution.guest_threads import GuestThreads, GuestThread
+        probe = self.probe()
+        probe.threads = GuestThreads()
+        blocked = probe.threads.threads[1000]
+        blocked.state = 'blocked_uipc'
+        target = GuestThread(1001, 'proxy', state='runnable')
+        target.regs = {arm.UC_ARM_REG_PC: 0x12340000, arm.UC_ARM_REG_CPSR: 0x10}
+        probe.threads.threads[1001] = target
+        probe.begin()
+        self.assertEqual(probe.threads.current_tid, 1001)
+        self.assertEqual(probe.entry, 0x12340000)
+        self.assertEqual(blocked.state, 'blocked_uipc')
+
+    def test_begin_keeps_all_blocked_threads_stopped(self):
+        from src.a6400.execution.guest_threads import GuestThreads
+        probe = self.probe()
+        probe.threads = GuestThreads()
+        probe.threads.threads[1000].state = 'blocked_uipc'
+        report = probe.run()
+        self.assertEqual(report['status'], 'blocked_threads')
+        self.assertEqual(probe.instructions, 0)
+
     def test_display_capture_with_mapped_osd(self):
         from src.a6400.execution.guest_display import display_contract
         probe = self.probe(display_profile=display_contract('camera-e0074-e0044'))
@@ -940,6 +1039,170 @@ class UsbEventInjectionTests(unittest.TestCase):
         self.assertEqual(result['woken'], [1001])
         self.assertEqual(probe.report['uipc_injection'][-1]['queue'], 0x1234)
         self.assertEqual(probe.report['uipc_injection'][-1]['size'], 3)
+
+
+class LoaderStopSummaryTests(unittest.TestCase):
+    def test_summary_extracts_undefined_symbol_and_library_mappings(self):
+        symbol = '_ZN29C_DataflowInfra_Entry_OsdMute11SetData_AllEPN20DataflowInfra_StdOsd12PIN_OSD_MUTEE'
+        events = [
+            {'syscall': 'open', 'path': '/usr/lib/libObj.so', 'returned': 6},
+            {'syscall': 'mmap2', 'mapping': {'path': '/usr/lib/libObj.so', 'base': 0x54000000,
+                                             'offset': 0, 'size': 20860436, 'sha256': '60ff'}},
+            {'syscall': 'open', 'path': '/usr/lib/dataflowInfraFramework.so', 'returned': 6},
+            {'syscall': 'mmap2', 'mapping': {'path': '/usr/lib/dataflowInfraFramework.so',
+                                             'base': 0x56000000, 'offset': 0, 'size': 172192,
+                                             'sha256': 'a831'}},
+            {'syscall': 'mmap2', 'path': '/dev/mem', 'mapping': {'phys_addr': 0x202e0000}},
+            {'syscall': 'exit_group', 'r7': 248, 'status': 127},
+        ]
+        stderr = '/usr/bin/im.elf: symbol lookup error: /usr/bin/im.elf: undefined symbol: ' + symbol + '\n'
+        summary = summarize_loader_stop(events, stderr)
+        self.assertTrue(summary['symbol_lookup_error'])
+        self.assertEqual(summary['undefined_symbol'], symbol)
+        self.assertEqual(summary['last_exit']['status'], 127)
+        self.assertIn('/usr/lib/libObj.so', summary['libraries'])
+        self.assertEqual(summary['libraries']['/usr/lib/dataflowInfraFramework.so'][-1]['size'], 172192)
+        self.assertNotIn('/dev/mem', summary['libraries'])
+
+    def test_summary_without_loader_error_is_quiet(self):
+        summary = summarize_loader_stop([], '')
+        self.assertFalse(summary['symbol_lookup_error'])
+        self.assertIsNone(summary['undefined_symbol'])
+        self.assertIsNone(summary['last_exit'])
+        self.assertEqual(summary['libraries'], {})
+
+
+class LoaderWorkaroundTests(unittest.TestCase):
+    """E3/E4: Thumb IT-state and _dl_fixup entry workarounds.
+
+    The 224.34M DataflowInfra abort was caused by Unicorn conditionally
+    skipping _dl_fixup's unconditional `mov r4,r0` under a stale Thumb IT
+    latch.  These tests exercise the pure register-level observers (fake uc;
+    no firmware run) and assert the fast-hook address membership that E3
+    identified, without changing or weakening the policies.
+    """
+
+    IT_ADDRESSES = (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a,
+                    0x4000a6f4, 0x5026ebc4, 0x5026ec26)
+    KNOWN_IT_MASK = (3 << 25) | (0x3f << 10)
+
+    class _RegisterUc:
+        def __init__(self, registers=None):
+            self.registers = dict(registers or {})
+            self.writes = []
+
+        def reg_read(self, register):
+            return self.registers[register]
+
+        def reg_write(self, register, value):
+            self.registers[register] = value
+            self.writes.append((register, value))
+
+    class _HookUc:
+        """Records hook registrations instead of executing guest code."""
+
+        def __init__(self, arch, mode):
+            self.arch = arch
+            self.mode = mode
+            self.hooks = []
+
+        def ctl_set_cpu_model(self, model):
+            self.cpu_model = model
+
+        def reg_write(self, register, value):
+            pass
+
+        def hook_add(self, kind, callback, **kwargs):
+            self.hooks.append({'kind': kind,
+                               'callback': getattr(callback, '__name__', ''),
+                               'begin': kwargs.get('begin'),
+                               'end': kwargs.get('end')})
+
+    def test_ld_fixup_workaround_sets_r4_from_r0_under_threads_policy(self):
+        probe = InterpreterProbe()
+        probe.syscall_policy = 'threads'
+        uc = self._RegisterUc({arm.UC_ARM_REG_R0: 0x1F648, arm.UC_ARM_REG_R4: 1})
+
+        probe._ld_fixup_workaround(uc, 0x4000A6F4, 4, None)
+
+        self.assertEqual(uc.registers[arm.UC_ARM_REG_R4], 0x1F648)
+        self.assertEqual(uc.writes, [(arm.UC_ARM_REG_R4, 0x1F648)])
+
+    def test_ld_fixup_workaround_is_gated_by_threads_policy(self):
+        probe = InterpreterProbe()
+        for policy in ('stop', 'brk', 'files', 'metadata'):
+            with self.subTest(policy=policy):
+                probe.syscall_policy = policy
+                uc = self._RegisterUc({arm.UC_ARM_REG_R0: 0x1F648,
+                                       arm.UC_ARM_REG_R4: 1})
+                probe._ld_fixup_workaround(uc, 0x4000A6F4, 4, None)
+                self.assertEqual(uc.registers[arm.UC_ARM_REG_R4], 1)
+                self.assertEqual(uc.writes, [])
+
+    def test_it_workaround_clears_it_and_jit_bits_under_supported_policy(self):
+        probe = InterpreterProbe()
+        probe.syscall_policy = 'threads'
+        initial = 0x40000030 | self.KNOWN_IT_MASK
+        uc = self._RegisterUc({arm.UC_ARM_REG_CPSR: initial})
+
+        probe._it_workaround(uc, 0x5026EC26, 2, None)
+
+        self.assertEqual(uc.registers[arm.UC_ARM_REG_CPSR],
+                         initial & ~self.KNOWN_IT_MASK)
+        self.assertEqual(len(uc.writes), 1)
+
+    def test_it_workaround_is_unchanged_without_it_bits(self):
+        probe = InterpreterProbe()
+        probe.syscall_policy = 'threads'
+        uc = self._RegisterUc({arm.UC_ARM_REG_CPSR: 0x30})
+
+        probe._it_workaround(uc, 0x4000A6F4, 4, None)
+
+        self.assertEqual(uc.registers[arm.UC_ARM_REG_CPSR], 0x30)
+        self.assertEqual(uc.writes, [])
+
+    def test_it_workaround_is_gated_by_threads_policy(self):
+        probe = InterpreterProbe()
+        for policy in ('stop', 'brk', 'files', 'metadata'):
+            with self.subTest(policy=policy):
+                probe.syscall_policy = policy
+                initial = 0x30 | self.KNOWN_IT_MASK
+                uc = self._RegisterUc({arm.UC_ARM_REG_CPSR: initial})
+                probe._it_workaround(uc, 0x5026EBC4, 2, None)
+                self.assertEqual(uc.registers[arm.UC_ARM_REG_CPSR], initial)
+                self.assertEqual(uc.writes, [])
+
+    def test_fast_mode_registers_fixup_and_pop_it_addresses(self):
+        from src.a6400.execution import interpreter_probe as module
+        with mock.patch.object(module.unicorn, 'Uc', self._HookUc):
+            probe = InterpreterProbe(hook_mode='fast')
+        hooks = probe.mu.hooks
+
+        it_addresses = {hook['begin'] for hook in hooks
+                        if hook['callback'] == '_it_workaround'}
+        self.assertEqual(it_addresses, set(self.IT_ADDRESSES))
+        # The two E3/E4 addresses are observed as exact single instructions.
+        for address in self.IT_ADDRESSES:
+            matching = [hook for hook in hooks
+                        if hook['callback'] == '_it_workaround' and hook['begin'] == address]
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0]['end'], address)
+
+        fixup_hooks = [hook for hook in hooks
+                       if hook['callback'] == '_ld_fixup_workaround']
+        self.assertEqual([(hook['begin'], hook['end']) for hook in fixup_hooks],
+                         [(0x4000A6F4, 0x4000A6F4)])
+        self.assertIn('_block', [hook['callback'] for hook in hooks])
+        self.assertNotIn('_code', [hook['callback'] for hook in hooks])
+
+    def test_instruction_mode_keeps_central_code_hook_without_fixup_hooks(self):
+        from src.a6400.execution import interpreter_probe as module
+        with mock.patch.object(module.unicorn, 'Uc', self._HookUc):
+            probe = InterpreterProbe(hook_mode='instruction')
+        callbacks = [hook['callback'] for hook in probe.mu.hooks]
+        self.assertIn('_code', callbacks)
+        self.assertNotIn('_it_workaround', callbacks)
+        self.assertNotIn('_ld_fixup_workaround', callbacks)
 
 
 if __name__ == '__main__':

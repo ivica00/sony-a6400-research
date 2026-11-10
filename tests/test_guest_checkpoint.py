@@ -53,6 +53,47 @@ class MockProbe:
 
 
 class TestGuestCheckpoint(unittest.TestCase):
+    def test_unanswered_svc_is_retried_in_both_instruction_modes(self):
+        for thumb in (False, True):
+            with self.subTest(thumb=thumb):
+                p1 = MockProbe()
+                p1.mu.mem_map(0x10000, 0x1000, unicorn.UC_PROT_ALL)
+                code = b'\x00\xdf\x07\x21' if thumb else bytes.fromhex('000000ef0710a0e3')
+                p1.mu.mem_write(0x10000, code)
+                cpsr = p1.mu.reg_read(arm.UC_ARM_REG_CPSR)
+                p1.mu.reg_write(arm.UC_ARM_REG_CPSR, cpsr | 0x20 if thumb else cpsr & ~0x20)
+                size = 2 if thumb else 4
+                p1.mu.reg_write(arm.UC_ARM_REG_PC, (0x10000 + size) | int(thumb))
+                p1.mu.reg_write(arm.UC_ARM_REG_R0, 0x1234)
+                p1.mu.reg_write(arm.UC_ARM_REG_R7, 54)
+                p1.report.update(status='unsupported_uipc_contract', boundary={'pc': 0x10000 + size, 'r7': 54})
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / 'pending.ckpt'
+                    save_checkpoint(p1, path)
+                    p2 = MockProbe()
+                    restore_checkpoint(p2, path, exact=True)
+                calls = []
+                def interrupt(uc, number, _):
+                    calls.append(uc.reg_read(arm.UC_ARM_REG_R7))
+                    uc.reg_write(arm.UC_ARM_REG_R0, 0)
+                p2.mu.hook_add(unicorn.UC_HOOK_INTR, interrupt)
+                p2.mu.emu_start(p2.entry, 0x10000 + len(code), count=2)
+                self.assertEqual(calls, [54])
+                self.assertEqual(p2.mu.reg_read(arm.UC_ARM_REG_R0), 0)
+                self.assertEqual(p2.mu.reg_read(arm.UC_ARM_REG_R1), 7)
+
+    def test_invalid_svc_boundary_cannot_resume(self):
+        p1 = MockProbe()
+        p1.mu.mem_map(0x10000, 0x1000, unicorn.UC_PROT_ALL)
+        p1.mu.mem_write(0x10000, bytes.fromhex('0000a0e1'))
+        p1.mu.reg_write(arm.UC_ARM_REG_PC, 0x10004)
+        p1.report.update(status='syscall_boundary', boundary={'pc': 0x10004})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'invalid.ckpt'
+            save_checkpoint(p1, path)
+            with self.assertRaisesRegex(ValueError, 'not_verified_eabi'):
+                restore_checkpoint(MockProbe(), path, exact=True)
+
     def test_save_and_restore_checkpoint(self):
         # 1. Setup mock probe with mapped memory and register state
         p1 = MockProbe()
@@ -89,6 +130,33 @@ class TestGuestCheckpoint(unittest.TestCase):
             self.assertEqual(p2.mmap.mapped_pages, {0x50000000})
             self.assertEqual(p2.report['syscall_responses_supplied'], 1)
             self.assertEqual(p2.report['loaded_modules'], ['/usr/kmod/test.ko'])
+
+
+    def test_v2_checkpoint_preserves_uipc_callback_and_waiter_state(self):
+        """E0302/E1: v2 restore must keep in-flight callback/waiter bookkeeping."""
+        p1 = MockProbe()
+        p1.threads.uipc_waiters = {0x12002da: [1005], 0x61003c: [1015, 1017]}
+        p1.uipc.callback_inflight = {7: {'queue': 0x61003c, 'msg_ptr': 0x503304ac}}
+        p1.uipc.sync_callback_inflight = {9: {'queue': 0x61003c, 'callback': 0x52f3b0dd}}
+        p1.uipc.callback_proxy_owners = {0: 1001, 1: 1002, 2: 1003, 3: 1006}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ckpt_path = Path(tmpdir) / 'uipc-v2.ckpt'
+            save_checkpoint(p1, ckpt_path)
+            p2 = MockProbe()
+            restore_checkpoint(p2, ckpt_path, exact=True)
+        self.assertEqual(p2.threads.uipc_waiters, p1.threads.uipc_waiters)
+        self.assertEqual(p2.uipc.callback_inflight, p1.uipc.callback_inflight)
+        self.assertEqual(p2.uipc.sync_callback_inflight, p1.uipc.sync_callback_inflight)
+        self.assertEqual(p2.uipc.callback_proxy_owners, p1.uipc.callback_proxy_owners)
+        # Restored state is live, not a stale copy: a follow-up save keeps it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ckpt_path = Path(tmpdir) / 'uipc-v2-again.ckpt'
+            save_checkpoint(p2, ckpt_path)
+            p3 = MockProbe()
+            restore_checkpoint(p3, ckpt_path, exact=True)
+        self.assertEqual(p3.threads.uipc_waiters, p1.threads.uipc_waiters)
+        self.assertEqual(p3.uipc.callback_inflight, p1.uipc.callback_inflight)
+        self.assertEqual(p3.uipc.callback_proxy_owners, p1.uipc.callback_proxy_owners)
 
 
 if __name__ == '__main__':

@@ -23,9 +23,11 @@ from src.a6400.execution.guest_fb import GuestFramebuffer
 from src.a6400.execution.guest_stream import GuestStream, UnsupportedStream
 from src.a6400.execution.guest_gles import GuestGles, UnsupportedGles, GLES_LOCK_SEMAPHORE
 from src.a6400.execution.guest_gpio import GuestGpio, UnsupportedGpio
+from src.a6400.execution.guest_kikilog import UnsupportedKikilog
 from src.a6400.execution.guest_usb_buspower import GuestUsbBusPower, UnsupportedUsbBusPower
 from src.a6400.execution.guest_usb_event import GuestUsbEvent, UnsupportedUsbEvent
 from src.a6400.execution.guest_usb_otgcore import GuestUsbOtgCore, UnsupportedUsbOtgCore
+from src.a6400.execution.guest_nflasha4 import Nflasha4Dump, Nflasha4DumpError
 from src.a6400.execution.guest_hdmi import GuestHdmi, UnsupportedHdmi
 from src.a6400.execution.guest_cec import GuestCec, UnsupportedCec
 from src.a6400.execution.guest_mmca_char import GuestMmcChar, UnsupportedMmcChar, MMC_CHAR_NODES
@@ -33,6 +35,46 @@ from src.a6400.execution.guest_pipe import GuestPipe, UnsupportedPipe, POLLNVAL,
 from src.a6400.execution.guest_sem import GuestSem
 from src.a6400.execution.guest_display import DisplayModel, display_contract
 from src.a6400.execution.kernel_task_identity import UnsupportedKernelBinding
+
+
+def summarize_loader_stop(serviced_syscalls, stderr_text, boundary=None):
+    """Read-only summary of the guest dynamic-loader stop state."""
+    undefined = None
+    if 'undefined symbol:' in stderr_text:
+        tail = stderr_text.split('undefined symbol:', 1)[1].strip()
+        undefined = tail.split()[0] if tail else None
+    exits = [event for event in serviced_syscalls
+             if event.get('syscall') in ('exit', 'exit_group')]
+    boundary_exit = None
+    if boundary and boundary.get('r7') in (1, 248):
+        arguments = boundary.get('arguments') or []
+        boundary_exit = {
+            'syscall': 'exit_group' if boundary['r7'] == 248 else 'exit',
+            'status': arguments[0] if arguments else None,
+        }
+    libraries = {}
+    for event in serviced_syscalls:
+        path = event.get('path')
+        if not path:
+            path = (event.get('mapping') or {}).get('path')
+        if not path or not any(name in path for name in
+                               ('libObj.so', 'dataflowInfraFramework.so', 'ld-linux')):
+            continue
+        entry = {'syscall': event.get('syscall'), 'returned': event.get('returned')}
+        if event.get('resolved_path'):
+            entry['resolved_path'] = event['resolved_path']
+        mapping = event.get('mapping') or {}
+        for field in ('base', 'offset', 'size', 'sha256'):
+            if field in mapping:
+                entry[field] = mapping[field]
+        libraries.setdefault(path, []).append(entry)
+    return {
+        'symbol_lookup_error': 'symbol lookup error' in stderr_text,
+        'undefined_symbol': undefined,
+        'last_exit': exits[-1] if exits else None,
+        'boundary_exit': boundary_exit,
+        'libraries': libraries,
+    }
 
 
 class InterpreterProbe:
@@ -107,8 +149,11 @@ class InterpreterProbe:
         self.signal_handlers = {}
         if self.hook_mode == 'fast':
             self.mu.hook_add(unicorn.UC_HOOK_BLOCK, self._block)
-            for it_addr in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a):
+            for it_addr in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a, 0x4000a6f4,
+                            0x5026ebc4, 0x5026ec26):
                 self.mu.hook_add(unicorn.UC_HOOK_CODE, self._it_workaround, begin=it_addr, end=it_addr)
+            self.mu.hook_add(unicorn.UC_HOOK_CODE, self._ld_fixup_workaround,
+                             begin=0x4000a6f4, end=0x4000a6f4)
         else:
             self.mu.hook_add(unicorn.UC_HOOK_CODE, self._code)
         self.mu.hook_add(unicorn.UC_HOOK_INTR, self._interrupt)
@@ -205,16 +250,17 @@ class InterpreterProbe:
             self.report['assumptions'].append('Linux ARM NPTL multithreading: sys_clone, sys_futex (WAIT/WAKE), sys_gettid, sys_prctl (PR_SET_NAME), sched_setscheduler, sched_setaffinity, and cooperative thread scheduling.')
 
     def prepare(self, application, interpreter, argv, interpreter_bias=0x40000000,
-                stack_bottom=0x7fe00000, stack_size=0x100000):
+                stack_bottom=0x7fe00000, stack_size=0x100000, environment=None):
         if self.prepare_attempted:
             raise ValueError('Use a fresh probe for each preparation attempt')
         self.prepare_attempted = True
         if application['type'] != 'ET_EXEC' or interpreter['type'] != 'ET_DYN':
             raise ValueError('This experiment requires ET_EXEC application and ET_DYN interpreter')
+        environment = list(environment or [])
         app = map_image(self.mu, application, 0)
         linker = map_image(self.mu, interpreter, interpreter_bias)
         self.mu.mem_map(stack_bottom, stack_size, unicorn.UC_PROT_READ | unicorn.UC_PROT_WRITE)
-        stack = build_stack(stack_bottom, stack_size, argv, [], app, interpreter_bias)
+        stack = build_stack(stack_bottom, stack_size, argv, environment, app, interpreter_bias)
         self.mu.mem_write(stack_bottom, stack['data'])
         # Start in user mode, not Unicorn's default privileged context.
         self.mu.reg_write(arm.UC_ARM_REG_CPSR, 0x10)
@@ -268,6 +314,18 @@ class InterpreterProbe:
             if cpsr & ((3 << 25) | (0x3f << 10)):
                 uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr & ~((3 << 25) | (0x3f << 10)))
 
+    def _ld_fixup_workaround(self, uc, address, size, user_data):
+        """Make _dl_fixup's unconditional `mov r4,r0` explicit.
+
+        Unicorn can skip the 16-bit move after a Thumb-2 IT block, leaving
+        r4=1 instead of the link_map and making the lazy lookup search an
+        empty scope.  The original instruction is an unconditional move, so
+        repeating it here is a no-op when Unicorn executes it and repairs the
+        known IT-latch skip otherwise.
+        """
+        if self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
+            uc.reg_write(arm.UC_ARM_REG_R4, uc.reg_read(arm.UC_ARM_REG_R0))
+
     def _block(self, uc, address, size, user_data):
         insn_est = max(1, size // 2)
         self.instructions += insn_est
@@ -286,10 +344,13 @@ class InterpreterProbe:
         self.tail.append((address, size))
         # Workaround for emulator bug where a Thumb-2 IT block with mixed 16/32-bit instructions
         # leaves leftover IT bits in CPSR, corrupting subsequent non-IT instructions.
-        if address in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a) and self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
+        if address in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a, 0x4000a6f4,
+                       0x5026ebc4, 0x5026ec26) and self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
             cpsr = uc.reg_read(arm.UC_ARM_REG_CPSR)
             if cpsr & ((3 << 25) | (0x3f << 10)):
                 uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr & ~((3 << 25) | (0x3f << 10)))
+        if address == 0x4000a6f4 and self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
+            uc.reg_write(arm.UC_ARM_REG_R4, uc.reg_read(arm.UC_ARM_REG_R0))
 
     def _pause_check(self, uc):
         if self._pause_requested and self.report.get('status') == 'running':
@@ -315,6 +376,106 @@ class InterpreterProbe:
             self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._display_write,
                              begin=start, end=end - 1)
             self.display.installed_ranges.append((start, end))
+
+    def _gles_bar_read(self, uc, access, address, size, value, user_data):
+        """Observe-only BAR read counter; never changes execution."""
+        virtual, _length = user_data
+        counts = self.report.setdefault('gles_bar_reads', {})
+        key = str(int(address - virtual))
+        counts[key] = counts.get(key, 0) + 1
+
+    def _gles_bar_write(self, uc, access, address, size, value, user_data):
+        """Observe guest BAR writes and mirror them into the device image."""
+        virtual, _length = user_data
+        offset = int(address - virtual)
+        writes = self.report.setdefault('gles_bar_writes', [])
+        if len(writes) < 4096:
+            writes.append({'offset': offset, 'size': size, 'value': value & 0xffffffff,
+                           'tid': getattr(getattr(self, 'threads', None), 'current_tid', None),
+                           'pc': uc.reg_read(arm.UC_ARM_REG_PC)})
+        bar = getattr(getattr(self, 'gles', None), 'bar', None)
+        if bar is not None and 0 <= offset < len(bar):
+            width = min(size, len(bar) - offset)
+            try:
+                raw = int(value).to_bytes(size, 'little', signed=False)[:width]
+            except OverflowError:
+                return
+            bar[offset:offset + width] = raw
+        gles = getattr(self, 'gles', None)
+        if gles is not None and getattr(gles, 'engine_model', False):
+            if offset in (0x16C, 0x170) and (value & 0xffffffff):
+                if gles.complete_engine_command('bar-write'):
+                    try:
+                        uc.mem_write(virtual + 0x1000, b'\x00\x00\x00\x00')
+                        uc.mem_write(virtual + 0xC18, b'\x00\x00\x00\x00')
+                    except Exception:
+                        pass
+                    woken = []
+                    threads = getattr(self, 'threads', None)
+                    if threads is not None:
+                        for fd, desc in list(getattr(self.filesystem, 'fds', {}).items()):
+                            if desc.get('device') == 'dmpgles2':
+                                woken.extend(threads.handle_fd_wake(fd))
+                    self.report.setdefault('gles_engine_events', []).append({
+                        'offset': offset, 'value': value & 0xffffffff,
+                        'completions': gles.engine_completions, 'woken': sorted(set(woken)),
+                        'instruction': self.instructions})
+            elif offset == 0x34:
+                # guest ack/status write: consume the event word
+                gles.dev_a8 = 0
+            elif offset == 0x1C:
+                gles.dev_a8 &= ~0x04000000
+            elif offset == 0x1000:
+                gles.dev_a8 &= ~0x80000000
+            elif offset == 0xC18:
+                gles.dev_a8 &= ~0x40000000
+
+    def install_gles_bar_hooks(self, virtual, length):
+        if not hasattr(self, '_gles_bar_hook_ranges'):
+            self._gles_bar_hook_ranges = []
+        if (virtual, length) in self._gles_bar_hook_ranges:
+            return
+        self._gles_bar_hook_ranges.append((virtual, length))
+        self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._gles_bar_read,
+                         begin=virtual, end=virtual + length - 1,
+                         user_data=(virtual, length))
+        self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._gles_bar_write,
+                         begin=virtual, end=virtual + length - 1,
+                         user_data=(virtual, length))
+
+    def discover_resumed_gles_bar(self):
+        """Find the resumed dmpgles2 device range and bind it to GuestGles.
+
+        Old checkpoints predate GuestGles.bar_virtual; the mmap bookkeeping
+        still records the device pages, so the BAR VA can be reconstructed
+        without touching guest state.
+        """
+        page_info = getattr(getattr(self, 'mmap', None), 'page_backing', {})
+        pages = sorted(page for page, info in page_info.items()
+                       if info.get('device') == 'dmpgles2')
+        if not pages:
+            return []
+        ranges = []
+        start = previous = pages[0]
+        for page in pages[1:]:
+            if page != previous + 0x1000:
+                ranges.append((start, previous + 0x1000 - start))
+                start = page
+            previous = page
+        ranges.append((start, previous + 0x1000 - start))
+        self.report['gles_bar_resumed_ranges'] = [[virtual, length] for virtual, length in ranges]
+        gles = getattr(self, 'gles', None)
+        if gles is not None and ranges:
+            gles.bar_virtual, length = ranges[0]
+            gles.bar_length = min(length, len(getattr(gles, 'bar', b'\x00' * 0x4000)))
+        return ranges
+
+    def install_resumed_gles_bar_hooks(self):
+        """Install observe-only BAR hooks on a resumed dmpgles2 device range."""
+        ranges = self.discover_resumed_gles_bar()
+        for virtual, length in ranges:
+            self.install_gles_bar_hooks(virtual, length)
+        return ranges
 
     def capture_display(self, key=None):
         """Read one display frame from guest memory; never writes guest state."""
@@ -398,13 +559,48 @@ class InterpreterProbe:
         woken = []
         if getattr(self, 'threads', None) is not None:
             woken = list(self.threads.handle_uipc_wake(queue) or [])
-            if getattr(self.uipc, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300' and self.uipc.callback_ready():
+            if self.uipc.kernel_pool_options and self.uipc.callback_ready():
                 woken.extend(self.threads.handle_uipc_wake(-1) or [])
         entry = {'instruction': self.instructions, 'queue': queue, 'size': len(payload),
                  'sha256': hashlib.sha256(payload).hexdigest(), 'msg_ptr': message,
                  'woken': woken, 'source': source}
         self.report.setdefault('uipc_injection', []).append(entry)
         return entry
+
+    def install_trace_address(self, address, stack_words=16):
+        """Observe-only stop at one guest address and record the last instructions."""
+        records = []
+        self.report['trace_address_config'] = {'address': address, 'observe_only': True}
+
+        def hook(uc, hook_address, size, user_data):
+            sp = uc.reg_read(arm.UC_ARM_REG_SP)
+            try:
+                raw_stack = bytes(uc.mem_read(sp, stack_words * 4))
+            except unicorn.UcError:
+                raw_stack = b''
+            words = list(struct.unpack('<' + 'I' * (len(raw_stack) // 4), raw_stack))
+            record = {
+                'instruction': self.instructions,
+                'address': hook_address,
+                'tid': getattr(self.threads, 'current_tid', None),
+                'registers': {name: uc.reg_read(register) for name, register in
+                              (('r0', arm.UC_ARM_REG_R0), ('r1', arm.UC_ARM_REG_R1),
+                               ('r2', arm.UC_ARM_REG_R2), ('r3', arm.UC_ARM_REG_R3),
+                               ('r4', arm.UC_ARM_REG_R4), ('r5', arm.UC_ARM_REG_R5),
+                               ('r6', arm.UC_ARM_REG_R6), ('r7', arm.UC_ARM_REG_R7),
+                               ('r8', arm.UC_ARM_REG_R8), ('r9', arm.UC_ARM_REG_R9),
+                               ('r10', arm.UC_ARM_REG_R10), ('r11', arm.UC_ARM_REG_R11),
+                               ('r12', arm.UC_ARM_REG_R12), ('sp', arm.UC_ARM_REG_SP),
+                               ('lr', arm.UC_ARM_REG_LR), ('pc', arm.UC_ARM_REG_PC))},
+                'last_instructions': list(self.tail),
+                'stack_words': words,
+            }
+            records.append(record)
+            self.report['trace_address'] = record
+            uc.emu_stop()
+
+        self.mu.hook_add(unicorn.UC_HOOK_CODE, hook, begin=address, end=address + 4)
+        return records
 
     def _interrupt(self, uc, interrupt, user_data):
         pc = uc.reg_read(arm.UC_ARM_REG_PC)
@@ -444,11 +640,143 @@ class InterpreterProbe:
             uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
             return
         if svc and immediate == 0 and self.syscall_policy in ('uipc', 'threads'):
-            if number in (3, 4, 19, 146, 197):
+            if number in (3, 4, 19, 118, 146, 148, 180, 181, 197):
                 stream_fd = uc.reg_read(arm.UC_ARM_REG_R0)
+                if self.filesystem.fds.get(stream_fd, {}).get('device') == 'nflasha4':
+                    policy = getattr(self, 'nflasha4_device_policy', 'stop')
+                    dump = getattr(self, 'nflasha4_dump', None)
+                    if policy == 'observed-dump' and isinstance(dump, Nflasha4Dump):
+                        entry = self.filesystem.fds[stream_fd]
+                        if number == 19:
+                            raw_offset = uc.reg_read(arm.UC_ARM_REG_R1)
+                            offset = raw_offset - 0x100000000 if raw_offset & 0x80000000 else raw_offset
+                            whence = uc.reg_read(arm.UC_ARM_REG_R2)
+                            current = entry.get('offset', 0)
+                            if whence == 0:
+                                new_offset = offset
+                            elif whence == 1:
+                                new_offset = current + offset
+                            elif whence == 2:
+                                new_offset = dump.size + offset
+                            else:
+                                self.report['serviced_syscalls'].append({
+                                    'syscall': 'lseek', 'fd': stream_fd, 'offset': offset,
+                                    'whence': whence, 'returned': -22,
+                                    'path': '/dev/nflasha4', 'policy': 'observed-dump'})
+                                uc.reg_write(arm.UC_ARM_REG_R0, 0xffffffea)
+                                return
+                            if new_offset < 0 or new_offset > 0x7fffffff:
+                                uc.reg_write(arm.UC_ARM_REG_R0, 0xffffffea)
+                                return
+                            entry['offset'] = new_offset
+                            self.report['serviced_syscalls'].append({
+                                'syscall': 'lseek', 'fd': stream_fd, 'offset': offset,
+                                'whence': whence, 'returned': new_offset,
+                                'path': '/dev/nflasha4', 'policy': 'observed-dump'})
+                            self.report['syscall_responses_supplied'] += 1
+                            uc.reg_write(arm.UC_ARM_REG_R0, new_offset)
+                            return
+                        if number == 3:
+                            buf = uc.reg_read(arm.UC_ARM_REG_R1)
+                            count = uc.reg_read(arm.UC_ARM_REG_R2)
+                            offset = entry.get('offset', 0)
+                            try:
+                                data = dump.read(offset, count)
+                            except Nflasha4DumpError as error:
+                                self.report.update(status='unsupported_nflasha4_contract', boundary={
+                                    'reason': str(error), 'fd': stream_fd,
+                                    'path': '/dev/nflasha4', 'offset': offset, 'count': count,
+                                    'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                                uc.emu_stop()
+                                return
+                            try:
+                                if data:
+                                    uc.mem_write(buf, data)
+                                ret = len(data)
+                            except unicorn.UcError:
+                                ret = -14  # -EFAULT: no guest output buffer written.
+                            if ret > 0:
+                                entry['offset'] = offset + ret
+                            self.report['serviced_syscalls'].append({
+                                'syscall': 'read', 'fd': stream_fd, 'offset': offset,
+                                'count': count, 'returned': ret,
+                                'path': '/dev/nflasha4', 'policy': 'observed-dump'})
+                            self.report['syscall_responses_supplied'] += 1
+                            uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                            return
+                        if number in (118, 148):
+                            try:
+                                ret = dump.flush_result(bool(entry.get('dirty')))
+                            except Nflasha4DumpError as error:
+                                self.report.update(status='unsupported_nflasha4_contract', boundary={
+                                    'reason': str(error), 'number': number,
+                                    'fd': stream_fd, 'path': '/dev/nflasha4',
+                                    'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                                uc.emu_stop()
+                                return
+                            self.report['serviced_syscalls'].append({
+                                'syscall': 'fdatasync' if number == 148 else 'fsync',
+                                'fd': stream_fd, 'returned': ret,
+                                'path': '/dev/nflasha4', 'policy': 'observed-dump',
+                                'dirty': bool(entry.get('dirty'))})
+                            self.report['syscall_responses_supplied'] += 1
+                            uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                            return
+                        if number in (4, 146, 180, 181):
+                            self.report.update(status='unsupported_nflasha4_contract', boundary={
+                                'reason': 'nflasha4_write_not_supplied', 'number': number,
+                                'fd': stream_fd, 'path': '/dev/nflasha4',
+                                'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                            uc.emu_stop()
+                            return
+                        self.report.update(status='unsupported_nflasha4_contract', boundary={
+                            'reason': 'nflasha4_file_operation_not_supplied',
+                            'number': number, 'fd': stream_fd, 'path': '/dev/nflasha4',
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    if number == 19:
+                        raw_offset = uc.reg_read(arm.UC_ARM_REG_R1)
+                        offset = raw_offset - 0x100000000 if raw_offset & 0x80000000 else raw_offset
+                        whence = uc.reg_read(arm.UC_ARM_REG_R2)
+                        entry = self.filesystem.fds[stream_fd]
+                        current = entry.get('offset', 0)
+                        if whence == 0:
+                            new_offset = offset
+                        elif whence in (1, 2):
+                            new_offset = current + offset
+                        else:
+                            self.report['serviced_syscalls'].append({
+                                'syscall': 'lseek', 'fd': stream_fd, 'offset': offset,
+                                'whence': whence, 'returned': -22,
+                                'path': '/dev/nflasha4', 'policy': 'position-only observation'})
+                            uc.reg_write(arm.UC_ARM_REG_R0, 0xffffffea)
+                            return
+                        if new_offset < 0 or new_offset > 0x7fffffff:
+                            uc.reg_write(arm.UC_ARM_REG_R0, 0xffffffea)
+                            return
+                        entry['offset'] = new_offset
+                        self.report['serviced_syscalls'].append({
+                            'syscall': 'lseek', 'fd': stream_fd, 'offset': offset,
+                            'whence': whence, 'returned': new_offset,
+                            'path': '/dev/nflasha4', 'policy': 'position-only observation'})
+                        self.report['syscall_responses_supplied'] += 1
+                        uc.reg_write(arm.UC_ARM_REG_R0, new_offset)
+                        return
+                    self.report.update(status='unsupported_nflasha4_contract', boundary={
+                        'reason': 'nflasha4_file_operation_not_supplied',
+                        'number': number, 'fd': stream_fd, 'path': '/dev/nflasha4',
+                        'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                    uc.emu_stop()
+                    return
                 if self.filesystem.fds.get(stream_fd, {}).get('device') == 'stream':
                     self._stream_boundary(UnsupportedStream('stream_file_operation_not_supported',
                                                            number=number, fd=stream_fd), pc, number)
+                    return
+                if self.filesystem.fds.get(stream_fd, {}).get('device') == 'stream2':
+                    self._stream_boundary(UnsupportedStream('stream2_file_operation_not_supported',
+                                                           number=number, fd=stream_fd,
+                                                           device='/dev/stream2'), pc, number)
                     return
             if number == 3:  # sys_read on device fds
                 fd = uc.reg_read(arm.UC_ARM_REG_R0)
@@ -713,6 +1041,34 @@ class InterpreterProbe:
                              'flags': flags, 'device_number': [self.gles.major, self.gles.minor],
                              'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                     self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if (preview.get('status') == 'terminated' and preview.get('value') == '/dev/usb/kikilog'
+                        and getattr(self, 'kikilog', None) is not None):
+                    node = self.filesystem.nodes.get('/dev/usb/kikilog', {})
+                    if (node.get('kind') != 'special' or node.get('mode', 0) & 0xf000 != 0x2000
+                            or node.get('stat_metadata', {}).get('device_number') != {'major': 248, 'minor': 10}):
+                        self.report.update(status='unsupported_kikilog_contract', boundary={
+                            'reason': 'kikilog_image_node_identity_mismatch', 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
+                    try:
+                        owner = None if fd is None else self.kikilog.open(flags, self.threads.current_tid,
+                                                                         self.threads.process_id)
+                    except UnsupportedKikilog as error:
+                        self.report.update(status='unsupported_kikilog_contract', boundary={
+                            **error.details, 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    if fd is not None:
+                        self.filesystem.fds[fd] = {'path': '/dev/usb/kikilog', 'device': 'kikilog',
+                                                   'owner_id': owner, 'flags': flags, 'device_number': [248, 10]}
+                    ret = fd if fd is not None else (-24) & 0xffffffff
+                    self.report['serviced_syscalls'].append({'syscall': 'open', 'r7': 5, 'fd': fd,
+                        'path': '/dev/usb/kikilog', 'flags': flags, 'returned': ret, 'pc': pc,
+                        'instruction_address': pc - size, 'thumb': thumb, 'source': self.kikilog.source_sha256})
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
@@ -1077,6 +1433,81 @@ class InterpreterProbe:
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
+                if (preview.get('value') == '/dev/stream2'
+                        and getattr(self, 'stream2_device_policy', 'stop') == 'open-only'):
+                    try:
+                        self.filesystem._path(path_ptr)  # Bounds and provenance.
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    if flags not in (0x1002, 0x21002):
+                        self._stream_boundary(UnsupportedStream(
+                            'stream2_open_flags_not_supported', flags=flags,
+                            device='/dev/stream2'), pc, number)
+                        return
+                    fd = next((candidate for candidate in range(3, 259)
+                               if candidate not in self.filesystem.fds), None)
+                    if fd is None:
+                        ret = 0xffffffe8  # -EMFILE
+                    else:
+                        ret = fd
+                        self.filesystem.fds[fd] = {
+                            'path': '/dev/stream2', 'device': 'stream2', 'flags': flags,
+                            'device_number': [249, 8], 'offset': 0}
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/stream2', 'fd': fd,
+                             'returned': ret, 'flags': flags, 'device_number': [249, 8],
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb,
+                             'policy': 'open-only; ioctl/mmap remains a boundary'}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if (preview.get('value') == '/dev/nflasha4'
+                        and getattr(self, 'nflasha4_device_policy', 'stop') in ('open-only', 'observed-dump')):
+                    try:
+                        self.filesystem._path(path_ptr)  # Bounds and provenance.
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    policy = getattr(self, 'nflasha4_device_policy', 'stop')
+                    if policy == 'observed-dump' and getattr(self, 'nflasha4_dump', None) is None:
+                        self.report.update(status='unsupported_nflasha4_contract', boundary={
+                            'reason': 'nflasha4_dump_identity_missing', 'path': '/dev/nflasha4',
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    if flags != 2:
+                        self.report.update(status='unsupported_nflasha4_contract', boundary={
+                            'reason': 'nflasha4_open_flags_not_supported', 'path': '/dev/nflasha4',
+                            'flags': flags, 'pc': pc, 'r7': number,
+                            'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    node = getattr(self.filesystem, 'nodes', {}).get('/dev/nflasha4', {})
+                    metadata = node.get('stat_metadata') or {}
+                    device_number = metadata.get('device_number')
+                    if isinstance(device_number, dict):
+                        device_number = [device_number.get('major'), device_number.get('minor')]
+                    fd = next((candidate for candidate in range(3, 259)
+                               if candidate not in self.filesystem.fds), None)
+                    if fd is None:
+                        ret = 0xffffffe8  # -EMFILE
+                    else:
+                        ret = fd
+                        self.filesystem.fds[fd] = {
+                            'path': '/dev/nflasha4', 'device': 'nflasha4', 'flags': flags,
+                            'device_number': device_number, 'offset': 0, 'dirty': False}
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/nflasha4', 'fd': fd,
+                             'returned': ret, 'flags': flags, 'device_number': device_number,
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb,
+                             'policy': ('observed-dump: reads served from the captured MPR image; '
+                                        'only ioctl 0x80014123 answered; writes/mmap/other ioctls remain boundaries'
+                                        if policy == 'observed-dump' else
+                                        'open-only; internal flash data/ioctl/mmap remains a boundary')}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
                 if preview.get('status') == 'terminated' and preview.get('value') == '/dev/uipc':
                     fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
                     self.filesystem.fds[fd] = {'path': '/dev/uipc', 'device': 'uipc', 'flags': flags, 'data': b''}
@@ -1110,13 +1541,43 @@ class InterpreterProbe:
                 fd = uc.reg_read(arm.UC_ARM_REG_R0)
                 cmd = uc.reg_read(arm.UC_ARM_REG_R1)
                 arg = uc.reg_read(arm.UC_ARM_REG_R2)
+                if self.filesystem.fds.get(fd, {}).get('device') == 'kikilog':
+                    try:
+                        ret = self.kikilog.ioctl(self.filesystem.fds[fd]['owner_id'], cmd, arg)
+                    except UnsupportedKikilog as error:
+                        self.report.update(status='unsupported_kikilog_contract', boundary={
+                            **error.details, 'fd': fd, 'pc': pc, 'r7': number,
+                            'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    self.report['serviced_syscalls'].append({'syscall': 'ioctl', 'r7': 54,
+                        'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret, 'pc': pc,
+                        'instruction_address': pc - size, 'thumb': thumb, 'device': 'kikilog',
+                        'policy': self.kikilog.policy})
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff)
+                    return
+                if (getattr(getattr(self, 'uipc', None), 'pool_options_policy', '') == 'kernel-e0301'
+                        and self.filesystem.fds.get(fd, {}).get('device') == 'urandom' and cmd == 0x5401):
+                    # E0301: urandom_fops+0x20 -> original random_ioctl;
+                    # ARM execution of TCGETS returns -EINVAL, no output copy.
+                    ret = (-22) & 0xffffffff
+                    self.report['serviced_syscalls'].append({
+                        'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg,
+                        'returned': ret, 'pc': pc, 'instruction_address': pc - size,
+                        'thumb': thumb, 'device': 'urandom', 'source': 'original-kernel-e0301'})
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'dmpgles2':
                     owner_id = self.filesystem.fds[fd].get('owner_id')
                     try:
                         ret = self.gles.ioctl(
                             owner_id, cmd, arg,
                             lambda addr, sz: bytes(uc.mem_read(addr, sz)),
-                            lambda addr, data: uc.mem_write(addr, data)
+                            lambda addr, data: uc.mem_write(addr, data),
+                            tid=(self.threads.current_tid
+                                 if getattr(self, 'threads', None) is not None else None),
                         )
                     except UnsupportedGles as error:
                         self.report.update(status='unsupported_gles_contract', boundary={
@@ -1124,8 +1585,42 @@ class InterpreterProbe:
                             'pc': pc, 'r7': number, 'instruction_address': pc - size})
                         uc.emu_stop()
                         return
+                    event_pending = (cmd == 0xC0048203
+                                     and getattr(self.gles, 'decoded_semantics', False)
+                                     and getattr(self.gles, 'engine_model', False))
+                    if (ret is None and (cmd == 0xC004820D or event_pending)
+                            and getattr(self, 'threads', None) is not None):
+                        # Kernel wait: completion wait 0xC004820D or event wait
+                        # 0xC0048203 (handler 0xAD0 on dev+0x4C). Park the caller
+                        # and retry after the corresponding wake; no fabricated
+                        # timeout or status is injected.
+                        self.threads.save_context(uc)
+                        current = self.threads.threads[self.threads.current_tid]
+                        current.regs[arm.UC_ARM_REG_PC] = pc - size
+                        wait_op = 'gles_event' if event_pending else 'gles_wait'
+                        next_tid, wait_event = self.threads.handle_fd_wait(fd, wait_op, pc - size)
+                        reason = ('gles_event_wait_blocked' if event_pending
+                                  else 'gles_wait_completion_blocked')
+                        event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg,
+                                 'returned': None, 'pc': pc, 'instruction_address': pc - size,
+                                 'thumb': thumb, 'device': 'dmpgles2',
+                                 'reason': reason, **wait_event}
+                        self.report['serviced_syscalls'].append(event)
+                        self.report['syscall_responses_supplied'] += 1
+                        if next_tid is not None:
+                            self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+                        else:
+                            self.report.update(status='blocked_gles_wait', boundary=dict(event))
+                            uc.reg_write(arm.UC_ARM_REG_PC, (pc - size) | int(thumb))
+                            uc.emu_stop()
+                        return
                     event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
                              'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'device': 'dmpgles2'}
+                    if (cmd == 0xC004820E and getattr(self.gles, 'decoded_semantics', False)
+                            and getattr(self, 'threads', None) is not None):
+                        woken = self.threads.handle_fd_wake(fd)
+                        if woken:
+                            event['woken_tids'] = woken
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
@@ -1276,6 +1771,52 @@ class InterpreterProbe:
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'nflasha4':
+                    policy = getattr(self, 'nflasha4_device_policy', 'stop')
+                    dump = getattr(self, 'nflasha4_dump', None)
+                    if policy == 'observed-dump' and isinstance(dump, Nflasha4Dump):
+                        try:
+                            erased = dump.ioctl_erased_state(cmd)
+                        except Nflasha4DumpError as error:
+                            self.report.update(status='unsupported_nflasha4_contract', boundary={
+                                'reason': str(error), 'cmd': cmd, 'arg': arg,
+                                'fd': fd, 'path': '/dev/nflasha4', 'pc': pc, 'r7': number,
+                                'instruction_address': pc - size})
+                            uc.emu_stop()
+                            return
+                        try:
+                            uc.mem_write(arg, bytes([erased]))
+                            ret = 0  # __put_user_1 success
+                        except unicorn.UcError:
+                            ret = -14  # -EFAULT from __put_user_1; no output written.
+                        self.report['serviced_syscalls'].append({
+                            'syscall': 'ioctl', 'fd': fd, 'cmd': cmd, 'arg': arg,
+                            'returned': ret, 'device': 'nflasha4',
+                            'path': '/dev/nflasha4', 'policy': 'observed-dump',
+                            'erased_state_byte': erased if ret == 0 else None,
+                            'pc': pc, 'instruction_address': pc - size, 'thumb': thumb})
+                        self.report['syscall_responses_supplied'] += 1
+                        uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                        return
+                    try:
+                        observation = bytes(uc.mem_read(arg, 4)).hex()
+                    except unicorn.UcError:
+                        observation = None
+                    self.report.update(status='unsupported_nflasha4_contract', boundary={
+                        'reason': 'nflasha4_ioctl_not_supplied', 'cmd': cmd, 'arg': arg,
+                        'fd': fd, 'path': '/dev/nflasha4', 'pc': pc, 'r7': number,
+                        'instruction_address': pc - size,
+                        'buffer_hex': observation,
+                        'lr': uc.reg_read(arm.UC_ARM_REG_LR),
+                        'sp': uc.reg_read(arm.UC_ARM_REG_SP),
+                        'guest_tid': self.threads.current_tid if hasattr(self, 'threads') else None})
+                    uc.emu_stop()
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'stream2':
+                    self._stream_boundary(UnsupportedStream(
+                        'stream2_ioctl_not_supplied', cmd=cmd, arg=arg,
+                        device='/dev/stream2'), pc, number)
+                    return
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'stream':
                     try:
                         ret = self.stream.ioctl(cmd, arg)
@@ -1303,9 +1844,11 @@ class InterpreterProbe:
                             **error.details, 'pc': pc, 'r7': number, 'cmd': cmd, 'arg': arg})
                         uc.emu_stop()
                         return
-                    if ret is None and cmd in (0x80000007, 0x8000000d) and self.syscall_policy == 'threads' and (cmd == 0x80000007 or getattr(self.uipc, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300'):
+                    if ret is None and cmd in (0x80000007, 0x8000000d) and self.syscall_policy == 'threads' and (cmd == 0x80000007 or self.uipc.kernel_pool_options):
                         if cmd == 0x8000000d:
                             queue = -1  # Internal scheduler key for callback waiters.
+                        else:
+                            self.report['uipc_rcv_timeout_policy'] = 'block_until_message_no_virtual_deadline'
                         self.threads.save_context(uc)
                         self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
                         next_tid, event = self.threads.handle_uipc_wait(queue, pc - size)
@@ -1317,6 +1860,7 @@ class InterpreterProbe:
                             self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
                         else:
                             self.report.update(status='blocked_uipc', boundary=event)
+                            uc.reg_write(arm.UC_ARM_REG_PC, (pc - size) | int(thumb))
                             uc.emu_stop()
                         return
                     if ret is not None:
@@ -1326,8 +1870,11 @@ class InterpreterProbe:
                             woken = []
                             if cmd == 0x80000004:
                                 woken.extend(self.threads.handle_uipc_wake(queue))
-                                if getattr(self.uipc, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300' and self.uipc.callback_ready():
+                                if self.uipc.kernel_pool_options and self.uipc.callback_ready():
                                     woken.extend(self.threads.handle_uipc_wake(-1))
+                            elif (cmd == 0x80000008 and getattr(self.uipc, 'pool_options_policy', '') == 'kernel-e0301'
+                                  and self.uipc.callback_ready()):
+                                woken.extend(self.threads.handle_uipc_wake(-1))
                             # A service may enqueue a completion on a different
                             # reply queue during this ioctl. Wake its receivers
                             # only when an actual message is available.
@@ -1382,6 +1929,20 @@ class InterpreterProbe:
                 return
             if number == 192:  # mmap2 on /dev/uipc or /dev/fb0
                 fd = uc.reg_read(arm.UC_ARM_REG_R4)
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'nflasha4':
+                    self.report.update(status='unsupported_nflasha4_contract', boundary={
+                        'reason': 'nflasha4_mmap_not_supplied', 'fd': fd,
+                        'path': '/dev/nflasha4', 'pc': pc, 'r7': number,
+                        'instruction_address': pc - size,
+                        'arguments': [uc.reg_read(r) for r in (
+                            arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2,
+                            arm.UC_ARM_REG_R3, arm.UC_ARM_REG_R4, arm.UC_ARM_REG_R5)]})
+                    uc.emu_stop()
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'stream2':
+                    self._stream_boundary(UnsupportedStream(
+                        'stream2_mmap_not_supplied', device='/dev/stream2'), pc, number)
+                    return
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'stream':
                     args = [uc.reg_read(r) for r in (arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1,
                             arm.UC_ARM_REG_R2, arm.UC_ARM_REG_R3, arm.UC_ARM_REG_R4, arm.UC_ARM_REG_R5)]
@@ -1472,6 +2033,15 @@ class InterpreterProbe:
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
+                    if (0 <= event['returned'] < 0x80000000
+                            and getattr(self.gles, 'bar_virtual', None) == event['returned']):
+                        # Seed the observed BAR identity word and, when requested,
+                        # install observe-only access hooks for the resumed replay.
+                        seed = bytes(self.gles.bar[:max(0, int(self.gles.bar_length))])
+                        if seed:
+                            uc.mem_write(event['returned'], seed)
+                        if getattr(self, 'gles_bar_trace', False) and self.gles.bar_length > 0:
+                            self.install_gles_bar_hooks(event['returned'], self.gles.bar_length)
                     return
         if svc and immediate == 0 and self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
             if number == 125 and hasattr(self, 'stream') and self.stream.mapping:
@@ -1540,7 +2110,7 @@ class InterpreterProbe:
                 self.report['syscall_responses_supplied'] += 1
                 uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
                 return
-        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 19, 33, 39, 195, 197) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 19, 33, 39, 195)):
+        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 19, 33, 39, 195, 197, 217) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 19, 33, 39, 195, 217)):
             args = [uc.reg_read(r) for r in (arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2)]
             try:
                 event = self.filesystem.request(number, args)
@@ -1675,7 +2245,7 @@ class InterpreterProbe:
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
                 return
-            if number in (159, 160) and getattr(self.uipc, 'pool_options_policy', 'legacy-empty') == 'kernel-e0300':
+            if number in (159, 160) and self.uipc.kernel_pool_options:
                 # E0300: original kernel functions and tables at 0x603c9a44/5c.
                 policy = uc.reg_read(arm.UC_ARM_REG_R0)
                 values = (0, 159, 159, 0, -22, 0) if number == 159 else (0, 1, 1, 0, -22, 0)
@@ -1834,6 +2404,8 @@ class InterpreterProbe:
                     entry = self.filesystem.fds.pop(fd)
                     if entry.get('device') == 'gpio' and hasattr(self, 'gpio') and self.gpio:
                         self.gpio.close(entry.get('owner_id'))
+                    if entry.get('device') == 'kikilog' and getattr(self, 'kikilog', None) is not None:
+                        self.kikilog.close(entry.get('owner_id'))
                     if entry.get('device') == 'usb_buspower' and hasattr(self, 'usb_buspower') and self.usb_buspower:
                         self.usb_buspower.close(entry.get('owner_id'))
                     if entry.get('device') == 'usb_event' and hasattr(self, 'usb_event') and self.usb_event:
@@ -2037,6 +2609,38 @@ class InterpreterProbe:
                 event = {'syscall': 'nanosleep', 'r7': 162, 'tv_sec': tv_sec, 'tv_nsec': tv_nsec,
                          'returned': ret, 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 if self.syscall_policy == 'threads' and hasattr(self, 'threads'):
+                    if getattr(self, 'thread_sleep_policy', 'immediate') == 'block':
+                        # Opt-in: no virtual clock exists, so a requested long sleep
+                        # parks the caller instead of returning at once. Short sleeps
+                        # are polling hints (e.g. the RM batch executor's 1 ms retry)
+                        # and stay immediate, otherwise the emulator parks the very
+                        # thread that has to make progress (E0355/E0353). The
+                        # threshold and the no-deadline record are explicit.
+                        duration_ns = tv_sec * 1_000_000_000 + tv_nsec
+                        threshold_ns = getattr(self, 'thread_sleep_block_threshold_ns',
+                                               100_000_000)
+                        if duration_ns >= threshold_ns:
+                            current_tid = self.threads.current_tid
+                            self.threads.save_context(uc)
+                            current = self.threads.threads[current_tid]
+                            current.state = 'blocked_sleep'
+                            current.blocked_uaddr = None
+                            current.regs[arm.UC_ARM_REG_PC] = pc - size
+                            current.regs[arm.UC_ARM_REG_R0] = 0
+                            next_tid = self.threads.get_next_runnable_tid()
+                            event.update(blocked_tid=current_tid,
+                                         reason='nanosleep_no_virtual_deadline')
+                            if next_tid is not None:
+                                event['switched_to'] = next_tid
+                                self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+                            else:
+                                self.report.update(status='blocked_sleep', boundary=dict(event))
+                                uc.reg_write(arm.UC_ARM_REG_PC, (pc - size) | int(thumb))
+                                uc.emu_stop()
+                            self.report['serviced_syscalls'].append(event)
+                            self.report['syscall_responses_supplied'] += 1
+                            return
+                        event['reason'] = 'short_sleep_immediate'
                     next_tid = self.threads.get_next_runnable_tid()
                     if next_tid is not None:
                         event['switched_to'] = next_tid
@@ -2076,6 +2680,12 @@ class InterpreterProbe:
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
                 return
+        if svc and immediate == 0 and number == 21 and getattr(self, 'mount_service_policy', 'stop') == 'observed-nflasha1':
+            self._serve_observed_mount(uc, pc, size, thumb)
+            return
+        if svc and immediate == 0 and number == 52 and getattr(self, 'mount_service_policy', 'stop') == 'observed-nflasha1':
+            self._serve_observed_umount(uc, pc, size, thumb)
+            return
         self.report.update(status='syscall_boundary' if svc and immediate == 0 else 'unsupported_exception',
                            boundary={'interrupt': interrupt, 'pc': pc, 'instruction_address': pc - size,
                                      'instruction_bytes': raw.hex(), 'thumb': thumb,
@@ -2089,6 +2699,93 @@ class InterpreterProbe:
         if svc and immediate == 0 and uc.reg_read(arm.UC_ARM_REG_R7) == 128:
             self.report['boundary']['uargs_preview'] = cstring_preview(uc, uc.reg_read(arm.UC_ARM_REG_R2))
         uc.emu_stop()
+
+    def _serve_observed_mount(self, uc, pc, size, thumb):
+        """Serve only the observed read-only vfat mount of /dev/nflasha1 at /mnt.
+
+        Arguments are compared with the E0307 boundary (source/target/fstype/
+        flags/data). On a match the hash-checked nflasha1 vfat image is
+        materialised read-only; any other mount is an explicit boundary.
+        """
+        filesystem = self.filesystem
+
+        def guest_string(pointer, *, absolute=False):
+            if not pointer:
+                return None
+            preview = cstring_preview(uc, pointer)
+            if preview.get('status') != 'terminated':
+                return None
+            value = preview.get('value', '')
+            if absolute and not value.startswith('/'):
+                return None
+            return value
+
+        source = guest_string(uc.reg_read(arm.UC_ARM_REG_R0), absolute=True)
+        target = guest_string(uc.reg_read(arm.UC_ARM_REG_R1), absolute=True)
+        fstype = guest_string(uc.reg_read(arm.UC_ARM_REG_R2))
+        flags = uc.reg_read(arm.UC_ARM_REG_R3)
+        data = guest_string(uc.reg_read(arm.UC_ARM_REG_R4))
+        event = {'syscall': 'mount', 'r7': 21, 'source': source, 'target': target,
+                 'fstype': fstype, 'flags': flags, 'data': data,
+                 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb,
+                 'policy': 'observed-nflasha1'}
+        image = getattr(self, 'vfat_image', None)
+        if image is None:
+            self.report.update(status='unsupported_mount_contract', boundary={
+                **event, 'reason': 'mount_image_identity_missing'})
+            uc.emu_stop()
+            return
+        observed = {'source': '/dev/nflasha1', 'target': '/mnt', 'fstype': 'vfat',
+                    'flags': 3236757505, 'data': 'posix_attr'}
+        if {'source': source, 'target': target, 'fstype': fstype,
+                'flags': flags, 'data': data} != observed:
+            self.report.update(status='unsupported_mount_contract', boundary={
+                **event, 'observed': observed, 'reason': 'mount_arguments_not_observed'})
+            uc.emu_stop()
+            return
+        try:
+            mounted = filesystem.mount_vfat(target, image)
+        except UnsupportedFilesystem as error:
+            self.report.update(status='unsupported_mount_contract', boundary={
+                **event, 'reason': str(error), **error.details})
+            uc.emu_stop()
+            return
+        event.update(returned=0, reason='observed_nflasha1_vfat_read_only',
+                     mounted=mounted, image_sha256=image.image_sha256)
+        self.report.setdefault('mounts', []).append(event)
+        self.report['serviced_syscalls'].append(event)
+        self.report['syscall_responses_supplied'] += 1
+        uc.reg_write(arm.UC_ARM_REG_R0, 0)
+
+    def _serve_observed_umount(self, uc, pc, size, thumb):
+        """Serve only the observed read-only unmount of /mnt (flags 0)."""
+        filesystem = self.filesystem
+        target_pointer = uc.reg_read(arm.UC_ARM_REG_R0)
+        preview = cstring_preview(uc, target_pointer) if target_pointer else {'status': 'unreadable'}
+        target = preview.get('value') if preview.get('status') == 'terminated' else None
+        flags = uc.reg_read(arm.UC_ARM_REG_R1)
+        event = {'syscall': 'umount2', 'r7': 52, 'target': target, 'flags': flags,
+                 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb,
+                 'policy': 'observed-nflasha1'}
+        if target != '/mnt' or flags != 0:
+            self.report.update(status='unsupported_mount_contract', boundary={
+                **event, 'observed': {'target': '/mnt', 'flags': 0},
+                'reason': 'umount_arguments_not_observed'})
+            uc.emu_stop()
+            return
+        try:
+            unmounted = filesystem.umount_vfat(target)
+        except UnsupportedFilesystem as error:
+            self.report.update(status='unsupported_mount_contract', boundary={
+                **event, 'reason': str(error), **error.details})
+            uc.emu_stop()
+            return
+        event.update(returned=0, reason='observed_nflasha1_vfat_read_only_unmounted',
+                     unmounted=unmounted)
+        self.report.setdefault('mounts', []).append(event)
+        self.report['serviced_syscalls'].append(event)
+        self.report['syscall_responses_supplied'] += 1
+        uc.reg_write(arm.UC_ARM_REG_R0, 0)
 
     def _memory(self, uc, access, address, size, value, user_data):
         if getattr(self, 'null_page_policy', None) == 'read-zero' and 0 <= address < 4096:
@@ -2201,6 +2898,16 @@ class InterpreterProbe:
         self._slices_executed = 0
         self.report.update(status='running', instruction_budget=instruction_budget, timeout_us=timeout_us,
                            madvise_policy=self.madvise_policy)
+        threads = getattr(self, 'threads', None)
+        if threads is not None and threads.threads[threads.current_tid].state.startswith('blocked_'):
+            next_tid = threads.get_next_runnable_tid()
+            if next_tid is None:
+                self.report.update(status='blocked_threads', boundary={'reason': 'no_runnable_guest_thread'})
+                return self
+            threads.restore_context(self.mu, next_tid, getattr(self, 'kuser', None))
+            self.entry = self.mu.reg_read(arm.UC_ARM_REG_PC)
+            if self.mu.reg_read(arm.UC_ARM_REG_CPSR) & 0x20:
+                self.entry |= 1
         self._maybe_inject_usb_connect()
         return self
 
@@ -2252,6 +2959,8 @@ class InterpreterProbe:
 
     def run(self, instruction_budget=100000, timeout_us=2000000):
         self.begin(instruction_budget, timeout_us)
+        if self.report['status'] == 'blocked_threads':
+            return self.finish()
         budget_remaining = instruction_budget - self.instructions if instruction_budget > self.instructions else instruction_budget
         self.run_slice(budget_remaining, timeout_us)
         if self.hook_mode == 'fast' and self.report.get('status') in ('running', 'instruction_budget_exhausted'):
@@ -2294,11 +3003,16 @@ class InterpreterProbe:
                 'transactions': self.uipc.transactions
             }
         if hasattr(self, 'stdio'):
+            stderr_text = b''.join(self.stdio.stderr_log).decode('latin1', errors='replace')
             self.report['stdio'] = {
                 'stdout_chunks': len(self.stdio.stdout_log),
                 'stderr_chunks': len(self.stdio.stderr_log),
-                'stdout_preview': b''.join(self.stdio.stdout_log).decode('latin1', errors='replace')[:256]
+                'stdout_preview': b''.join(self.stdio.stdout_log).decode('latin1', errors='replace')[:256],
+                'stderr_preview': stderr_text[:1024]
             }
+            self.report['loader_stop'] = summarize_loader_stop(
+                self.report.get('serviced_syscalls', []), stderr_text,
+                self.report.get('boundary'))
         if hasattr(self, 'threads'):
             self.report['thread_group_id'] = self.threads.process_id
             self.report['threads'] = {str(tid): t.to_dict() for tid, t in self.threads.threads.items()}
@@ -2316,6 +3030,10 @@ class InterpreterProbe:
             }
         if hasattr(self, 'stream'):
             self.report['stream'] = self.stream.report()
+        if getattr(self, 'kikilog', None) is not None:
+            self.report['kikilog'] = {'policy': self.kikilog.policy,
+                                      'source_sha256': self.kikilog.source_sha256,
+                                      'transactions': self.kikilog.transactions}
         if self.display is not None:
             self.report['display'] = self.display.report()
         return self.report

@@ -1,5 +1,6 @@
 """Unit tests for authentic Graphics Resource Manager (GRM-MA) service contract."""
 
+import pickle
 import struct
 import unittest
 
@@ -15,8 +16,11 @@ from src.a6400.execution.grm_service import (
     GrmMaService,
     MA_ERR_NONE,
     MA_ERR_NOT_FOUND,
+    OSD_POOL_PHYS_BASES,
     POOL_POLICY_CAPTURED_E0044,
     POOL_POLICY_GL_COMMON_ONLY,
+    TELEMETRY_E0302,
+    TELEMETRY_OFF,
 )
 from src.a6400.execution.guest_uipc import (
     GuestUipc,
@@ -59,6 +63,29 @@ def _close_request() -> bytes:
     request = bytearray(64)
     struct.pack_into('<H', request, 0, 2)
     return bytes(request)
+
+
+def _dmm_request(unit: int, reply_queue: int, req_id: int = 0, opcode: int = 1) -> bytes:
+    """Asynchronous DMM request: opcode+0, unit+4, reply_queue+16, req_id+20."""
+    request = bytearray(32)
+    struct.pack_into('<HHI', request, 0, opcode, 0, unit)
+    struct.pack_into('<IH', request, 16, reply_queue, req_id)
+    return bytes(request)
+
+
+class _FakeUipc:
+    """Minimal UIPC pool used by the asynchronous DMM handler."""
+
+    def __init__(self, reply_ptr: int = 0xA000):
+        self.allocated_msgs = {}
+        self.reply_ptr = reply_ptr
+        self.replies = []
+
+    def allocate_message(self, size: int = 32) -> int:
+        return self.reply_ptr
+
+    def enqueue_message(self, queue: int, message: int) -> None:
+        self.replies.append((queue, message))
 
 
 class _WriteRecorder:
@@ -613,6 +640,390 @@ class TestGrmMaMessageFraming(unittest.TestCase):
                 replies[policy] = self._run(GrmMaService(pool_policy=policy), request)
             self.assertEqual(replies[POOL_POLICY_GL_COMMON_ONLY],
                              replies[POOL_POLICY_CAPTURED_E0044])
+
+
+class TestGrmMaTelemetry(unittest.TestCase):
+    """Opt-in e0302-grm synchronous request telemetry."""
+
+    def setUp(self):
+        self.memory = {}
+        self.msg_ptr = 0x6000
+        self.service = GrmMaService(pool_policy=POOL_POLICY_CAPTURED_E0044,
+                                    telemetry_policy=TELEMETRY_E0302)
+
+    def _reader(self, addr: int, size: int) -> bytes:
+        return bytes(self.memory.get(addr + i, 0) for i in range(size))
+
+    def _writer(self, addr: int, data: bytes):
+        for i, b in enumerate(data):
+            self.memory[addr + i] = b
+
+    def _send(self, request: bytes) -> int:
+        self._writer(self.msg_ptr, request)
+        return self.service.handle_uipc_sync_message(self._reader, self._writer, self.msg_ptr, 64)
+
+    def test_telemetry_default_is_off_and_adds_nothing(self):
+        service = GrmMaService(pool_policy=POOL_POLICY_CAPTURED_E0044)
+        self.assertEqual(service.telemetry_policy, TELEMETRY_OFF)
+        self.assertEqual(service.telemetry, [])
+        self.assertEqual(service.telemetry_report()['request_count'], 0)
+        self._writer(self.msg_ptr, _lookup_request('gl_common'))
+        service.handle_uipc_sync_message(self._reader, self._writer, self.msg_ptr, 64)
+        self.assertNotIn('telemetry', service.events[-1])
+        with self.assertRaises(ValueError):
+            GrmMaService(telemetry_policy='unknown')
+
+    def test_lookup_records_osd_empty_pool_selection(self):
+        self._send(_lookup_request('empty'))
+        record = self.service.telemetry[-1]
+        self.assertEqual(record['transport'], 'sync')
+        self.assertEqual(record['opcode'], 7)
+        self.assertEqual(record['action'], 'ma_findbyname_impl')
+        self.assertEqual(record['request'],
+                         {'unit': None, 'name': 'empty', 'handle': None, 'size': None})
+        self.assertEqual(record['result'], 'served')
+        self.assertIsNone(record['error'])
+        self.assertEqual(record['selection']['pool_name'], 'empty')
+        self.assertEqual(record['selection']['phys_base'], 0x23B16000)
+        self.assertEqual(record['selection']['pool_size'], 0x96000)
+        self.assertEqual(record['selection']['handle'], 0x60B7F2A0)
+        self.assertTrue(record['osd_pool'])
+        self.assertIn(0x23B16000, OSD_POOL_PHYS_BASES)
+        self.assertEqual(record['provenance'], 'captured-e0044-name-table-first-match')
+        self.assertEqual(self.service.events[-1]['telemetry'], record)
+        self.assertEqual(bytes.fromhex(record['request_hex']), _lookup_request('empty')[:24])
+
+    def test_open_records_selected_pool_and_unknown_unit_boundary(self):
+        self._send(_open_request(GRM_UNIT_GL_COMMON))
+        served = self.service.telemetry[-1]
+        self.assertEqual(served['request']['unit'], 0x0280)
+        self.assertEqual(served['request']['name'], 'gl_common')
+        self.assertEqual(served['selection']['pool_name'], 'gl_common')
+        self.assertEqual(served['selection']['phys_base'], 0x202E0000)
+        self.assertEqual(served['selection']['handle'], 0x68A96220)
+        self.assertFalse(served['osd_pool'])
+        self.assertEqual(served['provenance'], 'captured-e0044-unit-0x0280')
+
+        self._send(_open_request(0x0281))
+        rejected = self.service.telemetry[-1]
+        self.assertEqual(rejected['result'], 'error')
+        self.assertEqual(rejected['error'], 'unit_not_mapped_by_captured_e0044_policy')
+        self.assertTrue(rejected['unsupported'])
+        self.assertEqual(rejected['request']['unit'], 0x0281)
+        self.assertIsNone(rejected['selection']['pool_name'])
+        self.assertEqual(self.service.events[-1]['telemetry'], rejected)
+
+    def test_unknown_name_and_handle_are_recorded_exactly(self):
+        self._send(_lookup_request('absent_control'))
+        record = self.service.telemetry[-1]
+        self.assertEqual(record['action'], 'ma_findbyname_impl_unknown_name')
+        self.assertEqual(record['result'], 'error')
+        self.assertEqual(record['error'], 'name_not_in_captured_e0044_table')
+        self.assertEqual(record['request']['name'], 'absent_control')
+
+        service = GrmMaService(pool_policy=POOL_POLICY_CAPTURED_E0044,
+                               telemetry_policy=TELEMETRY_E0302)
+        self._writer(self.msg_ptr, _alloc_request(0xDEADBEEF, 0x1234))
+        service.handle_uipc_sync_message(self._reader, self._writer, self.msg_ptr, 64)
+        record = service.telemetry[-1]
+        self.assertEqual(record['action'], 'ma_malloc_impl_unknown_handle')
+        self.assertEqual(record['request']['handle'], 0xDEADBEEF)
+        self.assertEqual(record['request']['size'], 0x1234)
+        self.assertEqual(record['error'], 'handle_not_in_captured_e0044_table')
+
+    def test_malloc_records_per_pool_base_and_offset(self):
+        self._send(_lookup_request('mpTextHeap'))
+        self._send(_alloc_request(0x68ABD5A0, 0x1000))
+        first = self.service.telemetry[-1]
+        self.assertEqual(first['action'], 'ma_malloc_impl')
+        self.assertEqual(first['request']['handle'], 0x68ABD5A0)
+        self.assertEqual(first['request']['size'], 0x1000)
+        self.assertEqual(first['selection']['pool_name'], 'mpTextHeap')
+        self.assertEqual(first['selection']['phys_base'], 0x22880000)
+        self.assertEqual(first['selection']['pool_size'], 0x200000)
+        self.assertEqual(first['selection']['handle'], 0x68ABD5A0)
+        self.assertEqual(first['selection']['alloc_offset'], 0)
+        self.assertEqual(first['selection']['alloc_addr'], 0x22880000)
+        self.assertFalse(first['osd_pool'])
+        self.assertEqual(first['provenance'], 'captured-e0044-per-pool-allocator')
+
+        self._send(_alloc_request(0x68ABD5A0, 0x1000))
+        second = self.service.telemetry[-1]
+        self.assertEqual(second['selection']['alloc_offset'], 0x1000)
+        self.assertEqual(second['selection']['alloc_addr'], 0x22881000)
+
+    def test_default_policy_telemetry_records_gl_common(self):
+        service = GrmMaService(telemetry_policy=TELEMETRY_E0302)
+        self._writer(self.msg_ptr, _lookup_request('mpTextHeap'))
+        service.handle_uipc_sync_message(self._reader, self._writer, self.msg_ptr, 64)
+        record = service.telemetry[-1]
+        self.assertEqual(record['result'], 'served')
+        self.assertEqual(record['selection']['pool_name'], 'gl_common')
+        self.assertEqual(record['selection']['phys_base'], GRM_POOL_PHYS_BASE)
+        self.assertEqual(record['provenance'], 'default-gl-common-contract')
+
+        service = GrmMaService(telemetry_policy=TELEMETRY_E0302)
+        self._writer(self.msg_ptr, _alloc_request(GRM_KERNEL_HANDLE, 0x1000))
+        service.handle_uipc_sync_message(self._reader, self._writer, self.msg_ptr, 64)
+        record = service.telemetry[-1]
+        self.assertEqual(record['selection']['pool_name'], 'gl_common')
+        self.assertEqual(record['selection']['phys_base'], GRM_POOL_PHYS_BASE)
+        self.assertEqual(record['selection']['alloc_offset'], 0)
+        self.assertEqual(record['provenance'], 'default-gl-common-allocator')
+
+    def test_close_and_unsupported_opcode_are_recorded(self):
+        self._send(_close_request())
+        record = self.service.telemetry[-1]
+        self.assertEqual(record['action'], 'ma_dmm_close_impl')
+        self.assertEqual(record['result'], 'served')
+        request = bytearray(64)
+        struct.pack_into('<H', request, 0, 99)
+        self._send(bytes(request))
+        record = self.service.telemetry[-1]
+        self.assertEqual(record['opcode'], 99)
+        self.assertEqual(record['action'], 'unsupported_opcode')
+        self.assertEqual(record['result'], 'error')
+        self.assertEqual(record['error'], 'unsupported_opcode')
+
+    def test_telemetry_report_summarises_requests_and_osd(self):
+        self._send(_lookup_request('empty'))
+        self._send(_lookup_request('gl_common'))
+        self._send(_lookup_request('absent'))
+        self._send(_open_request(0x0281))
+        report = self.service.telemetry_report()
+        self.assertEqual(report['telemetry_policy'], TELEMETRY_E0302)
+        self.assertEqual(report['pool_policy'], POOL_POLICY_CAPTURED_E0044)
+        self.assertEqual(report['request_count'], 4)
+        self.assertEqual(report['by_action']['ma_findbyname_impl'], 2)
+        self.assertEqual(report['by_result'], {'served': 2, 'error': 2})
+        self.assertEqual(report['pools_selected'], ['empty', 'gl_common'])
+        self.assertEqual(len(report['osd_pool_requests']), 1)
+        self.assertEqual(report['unsupported_request_count'], 2)
+
+    def test_telemetry_does_not_change_replies_or_events(self):
+        requests = [
+            _open_request(GRM_UNIT_GL_COMMON),
+            _lookup_request('empty'),
+            _lookup_request('absent_control'),
+            _alloc_request(0x60B7F2A0, 0x1000),
+            _alloc_request(0xDEADBEEF, 0x1000),
+            _close_request(),
+        ]
+        observed = {}
+        for telemetry in (TELEMETRY_OFF, TELEMETRY_E0302):
+            service = GrmMaService(pool_policy=POOL_POLICY_CAPTURED_E0044,
+                                   telemetry_policy=telemetry)
+            captures = []
+            for request in requests:
+                self._writer(self.msg_ptr, request)
+                service.handle_uipc_sync_message(self._reader, self._writer, self.msg_ptr, 64)
+                event = {key: value for key, value in service.events[-1].items()
+                         if key != 'telemetry'}
+                captures.append((self._reader(self.msg_ptr, 64), event))
+            observed[telemetry] = captures
+        self.assertEqual(observed[TELEMETRY_OFF], observed[TELEMETRY_E0302])
+
+
+class TestGrmMaDmmTelemetry(unittest.TestCase):
+    """Opt-in e0302-grm asynchronous DMM request telemetry."""
+
+    def setUp(self):
+        self.memory = {}
+        self.msg_ptr = 0x9500
+        self.service = GrmMaService(pool_policy=POOL_POLICY_CAPTURED_E0044,
+                                    telemetry_policy=TELEMETRY_E0302)
+        self.uipc = _FakeUipc()
+
+    def _reader(self, addr: int, size: int) -> bytes:
+        return bytes(self.memory.get(addr + i, 0) for i in range(size))
+
+    def _writer(self, addr: int, data: bytes):
+        for i, b in enumerate(data):
+            self.memory[addr + i] = b
+
+    def _send(self, request: bytes):
+        self._writer(self.msg_ptr, request)
+        return self.service.handle_dmm_message(self._reader, self._writer,
+                                               self.msg_ptr, self.uipc)
+
+    def test_known_unit_0x280_records_gl_common_selection(self):
+        event = self._send(_dmm_request(GRM_UNIT_GL_COMMON, 0x01706003, req_id=7))
+        self.assertIsNotNone(event)
+        record = self.service.telemetry[-1]
+        self.assertEqual(record['transport'], 'dmm')
+        self.assertEqual(record['request']['unit'], 0x0280)
+        self.assertEqual(record['result'], 'served')
+        self.assertFalse(record['unsupported'])
+        self.assertEqual(record['selection']['pool_name'], 'gl_common')
+        self.assertEqual(record['selection']['phys_base'], 0x202E0000)
+        self.assertEqual(record['selection']['pool_size'], 0x02000000)
+        self.assertEqual(record['selection']['handle'], GRM_DMM_HANDLE)
+        self.assertEqual(record['reply']['handle'], GRM_DMM_HANDLE)
+        self.assertEqual(record['reply']['phys_base'], 0x202E0000)
+        self.assertEqual(record['reply']['ret_code'], 0)
+        self.assertEqual(event['telemetry'], record)
+        self.assertEqual(struct.unpack('<I', self._reader(self.uipc.reply_ptr + 8, 4))[0],
+                         0x202E0000)
+        self.assertEqual(struct.unpack('<I', self._reader(self.uipc.reply_ptr + 16, 4))[0],
+                         0x202E0000)
+        self.assertEqual(self.uipc.replies, [(0x01706003, self.uipc.reply_ptr)])
+
+    def test_unsupported_unit_records_legacy_reply_without_selecting_pool(self):
+        # Unit observed in artifacts/execution/e0302-cont.json; DmmConfig units[83]
+        # (extent 226, 0x200000-byte child) has no captured-E0044 pool evidence.
+        event = self._send(_dmm_request(0x000E1700, 0x01706003))
+        self.assertIsNotNone(event)
+        record = self.service.telemetry[-1]
+        self.assertEqual(record['request']['unit'], 0x000E1700)
+        self.assertEqual(record['result'], 'served_legacy_unit_independent')
+        self.assertEqual(record['error'], 'dmm_unit_not_mapped_by_captured_e0044_policy')
+        self.assertTrue(record['unsupported'])
+        self.assertIsNone(record['selection']['pool_name'])
+        self.assertIsNone(record['selection']['phys_base'])
+        self.assertFalse(record['osd_pool'])
+        self.assertIn('no DMM unit table', record['provenance'])
+        # The verified unit-independent legacy wire reply is unchanged.
+        self.assertEqual(record['reply']['handle'], GRM_DMM_HANDLE)
+        self.assertEqual(record['reply']['phys_base'], 0x202E0000)
+        self.assertEqual(struct.unpack('<h', self._reader(self.uipc.reply_ptr, 2))[0], 1)
+        self.assertEqual(struct.unpack('<I', self._reader(self.uipc.reply_ptr + 8, 4))[0],
+                         0x202E0000)
+
+    def test_dmm_telemetry_does_not_change_reply_bytes(self):
+        request = _dmm_request(0x000E1700, 0x01706003, req_id=3)
+        results = {}
+        for telemetry in (TELEMETRY_OFF, TELEMETRY_E0302):
+            self.memory.clear()
+            service = GrmMaService(pool_policy=POOL_POLICY_CAPTURED_E0044,
+                                   telemetry_policy=telemetry)
+            uipc = _FakeUipc()
+            self._writer(self.msg_ptr, request)
+            event = service.handle_dmm_message(self._reader, self._writer,
+                                               self.msg_ptr, uipc)
+            results[telemetry] = (self._reader(uipc.reply_ptr - 4, 32), event, uipc.replies)
+        self.assertEqual(results[TELEMETRY_OFF][0], results[TELEMETRY_E0302][0])
+        self.assertEqual(results[TELEMETRY_OFF][2], results[TELEMETRY_E0302][2])
+        stripped = {key: value for key, value in results[TELEMETRY_E0302][1].items()
+                    if key != 'telemetry'}
+        self.assertEqual(results[TELEMETRY_OFF][1], stripped)
+
+    def test_missing_reply_queue_and_short_request_are_recorded(self):
+        self.assertIsNone(self._send(_dmm_request(0x000E1700, 0)))
+        record = self.service.telemetry[-1]
+        self.assertEqual(record['result'], 'error')
+        self.assertEqual(record['error'], 'missing_reply_queue')
+        self.assertTrue(record['unsupported'])
+        self.assertEqual(self.service.events, [])
+        self.assertIsNone(record['selection'])
+
+        self.service = GrmMaService(pool_policy=POOL_POLICY_CAPTURED_E0044,
+                                    telemetry_policy=TELEMETRY_E0302)
+        self.memory.clear()
+        truncated_reader = lambda addr, size: b'\x01\x00\x00\x00'
+        self.assertIsNone(self.service.handle_dmm_message(truncated_reader, self._writer,
+                                                          self.msg_ptr, self.uipc))
+        record = self.service.telemetry[-1]
+        self.assertEqual(record['error'], 'short_dmm_request')
+        self.assertEqual(record['opcode'], 1)
+
+    def test_default_policy_dmm_telemetry_records_gl_common(self):
+        service = GrmMaService(telemetry_policy=TELEMETRY_E0302)
+        self._writer(self.msg_ptr, _dmm_request(GRM_UNIT_GL_COMMON, 0x01706003))
+        event = service.handle_dmm_message(self._reader, self._writer,
+                                           self.msg_ptr, self.uipc)
+        record = service.telemetry[-1]
+        self.assertEqual(record['selection']['pool_name'], 'gl_common')
+        self.assertEqual(record['result'], 'served')
+        self.assertFalse(record['unsupported'])
+        self.assertEqual(record['provenance'], 'default-gl-common-dmm-contract')
+        self.assertEqual(event['telemetry'], record)
+
+    def test_dmm_report_counts_unsupported_unit(self):
+        self._send(_dmm_request(0x000E1700, 0x01706003))
+        self._send(_dmm_request(GRM_UNIT_GL_COMMON, 0x01706003))
+        report = self.service.telemetry_report()
+        self.assertEqual(report['by_result'],
+                         {'served_legacy_unit_independent': 1, 'served': 1})
+        self.assertEqual(report['unsupported_request_count'], 1)
+        self.assertEqual(report['pools_selected'], ['gl_common'])
+        self.assertEqual(report['osd_pool_requests'], [])
+
+
+class TestGrmMaLegacyCheckpointRestore(unittest.TestCase):
+    """Pre-E0302 checkpoint state (no telemetry fields) restores with telemetry off."""
+
+    def setUp(self):
+        self.msg_ptr = 0x7000
+
+    def _reader_for(self, memory):
+        return lambda addr, size: bytes(memory.get(addr + i, 0) for i in range(size))
+
+    def _writer_for(self, memory):
+        def writer(addr, data):
+            for index, value in enumerate(data):
+                memory[addr + index] = value
+        return writer
+
+    def _legacy_state_without_telemetry(self):
+        service = GrmMaService()
+        service.events.append({'legacy_checkpoint': True})
+        del service.__dict__['telemetry_policy']
+        del service.__dict__['telemetry']
+        return pickle.dumps(service)
+
+    def _run_sync(self, service, request):
+        memory = {}
+        self._writer_for(memory)(self.msg_ptr, request)
+        ret = service.handle_uipc_sync_message(
+            self._reader_for(memory), self._writer_for(memory), self.msg_ptr, 64)
+        return ret, bytes(memory.get(self.msg_ptr + i, 0) for i in range(64))
+
+    def _run_dmm(self, service):
+        memory = {}
+        uipc = _FakeUipc()
+        self._writer_for(memory)(self.msg_ptr, _dmm_request(GRM_UNIT_GL_COMMON, 0x01706003))
+        event = service.handle_dmm_message(
+            self._reader_for(memory), self._writer_for(memory), self.msg_ptr, uipc)
+        return event, list(uipc.replies), dict(memory)
+
+    def test_legacy_state_restores_telemetry_off_and_keeps_sync_replies(self):
+        restored = pickle.loads(self._legacy_state_without_telemetry())
+        self.assertEqual(restored.pool_policy, POOL_POLICY_GL_COMMON_ONLY)
+        self.assertEqual(restored.telemetry_policy, TELEMETRY_OFF)
+        self.assertEqual(restored.telemetry, [])
+        self.assertEqual(restored.events, [{'legacy_checkpoint': True}])
+        self.assertEqual(restored.telemetry_report()['request_count'], 0)
+        self.assertEqual(restored.telemetry_report()['telemetry_policy'], TELEMETRY_OFF)
+
+        fresh = GrmMaService()
+        requests = (_open_request(GRM_UNIT_GL_COMMON),
+                    _lookup_request('gl_common'),
+                    _alloc_request(GRM_DMM_HANDLE, 0x1000),
+                    _close_request())
+        for request in requests:
+            with self.subTest(request=request[:4].hex()):
+                fresh_ret, fresh_reply = self._run_sync(fresh, request)
+                restored_ret, restored_reply = self._run_sync(restored, request)
+                self.assertEqual(restored_ret, fresh_ret)
+                self.assertEqual(restored_reply, fresh_reply)
+                self.assertEqual(restored.events[-1], fresh.events[-1])
+                self.assertNotIn('telemetry', restored.events[-1])
+                self.assertEqual(restored.telemetry, [])
+
+    def test_legacy_state_restores_telemetry_off_for_dmm_events(self):
+        restored = pickle.loads(self._legacy_state_without_telemetry())
+        fresh = GrmMaService()
+
+        fresh_event, fresh_replies, fresh_memory = self._run_dmm(fresh)
+        restored_event, restored_replies, restored_memory = self._run_dmm(restored)
+
+        self.assertEqual(restored_event, fresh_event)
+        self.assertEqual(restored_replies, fresh_replies)
+        self.assertEqual(restored_memory, fresh_memory)
+        self.assertEqual(restored.telemetry_policy, TELEMETRY_OFF)
+        self.assertEqual(restored.telemetry, [])
+        self.assertNotIn('telemetry', restored_event)
+        self.assertNotIn('telemetry', restored.events[-1])
 
 
 if __name__ == '__main__':

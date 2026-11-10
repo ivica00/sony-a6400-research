@@ -66,3 +66,53 @@ class KernelTaskObservation:
         # Matching these fields alone is not permission to service open/ioctl:
         # task construction, resource ownership and the driver remain separate.
         return self
+
+
+@dataclass
+class KernelTaskIdentityTable:
+    """Per-thread kernel task records derived from guest clone events.
+
+    The record contents still use the evidence-backed task/thread_info ABI;
+    only pid/tgid are per-thread (the clone child TID and process ID).  A
+    caller is accepted only when a record was registered for that TID, so the
+    check remains a comparison of two guest-derived sources rather than a
+    copy of the caller arguments.
+    """
+
+    address_limit: int = 0x5f000000
+    cpu: int = 0
+    base_thread_info: int = 0x2000
+    base_task: int = 0x100000
+    records: dict = None
+    _next_slot: int = 0
+
+    def __post_init__(self):
+        if self.records is None:
+            self.records = {}
+
+    def register(self, tid, tgid):
+        if tid in self.records:
+            return self.records[tid]
+        slot = self._next_slot
+        self._next_slot += 1
+        thread_info = self.base_thread_info + slot * 0x2000
+        task = self.base_task + slot * 0x1000
+        header = struct.pack('<6I', 0, 0, self.address_limit, task, 0, self.cpu)
+        record = bytearray(0x10c)
+        struct.pack_into('<I', record, 8, thread_info)
+        struct.pack_into('<2I', record, 0x104, tid, tgid)
+
+        def reader(address, size):
+            if address == thread_info:
+                return header[:size]
+            if address == task:
+                return bytes(record)[:size]
+            raise UnsupportedKernelBinding('synthetic_task_address_outside_record',
+                                           address=address)
+
+        observation = KernelTaskObservation.read(reader, thread_info)
+        self.records[tid] = observation
+        return observation
+
+    def observation_for(self, tid):
+        return self.records.get(tid)

@@ -1,27 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="670" viewBox="0 0 1000 670" role="img" aria-labelledby="title desc">
-<title id="title">Sony a6400 research status through E0300</title>
-<desc id="desc">782 local tests pass. Original UIPC proxy threads and VBUS callback execute. Callback completion remains open. No emulator OSD mapping or verified GUI frame. Independent evidence, no overall compatibility percentage.</desc>
-<rect width="1000" height="670" rx="16" fill="#0d1117"/>
+<title id="title">Sony a6400 research status through E0314</title>
+<desc id="desc">880 tests recorded passing. GPES BAR and IRQ contracts decoded using read-only camera observations. Opt-in engine model advances original guest code to a second signal, with labelled result-bit assumptions. Keyed completion and condition release remain open. No emulator GUI frame.</desc>
+<rect width="1000" height="670" rx="16" fill="#0d1117" />
 <g font-family="Segoe UI,Arial,sans-serif">
 <text x="28" y="42" fill="#f0f6fc" font-size="26" font-weight="700">Research status</text>
-<text x="740" y="40" fill="#c9d1d9" font-size="17" font-weight="400">2026-11-10 | E0300</text>
-<text x="28" y="78" fill="#36c88a" font-size="18" font-weight="400">782 tests passed | Bounded contracts; full boot remains unproven</text>
-<rect x="28" y="103" width="944" height="114" rx="8" fill="#161b22"/>
+<text x="740" y="40" fill="#c9d1d9" font-size="17" font-weight="400">2026-11-10 | E0314</text>
+<text x="28" y="78" fill="#36c88a" font-size="18" font-weight="400">880 tests recorded passing | No verified emulator GUI frame</text>
+<rect x="28" y="103" width="944" height="114" rx="8" fill="#161b22" />
 <text x="44" y="125" fill="#9da7b3" font-size="12" font-weight="400">OFFLINE ORIGINAL CODE</text>
 <text x="44" y="150" fill="#f0f6fc" font-size="19" font-weight="700">UIPC / USB</text>
-<text x="44" y="175" fill="#c9d1d9" font-size="16" font-weight="400">Four proxy threads; original VBUS callback returns.</text>
-<text x="44" y="200" fill="#f0bd55" font-size="16" font-weight="400">Open: completion ownership, sync delivery, control queue.</text>
-<rect x="28" y="230" width="944" height="114" rx="8" fill="#161b22"/>
-<text x="44" y="252" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL CAPTURE + OFFLINE CONTRACT</text>
-<text x="44" y="277" fill="#f0f6fc" font-size="19" font-weight="700">Display / GPU</text>
-<text x="44" y="302" fill="#c9d1d9" font-size="16" font-weight="400">Camera OSD A/B confirmed; GPU is DMP SMAPH-S30.</text>
-<text x="44" y="327" fill="#f0bd55" font-size="16" font-weight="400">Open: emulator OSD mappings, frame and rasterizer.</text>
-<rect x="28" y="357" width="944" height="114" rx="8" fill="#161b22"/>
+<text x="44" y="175" fill="#c9d1d9" font-size="16" font-weight="400">VBUS callback completes; OTG input wakes UsbControl (wake-only).</text>
+<text x="44" y="200" fill="#f0bd55" font-size="16" font-weight="400">Open: USB FSM transition and the missing MWF message producer.</text>
+<rect x="28" y="230" width="944" height="114" rx="8" fill="#161b22" />
+<text x="44" y="252" fill="#9da7b3" font-size="12" font-weight="400">READ-ONLY PHYSICAL EVIDENCE + OPT-IN MODEL</text>
+<text x="44" y="277" fill="#f0f6fc" font-size="19" font-weight="700">GPES engine / display</text>
+<text x="44" y="302" fill="#c9d1d9" font-size="16" font-weight="400">BAR / IRQ decoded; engine experiment reaches a second guest signal.</text>
+<text x="44" y="327" fill="#f0bd55" font-size="16" font-weight="400">Open: keyed completion, guest condition release, OSD and rasterizer.</text>
+<rect x="28" y="357" width="944" height="114" rx="8" fill="#161b22" />
 <text x="44" y="379" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL OBSERVATION</text>
 <text x="44" y="404" fill="#f0f6fc" font-size="19" font-weight="700">PTP / composite USB</text>
 <text x="44" y="429" fill="#c9d1d9" font-size="16" font-weight="400">PC Remote sensor JPEG; composite enumeration demonstrated.</text>
 <text x="44" y="454" fill="#f0bd55" font-size="16" font-weight="400">Open: composite frames and reliable teardown; paused.</text>
-<rect x="28" y="484" width="944" height="114" rx="8" fill="#161b22"/>
+<rect x="28" y="484" width="944" height="114" rx="8" fill="#161b22" />
 <text x="44" y="506" fill="#9da7b3" font-size="12" font-weight="400">AUTHORED PATTERN + PHYSICAL TRANSPORT</text>
 <text x="44" y="531" fill="#f0f6fc" font-size="19" font-weight="700">UVC / custom menu</text>
 <text x="44" y="556" fill="#c9d1d9" font-size="16" font-weight="400">Static 720p UVC at 29.9592 FPS; authored menu displayed.</text>
