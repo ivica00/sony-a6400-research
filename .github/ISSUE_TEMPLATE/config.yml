@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: UVC/PTP contributor guide
+    url: https://github.com/ivica00/sony-a6400-research/blob/main/docs/CONTRIBUTING_UVC_PTP.md
+    about: Status, open workstreams and the rules for UVC/PTP contributions.
+  - name: Consolidated UVC/PTP status
+    url: https://github.com/ivica00/sony-a6400-research/blob/main/docs/UVC_PTP_STATUS.md
+    about: Closeness matrix and remaining boundaries, with evidence links.
+  - name: Evidence record format
+    url: https://github.com/ivica00/sony-a6400-research/blob/main/docs/evidence/README.md
+    about: How to record a claim with inputs, method, observation and limits.

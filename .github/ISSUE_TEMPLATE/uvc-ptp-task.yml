@@ -1,0 +1,78 @@
+name: UVC/PTP workstream task
+description: Propose or claim a scoped UVC or PTP contract task
+title: "[UVC/PTP] "
+labels: ["uvc", "ptp"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping with UVC/PTP mode. Read
+        [docs/CONTRIBUTING_UVC_PTP.md](https://github.com/ivica00/sony-a6400-research/blob/main/docs/CONTRIBUTING_UVC_PTP.md)
+        first. Do not paste proprietary firmware, dumps, serial numbers or
+        credentials here; reference hashes instead.
+  - type: dropdown
+    id: workstream
+    attributes:
+      label: Workstream
+      description: Which scoped workstream does this task belong to?
+      options:
+        - "1. Kernel to user sync callback delivery (uipc_sync_callback_delivery_unmodelled)"
+        - "2. Host-side UVC enumeration / SET_CONFIG contract"
+        - "3. usbg_video buffer and transfer contract"
+        - "4. ZV-E10 overlay hygiene and device-node namespace"
+        - "5. PTP controls and liveview robustness"
+        - "6. Physical composite lifecycle (owner authorization required)"
+        - "New boundary / other"
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Current boundary
+      description: What exactly is unknown or blocked today, and which evidence record or code path shows it?
+      placeholder: e.g. E0331 shows flags=1 sync callbacks are not delivered by the async WAIT_CB model.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed experiment or change
+      description: What would you implement, and why is it evidence-backed rather than a guess?
+    validations:
+      required: true
+  - type: textarea
+    id: observation
+    attributes:
+      label: Expected observation / acceptance criteria
+      description: What should be observed, and what named boundary counts as an honest failure?
+    validations:
+      required: true
+  - type: input
+    id: targets
+    attributes:
+      label: Files, functions or addresses
+      description: Optional, but helpful. Function names, evidence IDs or repo paths.
+    validations:
+      required: false
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware access needed?
+      description: Physical operations need the owner's explicit scope; ordinary unit tests never touch a camera.
+      options:
+        - "No — offline only"
+        - "Yes — read-only observation"
+        - "Yes — anything beyond read-only (requires owner approval)"
+    validations:
+      required: true
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Contribution rules acknowledged
+      options:
+        - label: I have read AGENTS.MD and docs/CONTRIBUTING_UVC_PTP.md.
+          required: true
+        - label: I will not include proprietary firmware, extracted binaries, dumps or credentials.
+          required: true
+        - label: I will keep unknown behavior fail-closed and preserve default baselines.
+          required: true

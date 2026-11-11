@@ -2,6 +2,10 @@
 
 Contributions should improve a documented Sony ILCE-6400 contract, fix a reproducible defect, or clarify evidence and its limits. For larger work, open an issue describing the current boundary, proposed experiment and expected observation.
 
+## UVC/PTP workstreams
+
+For UVC video and PTP mode, start with [docs/CONTRIBUTING_UVC_PTP.md](docs/CONTRIBUTING_UVC_PTP.md). It lists scoped tasks with acceptance criteria, the relevant evidence records and the labels (`uvc`, `ptp`, `good first issue`, `boundary`). Claim a task by commenting on the matching issue.
+
 ## Make a focused change
 
 - Read [AGENTS.MD](AGENTS.MD), the relevant evidence and the [research workflow](docs/LIVE_CAMERA_EMULATOR_WORKFLOW.md).

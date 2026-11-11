@@ -6,7 +6,7 @@ An evidence-backed execution environment and homebrew research project for the *
 
 ## Research status
 
-**2026-11-10 | [E0314](docs/evidence/0314-gpes-bar-irq-contract-engine-model.md).** Read-only camera observations and original driver analysis establish the GPES BAR/IRQ and event-wait contracts. An opt-in engine model advances original guest code out of the event loop and to a second guest signal, under explicitly labelled command-result assumptions. Cross-context completion and guest condition-variable release remain unresolved; `THREAD_APP` and the view tier have not started. **No verified emulator GUI frame or OSD mapping.** The recorded full suite passes 880 tests.
+**2026-11-11 | [E0331](docs/evidence/0331-usb-lane-local-queue-vs-sync-callback.md).** The USB lane is now precisely bounded: `0x00CA8192` is a **process-local** OSAL queue, and kernel-to-user notifications use **sync-registered callbacks** (`0x00CA0288`, `0x00CA01A4`, `flags=1`) that the async UIPC model never delivers. Labelled SET_CONFIG injection reached the original `RcvMsg` and failed closed with a recorded OSAL assertion, so no FSM transition is claimed. UVC/PTP work is split into scoped, contributor-friendly contracts. **No verified emulator GUI frame or OSD mapping.** The recorded full suite passes 952 tests.
 
 ![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg)
 
@@ -15,11 +15,11 @@ These are independent, dated results, not a percentage of firmware compatibility
 | Area / evidence type | Demonstrated | Remaining boundary |
 | --- | --- | --- |
 | Firmware execution - offline | Original ARM/Thumb code reaches `im.elf` and the first event-dispatch phase | Full camera boot is unproven; 1/8 task phases observed and 0/198 static plugin definitions initialized - [status data](tools/research/a6400_status_data.py) |
-| UIPC / USB - offline | Original VBUS callback delivery/completion; state-valid OTG input reaches UsbControl and produces a new futex wake | Wake-only, no FSM transition; missing MWF `0x0A4000` producer remains unresolved - [E0304](docs/evidence/0304-preboundary-usb-injection-and-vbus-delivery.md), [E0310](docs/evidence/0310-team-cycle-buspower-lane-and-second-path.md), [E0311](docs/evidence/0311-usbcontrol-wake-only-gles-models-and-grm-wait.md) |
+| UIPC / USB - offline | MWF dispatch, ObjMsg wire layout and labelled SET_CONFIG injection reach the original `RcvMsg`; the USB lane is mapped to local queues vs sync callbacks | Kernel-to-user **sync callback delivery is unmodelled** (`uipc_sync_callback_delivery_unmodelled`); no FSM transition claimed - [E0323](docs/evidence/0323-usbcontrol-msgid-eventid-map.md), [E0327](docs/evidence/0327-mwf-objmsg-wire-format.md), [E0331](docs/evidence/0331-usb-lane-local-queue-vs-sync-callback.md) |
 | Display - physical capture + offline contract | Camera OSD A/B confirmed as 640x480 RGBA4444; captured PlayMemories MSC screen; hash-checked read-only flash namespaces let offline startup advance | `THREAD_APP`/view tier not started; emulator OSD A/B unmapped and no verified GUI frame - [E0298](docs/evidence/0298-safe-osd-capture-and-sugilite-correction.md), [E0314](docs/evidence/0314-gpes-bar-irq-contract-engine-model.md) |
 | GPU / GPES - physical observation + offline model | DMP SMAPH-S30 identity; BAR/IRQ and event-wait contracts decoded; opt-in engine experiment reaches a second original guest signal | Result-bit assumptions remain labelled; keyed context completion and guest condvar release unresolved. Rasterizer still lacks verified draw/shader semantics - [E0313](docs/evidence/0313-readonly-physical-gpes-bar-and-grm-state.md), [E0314](docs/evidence/0314-gpes-bar-irq-contract-engine-model.md) |
 | PTP liveview - physical | A sensor JPEG, 1024x680, transferred in original PC Remote mode | Composite PTP frame delivery and simultaneous UVC/PTP operation remain unproven - [E0151](docs/evidence/0151-pc-remote-liveview-and-uvc-verified.md), [E0296](docs/evidence/0296-snapshot2-reconnect-budget-teardown.md) |
-| UVC - authored pattern, physical transport | Static MJPEG 1280x720 at 29.9592 FPS over 180 frames | Sensor feeder remains unwired; static frames do not demonstrate sensor streaming - [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0243](docs/evidence/0243-opt-in-producer-admission-module.md) |
+| UVC - authored pattern, physical transport | Static MJPEG 1280x720 at 29.9592 FPS over 180 frames | Sensor feeder remains unwired; static frames do not demonstrate sensor streaming. The ZV-E10 UVC stack is **not enabled** on a6400 and physical module load is outside the current read-only scope - [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md), [E0322](docs/evidence/0322-zve10-uvc-overlay-plan.md) |
 | Composite USB - physical | PTP/UVC children enumerated; E0289 retained enumeration through liveview with a clean teardown | E0296 later became unresponsive after liveview despite stable enumeration; reliable lifecycle and frame delivery remain open. This workstream is paused - [E0289](docs/evidence/0289-e0288-keeps-device-enumerated.md), [E0296](docs/evidence/0296-snapshot2-reconnect-budget-teardown.md) |
 | Native monitor / storage - physical + offline checks | Original help and fixed `IFSYS getdriveinfo A` replies verified; A: identified as SD | General command behavior and competing-consumer ownership remain open; diagnostic SD journal remains unwritten - [E0234](docs/evidence/0234-ordinary-pcremote-ifsys-query-answered.md), [E0222](docs/evidence/0222-physical-sd-volume-device-association.md) |
 | Custom menu - authored demonstration | Our interface drawn on the camera display | Does not establish original Sony menu behavior, navigation or settings - [photo](docs/images/framebuffer-camera-menu.png) |
@@ -29,13 +29,48 @@ The tested syscall, filesystem, mapping and linker cases are limited contract ch
 
 ## Current work
 
-Continue offline from E0314's GPES dependency chain:
+The project runs two connected tracks. The UVC/PTP track is the contributor
+on-ramp described in [docs/CONTRIBUTING_UVC_PTP.md](docs/CONTRIBUTING_UVC_PTP.md):
 
-1. Resolve cross-thread/keyed `0x820E` completion through the driver-resolved context pointer. IRQ acknowledgement alone does not complete a guest context.
-2. Identify the original guest condition-variable release path for TID1011 (`0x99E34`), then observe whether RM/INFRA startup creates `THREAD_APP` and the view tier.
-3. Continue tracing the real USB MWF producer. The verified power notification and the OTG wake do not establish a USB FSM transition.
+1. **Kernel→user sync callback delivery** (`uipc_sync_callback_delivery_unmodelled`): decode `snd_sync_msg`/`snd_sync_direct` and the `libosal_uipc` wrappers, then let the original callback run under an opt-in policy. This is the gate before an inbound SET_CONFIG can reach the USB FSM.
+2. **Host enumeration / SET_CONFIG contract**: model GET_DESCRIPTOR, SET_CONFIGURATION and interface/endpoint selection for the byte-verified UVC+PTP descriptor.
+3. **`usbg_video` buffer/transfer contract**: `ctx+0x2D` writer, `0xD0` request, `0x24` DMA-info, buffer-table/blob semantics and the JPEG/DMM frame source.
+4. **ZV-E10 overlay hygiene**: keep the hash-pinned enablement plan declared-only (`executable: false`) until the owner explicitly authorizes physical work.
 
-The engine model is opt-in; its command-result bit and readiness experiments are assumptions, not physical verification of the entire command protocol. Preserve explicit boundaries and default baselines. Fresh-path tzset remains unresolved. Firmware content comes from hash-checked read-only inputs; no synthetic messages, host-called callbacks or substitute screen establish compatibility. Physical composite/liveview work remains paused; do not repeat E0297's `/dev/stream` capture method.
+The GPES/GRM track continues in parallel: resolve cross-thread/keyed `0x820E`
+completion through the driver-resolved context pointer, identify the original
+guest condition-variable release path for TID1011 (`0x99E34`), and observe
+whether RM/INFRA startup creates `THREAD_APP` and the view tier. The engine model
+is opt-in; its command-result bit and readiness experiments are assumptions, not
+physical verification of the entire command protocol. Preserve explicit
+boundaries and default baselines. Fresh-path tzset remains unresolved. Firmware
+content comes from hash-checked read-only inputs; no synthetic messages,
+host-called callbacks or substitute screen establish compatibility. Physical
+composite/liveview work remains paused; do not repeat E0297's `/dev/stream`
+capture method.
+
+## Contribute to UVC/PTP
+
+UVC video and PTP mode are the largest open areas, and the project is open to
+contributors who value evidence over optimistic claims. Start with
+[docs/CONTRIBUTING_UVC_PTP.md](docs/CONTRIBUTING_UVC_PTP.md): it lists six scoped
+workstreams with acceptance criteria, the files involved, and the exact boundaries
+that currently block UVC.
+
+Quick entry points:
+
+- [`uvc` issues](https://github.com/ivica00/sony-a6400-research/issues?q=label%3Auvc)
+- [good first issues](https://github.com/ivica00/sony-a6400-research/issues?q=label%3A%22good+first+issue%22)
+- [Consolidated UVC/PTP status](docs/UVC_PTP_STATUS.md)
+- [Evidence record format](docs/evidence/README.md)
+
+The highest-impact contribution right now is **item 1: kernel→user sync callback
+delivery** in [`guest_uipc.py`](src/a6400/execution/guest_uipc.py). It is the last
+modelled layer between the decoded SET_CONFIG message and a real FSM observation.
+No physical camera access is needed for it, and a clean recorded boundary is a
+valid result on this project.
+
+
 
 ## Working with the project
 
