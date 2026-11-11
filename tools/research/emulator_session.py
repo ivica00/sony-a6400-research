@@ -48,6 +48,8 @@ class BootSession:
     usb_connect_at: int = 0
     uipc_inject_queue: Optional[int] = None
     uipc_inject_payload: Optional[bytes] = None
+    uipc_setconfig_objmsg_queue: Optional[int] = None
+    uipc_setconfig_objmsg_wake: Optional[int] = None
 
 
 def usb_otgcore_options(args):
@@ -84,7 +86,8 @@ def build_boot_session(args, parser=None) -> BootSession:
     This performs the same hash/namespace checks as the CLI.  It does not run
     the guest and does not contact the camera.
     """
-    folder = PROJECT_ROOT / 'artifacts/inventory'
+    inventory_dir = getattr(args, 'guest_inventory_dir', None)
+    folder = (PROJECT_ROOT / inventory_dir) if inventory_dir else (PROJECT_ROOT / 'artifacts/inventory')
     manifest = json.loads((folder / 'guest-filesystem.json').read_text(encoding='utf-8'))
     inventory = json.loads((folder / 'elf-inventory.json').read_text(encoding='utf-8'))['entries']
     baseline = json.loads((folder / 'baseline.json').read_text(encoding='utf-8'))
@@ -395,6 +398,8 @@ def build_boot_session(args, parser=None) -> BootSession:
             raise ValueError('UIPC injection payload is empty')
     if (uipc_inject_queue is None) != (uipc_inject_payload is None):
         raise ValueError('UIPC injection requires both --uipc-inject-queue and --uipc-inject-payload')
+    uipc_setconfig_objmsg_queue = getattr(args, 'uipc_inject_objmsg_setconfig_queue', None)
+    uipc_setconfig_objmsg_wake = getattr(args, 'uipc_inject_objmsg_wake_uaddr', None)
 
     probe.stream2_device_policy = getattr(args, 'stream2_device', 'stop')
     probe.nflasha4_device_policy = getattr(args, 'nflasha4_device', 'stop')
@@ -446,4 +451,6 @@ def build_boot_session(args, parser=None) -> BootSession:
                        readonly_mounts=readonly_mounts, display_contract=contract_name,
                        usb_connect_event=usb_connect_event, usb_connect_at=usb_connect_at,
                        uipc_inject_queue=uipc_inject_queue,
-                       uipc_inject_payload=uipc_inject_payload)
+                       uipc_inject_payload=uipc_inject_payload,
+                       uipc_setconfig_objmsg_queue=uipc_setconfig_objmsg_queue,
+                       uipc_setconfig_objmsg_wake=uipc_setconfig_objmsg_wake)

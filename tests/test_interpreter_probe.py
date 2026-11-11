@@ -625,6 +625,46 @@ class InterpreterProbeTests(unittest.TestCase):
         self.assertEqual(next(s for s in report['serviced_syscalls'] if s['syscall'] == 'clone')['flags'],
                          0x3d0f00)
 
+    def test_threads_policy_timeslice_preempts_cooperative_loop(self):
+        filesystem = {'nodes': {}, 'content_loader': lambda p, n: b''}
+        raw = b''.join(s.ljust(65, b'\0') for s in
+                       (b'Linux', b'(none)', b'3.0.27', b'#1', b'arm', b'(none)'))
+        kernel_path = PROJECT_ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin'
+        if not kernel_path.exists():
+            self.skipTest('Kernel image not available')
+        template = extract_kuser_template(kernel_path)
+        code = struct.pack('<16I',
+                           0xe24d1a01,          # sub r1, sp, #0x1000 (child_stack)
+                           0xe3052035,          # movw r2, #0x5035
+                           0xe3452008,          # movt r2, #0x5008
+                           0xe5812000,          # str r2, [r1] (child fn)
+                           0xe5812004,          # str r1, [r1, #4] (arg)
+                           0xe3000f00,          # movw r0, #0x0f00
+                           0xe340003d,          # movt r0, #0x003d (flags)
+                           0xe1a0200d,          # mov r2, sp (parent_tidptr)
+                           0xe3003000,          # movw r3, #0
+                           0xe3453000,          # movt r3, #0x5000 (tls)
+                           0xe1a0400d,          # mov r4, sp (child_tidptr)
+                           0xe3a07078,          # mov r7, #120 (clone)
+                           0xef000000,          # svc 0
+                           0xeafffffe,          # b . (parent never blocks)
+                           0xe1a00000, 0xe1a00000)
+        probe = self.probe(code, thumb=False, syscall_policy='threads',
+                           uname_profile={'raw_hex': raw.hex()},
+                           filesystem=filesystem, kuser_template=template)
+        # Provide a looping child function body.
+        try:
+            probe.mu.mem_map(0x50085000, 0x1000)
+        except Exception:
+            pass
+        probe.mu.mem_write(0x50085034, struct.pack('<I', 0xeafffffe))
+        probe.thread_timeslice = 100
+        report = probe.run(instruction_budget=5000)
+        self.assertGreater(report.get('thread_preemptions', 0), 0)
+        self.assertIn('thread_preemption_events', report)
+        scheduled = {event['to'] for event in report['thread_preemption_events']}
+        self.assertIn(1001, scheduled | {1000})
+
     def test_threads_policy_services_nanosleep(self):
         filesystem = {
             'nodes': {},
@@ -1083,7 +1123,9 @@ class LoaderWorkaroundTests(unittest.TestCase):
     """
 
     IT_ADDRESSES = (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a,
-                    0x4000a6f4, 0x5026ebc4, 0x5026ec26)
+                    0x4000a6f4, 0x5026ebc4, 0x5026ec26, 0x54194e4e,
+                    0x50259bf2, 0x50259bfc, 0x50259c00, 0x54194e56,
+                    0x5026ed06, 0x5026ecfc)
     KNOWN_IT_MASK = (3 << 25) | (0x3f << 10)
 
     class _RegisterUc:

@@ -107,6 +107,15 @@ class InterpreterProbe:
         if madvise_policy != 'stop' and syscall_policy not in ('mmap', 'kuser', 'uipc', 'threads'):
             raise ValueError('madvise requires a guest mmap policy')
         self.madvise_policy = madvise_policy
+        # Opt-in deterministic timer preemption (E0473): 0 keeps the historical
+        # cooperative scheduling; a positive value switches a running thread to
+        # a runnable peer every N guest instructions.
+        self.thread_timeslice = 0
+        self._timeslice_mark = 0
+        self._stop_instruction_limit = 0
+        # Opt-in cooperative yield when a non-blocking UIPC poll finds no
+        # message (safe syscall-boundary switch; no arbitrary preemption).
+        self.thread_poll_yield = False
         if syscall_policy not in ('stop', 'brk', 'brk-uname', 'files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads'):
             raise ValueError('Unknown syscall policy')
         if syscall_policy in ('brk-uname', 'files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and uname_profile is None:
@@ -150,7 +159,9 @@ class InterpreterProbe:
         if self.hook_mode == 'fast':
             self.mu.hook_add(unicorn.UC_HOOK_BLOCK, self._block)
             for it_addr in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a, 0x4000a6f4,
-                            0x5026ebc4, 0x5026ec26):
+                            0x5026ebc4, 0x5026ec26, 0x54194e4e,
+                            0x50259bf2, 0x50259bfc, 0x50259c00, 0x54194e56,
+                            0x5026ed06, 0x5026ecfc):
                 self.mu.hook_add(unicorn.UC_HOOK_CODE, self._it_workaround, begin=it_addr, end=it_addr)
             self.mu.hook_add(unicorn.UC_HOOK_CODE, self._ld_fixup_workaround,
                              begin=0x4000a6f4, end=0x4000a6f4)
@@ -309,10 +320,78 @@ class InterpreterProbe:
         self.prepared = True
 
     def _it_workaround(self, uc, address, size, user_data):
+        # Live-build-specific repairs are signature-guarded so extracted runs are
+        # byte-for-byte unaffected when the live instruction is not present.
+        guarded = (
+            (0x54194E4E, 0x54194E4C, b'\x03\x4b\x04\x4a'),
+            (0x54194E56, 0x54194E4C, b'\x03\x4b\x04\x4a'),
+            (0x50259BFC, 0x50259BFC, b'\xdf\xf8\x94\x24'),
+            (0x5026ED06, 0x5026ED06, b'\x70\xbd'),
+            (0x5026ECFC, 0x5026ECF6, b'\x84\xbf\x1c\x60\x22\x46'),
+        )
+        for guarded_address, signature_address, signature in guarded:
+            if address == guarded_address:
+                try:
+                    current = bytes(uc.mem_read(signature_address, len(signature)))
+                except Exception:
+                    return
+                if current != signature:
+                    return
+                break
         if self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
             cpsr = uc.reg_read(arm.UC_ARM_REG_CPSR)
             if cpsr & ((3 << 25) | (0x3f << 10)):
                 uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr & ~((3 << 25) | (0x3f << 10)))
+        if address == 0x50259BFC:
+            # Live libc 8.2.6.0 top-split (`ldr.w r2,[pc,#0x494]`): Unicorn can
+            # skip this 4-byte literal load after an IT latch, leaving the stale
+            # top-chunk size instead of &main_arena and tagging a main-arena
+            # chunk NON_MAIN_ARENA.  Only repair when the live signature (F8DF
+            # 2494) is present, so extracted-build libc is unaffected.
+            try:
+                signature = bytes(uc.mem_read(0x50259BFC, 4))
+            except Exception:
+                return
+            if signature == b'\xdf\xf8\x94\x24':
+                try:
+                    literal = int.from_bytes(bytes(uc.mem_read(0x5025A094, 4)), 'little')
+                except Exception:
+                    return
+                uc.reg_write(arm.UC_ARM_REG_R2, literal)
+                self.report['live_libc_it_repair_hits'] = self.report.get('live_libc_it_repair_hits', 0) + 1
+        if address == 0x54194E56:
+            # Live libObj 8.2.6.0 helper: if the 16-bit literal load at +0x104E4E
+            # was skipped entirely (Unicorn IT latch, hook can be bypassed),
+            # repair r2 from the guest literal before the faulting
+            # `ldr r3,[r3,r2]`.  Signature-guarded to the live helper only.
+            try:
+                signature = bytes(uc.mem_read(0x54194E4C, 4))
+            except Exception:
+                return
+            if signature == b'\x03\x4b\x04\x4a':
+                try:
+                    literal = int.from_bytes(bytes(uc.mem_read(0x54194E60, 4)), 'little')
+                except Exception:
+                    return
+                if uc.reg_read(arm.UC_ARM_REG_R2) != literal:
+                    uc.reg_write(arm.UC_ARM_REG_R2, literal)
+                self.report['live_libobj_it_repair56_hits'] = self.report.get('live_libobj_it_repair56_hits', 0) + 1
+        if address == 0x54194E4E:
+            # Live libObj 8.2.6.0 (sha256 e88b7e0f...) helper at +0x104E4C:
+            # Unicorn can skip the 16-bit `ldr r2,[pc,#0x10]` after an IT block,
+            # leaving a stale caller r2.  Only repair when the live signature is
+            # present, so extracted-build runs are unaffected.
+            try:
+                signature = bytes(uc.mem_read(0x54194E4C, 4))
+            except Exception:
+                return
+            if signature == b'\x03\x4b\x04\x4a':
+                try:
+                    literal = int.from_bytes(bytes(uc.mem_read(0x54194E60, 4)), 'little')
+                except Exception:
+                    return
+                uc.reg_write(arm.UC_ARM_REG_R2, literal)
+                self.report['live_libobj_it_repair_hits'] = self.report.get('live_libobj_it_repair_hits', 0) + 1
 
     def _ld_fixup_workaround(self, uc, address, size, user_data):
         """Make _dl_fixup's unconditional `mov r4,r0` explicit.
@@ -326,6 +405,38 @@ class InterpreterProbe:
         if self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
             uc.reg_write(arm.UC_ARM_REG_R4, uc.reg_read(arm.UC_ARM_REG_R0))
 
+    def _maybe_preempt(self, uc):
+        """Deterministic timer-preemption model for the cooperative scheduler.
+
+        Real Linux preempts a running thread on the timer tick even when it keeps
+        issuing non-blocking syscalls. Without this, a UIPC poll loop can
+        monopolise the interpreter and never schedule runnable peers (E0473).
+        Opt-in: `thread_timeslice` = 0 disables it and preserves baselines.
+        """
+        timeslice = getattr(self, 'thread_timeslice', 0)
+        threads = getattr(self, 'threads', None)
+        if not timeslice or threads is None:
+            return
+        if self.report.get('status') != 'running':
+            return
+        if self.instructions - getattr(self, '_timeslice_mark', 0) < timeslice:
+            return
+        current_tid = threads.current_tid
+        current = threads.threads.get(current_tid)
+        if current is None or current.state != 'running':
+            return
+        next_tid = threads.get_next_runnable_tid()
+        if next_tid is None:
+            return
+        self._timeslice_mark = self.instructions
+        threads.save_context(uc)
+        current.state = 'runnable'
+        self.report['thread_preemptions'] = self.report.get('thread_preemptions', 0) + 1
+        events = self.report.setdefault('thread_preemption_events', [])
+        if len(events) < 256:
+            events.append({'at': self.instructions, 'from': current_tid, 'to': next_tid})
+        threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+
     def _block(self, uc, address, size, user_data):
         insn_est = max(1, size // 2)
         self.instructions += insn_est
@@ -334,6 +445,12 @@ class InterpreterProbe:
         if self._progress_interval and self.instructions % self._progress_interval < insn_est:
             self._on_progress(self)
         self.tail.append((address, size))
+        if self._stop_instruction_limit and self.instructions >= self._stop_instruction_limit:
+            self._stop_hit = True
+            self.report['stop_instruction_hit'] = self.instructions
+            uc.emu_stop()
+            return
+        self._maybe_preempt(uc)
 
     def _code(self, uc, address, size, user_data):
         self.instructions += 1
@@ -342,6 +459,12 @@ class InterpreterProbe:
         if self._progress_interval and self.instructions % self._progress_interval == 0:
             self._on_progress(self)
         self.tail.append((address, size))
+        if self._stop_instruction_limit and self.instructions >= self._stop_instruction_limit:
+            self._stop_hit = True
+            self.report['stop_instruction_hit'] = self.instructions
+            uc.emu_stop()
+            return
+        self._maybe_preempt(uc)
         # Workaround for emulator bug where a Thumb-2 IT block with mixed 16/32-bit instructions
         # leaves leftover IT bits in CPSR, corrupting subsequent non-IT instructions.
         if address in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a, 0x4000a6f4,
@@ -546,6 +669,55 @@ class InterpreterProbe:
             self._usb_connect_record = None
         return result
 
+    def inject_uipc_setconfig_objmsg(self, queue, wake_uaddr=None):
+        """Inject the labelled emulated inbound SETCONFIG ObjMsg (E0328).
+
+        Allocates the ObjMsg image inside the UIPC pool, then enqueues a
+        4-byte envelope whose word0 points at it (the ABI returned by
+        UsbControl::MsgReceiver::RcvMsg, E0324).  The object layout is
+        evidence-derived (E0323/E0324); the param map is zeroed, so this is an
+        explicitly labelled experiment, not a captured kernel message.
+        """
+        import struct as _struct
+
+        from src.a6400.execution.mwf_objmsg import (
+            build_setconfig_objmsg_image,
+        )
+        if getattr(self, 'uipc', None) is None:
+            raise ValueError('No UIPC device is initialized')
+        obj = self.uipc.allocate_message(0x80, memory_writer=self._uipc_write)
+        image = build_setconfig_objmsg_image(obj)
+        self.mu.mem_write(obj, image)
+        envelope = self.uipc.allocate_message(4, memory_writer=self._uipc_write)
+        self.mu.mem_write(envelope, _struct.pack('<I', obj))
+        self.uipc.enqueue_message(queue, envelope)
+        woken = []
+        if getattr(self, 'threads', None) is not None:
+            woken = list(self.threads.handle_uipc_wake(queue) or [])
+            if self.uipc.kernel_pool_options and self.uipc.callback_ready():
+                woken.extend(self.threads.handle_uipc_wake(-1) or [])
+        futex_woken = 0
+        if wake_uaddr is not None and getattr(self, 'threads', None) is not None:
+            futex_woken, _details = self.threads.handle_futex_wake(wake_uaddr, 1)
+        entry = {
+            'instruction': self.instructions,
+            'queue': queue,
+            'wake_uaddr': wake_uaddr,
+            'futex_woken': futex_woken,
+            'objmsg': obj,
+            'body': obj + 0x20,
+            'envelope': envelope,
+            'woken': woken,
+            'source': 'emulated-setconfig-objmsg',
+            'category': 0x6103,
+            'message_id': 0x0A4001,
+            'param_map': 'zeroed (E0325 boundary)',
+            'provenance': 'ObjMsg/body layout from E0323/E0324; not a captured '
+                          'kernel message',
+        }
+        self.report.setdefault('uipc_objmsg_injection', []).append(entry)
+        return entry
+
     def inject_uipc_message(self, queue, payload, source=None):
         """Queue one explicit UIPC message and wake the target queue waiters."""
         if getattr(self, 'uipc', None) is None:
@@ -567,12 +739,128 @@ class InterpreterProbe:
         self.report.setdefault('uipc_injection', []).append(entry)
         return entry
 
-    def install_trace_address(self, address, stack_words=16):
-        """Observe-only stop at one guest address and record the last instructions."""
+    def install_write_watch(self, begin, end, limit=20000):
+        """Observe-only write watch over a guest range (bounded record list).
+
+        Used to find which guest code writes malloc metadata in the heap
+        (E0507 heap-corruption diagnosis). Execution is unchanged.
+        """
+        self.report['write_watch_config'] = {'begin': begin, 'end': end, 'limit': limit}
         records = []
-        self.report['trace_address_config'] = {'address': address, 'observe_only': True}
+
+        def hook(uc, access, address, size, value, user_data):
+            if len(records) >= limit:
+                return
+            records.append({
+                'instruction': self.instructions,
+                'tid': getattr(self.threads, 'current_tid', None),
+                'address': address,
+                'size': size,
+                'value': value,
+                'pc': uc.reg_read(arm.UC_ARM_REG_PC),
+                'lr': uc.reg_read(arm.UC_ARM_REG_LR),
+            })
+            self.report['write_watch'] = records
+
+        self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, hook, begin=begin, end=end)
+        return records
+
+    def install_instruction_stop(self, limit):
+        """Observe-only hard stop once the absolute instruction count reaches limit.
+
+        Implemented inside the existing fast/progress hooks (no extra guest
+        hook) so the execution trajectory and instruction accounting stay
+        identical to a normal run; only the stop point changes.
+        """
+        if limit <= 0:
+            raise ValueError('stop-instruction limit must be positive')
+        self._stop_instruction_limit = limit
+        self.report['stop_instruction_config'] = {'limit': limit}
+        return limit
+
+    def install_allocator_audit(self, malloc_va=0x5025B3C8, free_va=0x5025B8D4,
+                                limit=5000, heap_begin=0x15000, heap_end=0x200000):
+        """Observe-only glibc allocator audit (E0550).
+
+        Logs malloc requests and validates free() chunk headers so the first
+        inconsistent chunk/bin state can be attributed to a specific call.
+        Execution is unchanged; records are bounded.
+        """
+        events = []
+        self.report['allocator_audit_config'] = {'malloc_va': malloc_va, 'free_va': free_va,
+                                                 'limit': limit, 'heap_begin': heap_begin,
+                                                 'heap_end': heap_end}
+
+        def record(entry):
+            if len(events) < limit:
+                events.append(entry)
+            self.report['allocator_audit'] = events
+
+        def malloc_hook(uc, address, size, user_data):
+            record({'op': 'malloc', 'size': uc.reg_read(arm.UC_ARM_REG_R0),
+                    'tid': getattr(self.threads, 'current_tid', None),
+                    'lr': uc.reg_read(arm.UC_ARM_REG_LR),
+                    'instruction': self.instructions})
+
+        def free_hook(uc, address, size, user_data):
+            ptr = uc.reg_read(arm.UC_ARM_REG_R0)
+            entry = {'op': 'free', 'ptr': ptr,
+                     'tid': getattr(self.threads, 'current_tid', None),
+                     'lr': uc.reg_read(arm.UC_ARM_REG_LR),
+                     'instruction': self.instructions}
+            try:
+                raw = bytes(uc.mem_read(ptr - 8, 8))
+                prev_size, chunk_size = struct.unpack('<II', raw)
+                entry['prev_size'] = prev_size
+                entry['chunk_size'] = chunk_size
+                size_bits = chunk_size & ~7
+                entry['size_bits'] = size_bits
+                entry['prev_inuse'] = chunk_size & 1
+                entry['mmapped'] = chunk_size & 2
+                anomalies = []
+                if ptr & 7:
+                    anomalies.append('misaligned_user_ptr')
+                if size_bits < 0x10:
+                    anomalies.append('size_too_small')
+                if size_bits > 0x1000000:
+                    anomalies.append('size_too_large')
+                if not (heap_begin <= ptr - 8 < heap_end) and not (chunk_size & 2):
+                    anomalies.append('outside_heap')
+                if ptr - 8 + size_bits > heap_end + 0x10000:
+                    anomalies.append('chunk_beyond_heap')
+                if anomalies:
+                    entry['anomalies'] = anomalies
+            except Exception as error:
+                entry['read_error'] = str(error)
+                entry['anomalies'] = ['chunk_header_unreadable']
+            record(entry)
+
+        self.mu.hook_add(unicorn.UC_HOOK_CODE, malloc_hook, begin=malloc_va, end=malloc_va)
+        self.mu.hook_add(unicorn.UC_HOOK_CODE, free_hook, begin=free_va, end=free_va)
+        return events
+
+    def install_trace_address(self, address, stack_words=16, when_r2=None, when_r0=None, max_hits=1):
+        """Observe-only stop at one guest address and record the last instructions.
+
+        When ``when_r2``/``when_r0`` is set, only a hit whose r2/r0 register
+        equals that value is recorded (used to pick out a specific write()
+        length or malloc size on a shared libc entry point). With
+        ``max_hits > 1`` several matching hits are recorded and the run stops
+        at the last requested hit.
+        """
+        records = []
+        self.report['trace_address_config'] = {'address': address, 'observe_only': True,
+                                               'max_hits': max_hits}
+        if when_r2 is not None:
+            self.report['trace_address_config']['when_r2'] = when_r2
+        if when_r0 is not None:
+            self.report['trace_address_config']['when_r0'] = when_r0
 
         def hook(uc, hook_address, size, user_data):
+            if when_r2 is not None and uc.reg_read(arm.UC_ARM_REG_R2) != when_r2:
+                return
+            if when_r0 is not None and uc.reg_read(arm.UC_ARM_REG_R0) != when_r0:
+                return
             sp = uc.reg_read(arm.UC_ARM_REG_SP)
             try:
                 raw_stack = bytes(uc.mem_read(sp, stack_words * 4))
@@ -597,7 +885,11 @@ class InterpreterProbe:
             }
             records.append(record)
             self.report['trace_address'] = record
-            uc.emu_stop()
+            hits = self.report.setdefault('trace_address_hits', [])
+            if len(hits) < 64:
+                hits.append(record)
+            if len(records) >= max_hits:
+                uc.emu_stop()
 
         self.mu.hook_add(unicorn.UC_HOOK_CODE, hook, begin=address, end=address + 4)
         return records
@@ -1866,6 +2158,29 @@ class InterpreterProbe:
                     if ret is not None:
                         event = {'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
                                  'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                        if (getattr(self, 'thread_poll_yield', False) and ret == -1022
+                                and cmd in (0x80000007, 0x8000000d) and hasattr(self, 'threads')
+                                and self.threads.current_tid in self.threads.threads):
+                            # Cooperative yield at a syscall boundary when a
+                            # non-blocking UIPC poll returns "no message": this
+                            # lets runnable peers run without arbitrary timer
+                            # preemption (E0473-safe point, avoids mid-atomic
+                            # switches under ldrex/strex lock sequences).
+                            uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                            self.threads.save_context(uc)
+                            current = self.threads.threads[self.threads.current_tid]
+                            current.state = 'runnable'
+                            next_tid = self.threads.get_next_runnable_tid()
+                            if next_tid is not None:
+                                self.report['poll_yields'] = self.report.get('poll_yields', 0) + 1
+                                event['poll_yield_to'] = next_tid
+                                self.threads.restore_context(
+                                    uc, next_tid, getattr(self, 'kuser', None))
+                            else:
+                                current.state = 'running'
+                            self.report['serviced_syscalls'].append(event)
+                            self.report['syscall_responses_supplied'] += 1
+                            return
                         if self.syscall_policy == 'threads' and ret == 0:
                             woken = []
                             if cmd == 0x80000004:
@@ -2303,13 +2618,26 @@ class InterpreterProbe:
                     self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     return
-            if number == 242:  # sched_setaffinity
+            if number == 241:  # sched_setaffinity
                 pid = uc.reg_read(arm.UC_ARM_REG_R0)
                 len_ = uc.reg_read(arm.UC_ARM_REG_R1)
                 mask = uc.reg_read(arm.UC_ARM_REG_R2)
                 ret, event = self.threads.handle_sched_setaffinity(pid, len_, mask)
                 uc.reg_write(arm.UC_ARM_REG_R0, ret)
                 event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
+                self.report['serviced_syscalls'].append(event)
+                self.report['syscall_responses_supplied'] += 1
+                return
+            if number == 242:  # sched_getaffinity
+                pid = uc.reg_read(arm.UC_ARM_REG_R0)
+                len_ = uc.reg_read(arm.UC_ARM_REG_R1)
+                mask_ptr = uc.reg_read(arm.UC_ARM_REG_R2)
+                if len_ >= 4 and mask_ptr:
+                    uc.mem_write(mask_ptr, (1).to_bytes(4, 'little'))
+                uc.reg_write(arm.UC_ARM_REG_R0, 0)
+                event = {'syscall': 'sched_getaffinity', 'r7': 242, 'pid': pid,
+                         'len': len_, 'mask': 1, 'returned': 0,
+                         'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
                 return
@@ -2963,7 +3291,8 @@ class InterpreterProbe:
             return self.finish()
         budget_remaining = instruction_budget - self.instructions if instruction_budget > self.instructions else instruction_budget
         self.run_slice(budget_remaining, timeout_us)
-        if self.hook_mode == 'fast' and self.report.get('status') in ('running', 'instruction_budget_exhausted'):
+        if (self.hook_mode == 'fast' and not getattr(self, '_stop_hit', False)
+                and self.report.get('status') in ('running', 'instruction_budget_exhausted')):
             self.instructions = max(self.instructions, instruction_budget)
         return self.finish()
 

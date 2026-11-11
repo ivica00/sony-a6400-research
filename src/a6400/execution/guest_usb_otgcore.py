@@ -253,7 +253,9 @@ GADGET_FUNCTION_TABLE = {
         otgcore_template=None,
         evidence=('E0258/E0240 host descriptor captures (VID_054C PID_0CAA PC '
                   'Remote): 1 configuration, interface 0 class 6/1/1, endpoints '
-                  '0x81 bulk 512 / 0x02 bulk 512 / 0x83 interrupt 32 interval 7'),
+                  '0x81 bulk 512 / 0x02 bulk 512 / 0x83 interrupt 32 interval 7; '
+                  'firmware-side corroboration: libptp.so interface template '
+                  '09 04 00 00 03 06 01 01 05 at 0x1bebb (E0315)'),
         unresolved_fields=(
             'otgcore SET_CONFIG entry template (count, io_type pairs, fixed '
             'fields) for a PTP selected function',
@@ -273,8 +275,11 @@ GADGET_FUNCTION_TABLE = {
                          protocol=0x00, endpoints=()),
         ),
         otgcore_template=None,
-        evidence=('E0258/E0240 composite capture: interface 1 UVC '
-                  'VideoControl class 14/1, no endpoints; IAD {8,11,1,2,14,3}'),
+        evidence=('ZV-E10 2.03 UVC chain (E0316): libInfraUsbCmn.so af830315... '
+                  'CUsbGadgetStreaming/UVC tables; verified E0154 173-byte '
+                  'configuration descriptor cc99cbd9... VideoControl 0x0E/1; '
+                  'experimental host composite capture E0258/E0240 also shows '
+                  'interface 1 class 14/1 with IAD {8,11,1,2,14,3}'),
         unresolved_fields=(
             'otgcore SET_CONFIG entry template for the UVC control function',
             'interface-association/IAD mapping to otgcore descriptor entries',
@@ -294,9 +299,10 @@ GADGET_FUNCTION_TABLE = {
                          endpoints=(UsbEndpoint(0x84, 'bulk', 512, 0),)),
         ),
         otgcore_template=None,
-        evidence=('E0240 statically audited candidate + E0258 composite capture: '
-                  'interface 2 VideoStreaming class 14/2, bulk IN endpoint 0x84 '
-                  '512 B (0x82 conflicts with PTP OUT directionless address)'),
+        evidence=('ZV-E10 2.03 UVC chain (E0316): verified E0154 173-byte '
+                  'configuration descriptor cc99cbd9... VideoStreaming 0x0E/2 '
+                  'MJPEG 1280x720, bulk-IN endpoint 0x82 512 B; experimental '
+                  'host composite capture E0240 also recorded a 14/2 interface'),
         unresolved_fields=(
             'stock-camera UVC-only topology (captures are the experimental '
             'composite; transfer type/alternate settings unverified for stock)',
@@ -324,8 +330,10 @@ GADGET_FUNCTION_TABLE = {
                          endpoints=(UsbEndpoint(0x84, 'bulk', 512, 0),)),
         ),
         otgcore_template=None,
-        evidence=('E0258 descriptor diff: device class 0xEF/2/1, 3 interfaces, '
-                  'IAD present, PTP interface identical, UVC VC/VS added'),
+        evidence=('ZV-E10 2.03 UVC chain (E0316) + verified E0154 serializer '
+                  'output cc99cbd9...: device class 0xEF/2/1, 3 interfaces, '
+                  'PTP 6/1/1 unchanged, UVC VC 0x0E/1 + VS 0x0E/2 added, IAD '
+                  '{08,0B,01,02,0E,03}'),
         unresolved_fields=(
             'otgcore SET_CONFIG entry template for a composite configuration',
             'IAD descriptor bytes beyond class/subclass ({8,11,1,2,14,3})',
@@ -333,6 +341,227 @@ GADGET_FUNCTION_TABLE = {
         notes='composite host evidence only; no otgcore selection evidence',
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# ZV-E10 2.03 UVC chain reference evidence (E0316)
+#
+# The complete UVC chain exists only in the ZV-E10 reference firmware:
+#   kmod/usbg_video.ko, kmod/usbg_audio.ko, lib/libInfraStreamingUsb.so and the
+#   ZV-E10 lib/libInfraUsbCmn.so (CUsbGadgetStreaming, PAL/NTSC descriptor
+#   tables, RegVideoDataBufInfo/UpdateVideoBufEvt/WaitVideoReadCmp).
+# All components use the same vermagic as a6400 and the a6400 kernel/modules
+# export the referenced symbols (dma330_mem_transfer_async; osal_snd_msg,
+# osal_valloc_msg_wait, osal_snd_sync_direct, osal_snd_sync_msg,
+# osal_dynamic_id, osal_free_msg, osal_rcv_msg_tmo).  This is symbol/vermagic
+# parity, not loadability or runtime proof; nothing was loaded on the camera.
+#
+# The configuration descriptor below is the compiled, verified E0154 serializer
+# output (173 bytes, SHA-256 cc99cbd9...): PTP 6/1/1 with 3 endpoints, IAD,
+# UVC VideoControl 0x0E/1, UVC VideoStreaming 0x0E/2 with MJPEG 1280x720 and
+# bulk-IN endpoint 0x82 512 B.  It supplies descriptor evidence only; the
+# otgcore SET_CONFIG io-type mapping remains unresolved.
+# ---------------------------------------------------------------------------
+ZVE10_UVC_CHAIN_COMPONENTS = {
+    '/usr/kmod/usbg_video.ko': {
+        'size': 20668,
+        'sha256': 'd385a051bf01b0e5ea37412623ae85cfe3cda76ab0d11e61d111994ca9fbf4fb',
+    },
+    '/usr/kmod/usbg_audio.ko': {
+        'size': 20456,
+        'sha256': '8f73572784aab15da291c9f311a945d4ec56d2dd4162218164bc2aa18cc5fae0',
+    },
+    '/usr/lib/libInfraStreamingUsb.so': {
+        'size': 52524,
+        'sha256': '0a9448e364e8f014db02edc8e164470c70f2d2143ce5de74697e9ffba697cce8',
+    },
+    '/usr/lib/libInfraUsbCmn.so': {
+        'size': 94612,
+        'sha256': 'af830315ce51c38b010995f2147d556286364323734f64b877fcc3bb1a916c02',
+        'note': 'ZV-E10 build with CUsbGadgetStreaming/UVC tables; a6400 tree '
+                'has a different build without streaming definitions',
+    },
+}
+ZVE10_UVC_CONFIG_DESCRIPTOR_HEX = (
+    '0902ad0003010080fa'
+    '090400000306010100'
+    '07058102000200'
+    '07050202000200'
+    '07058303200007'
+    '080b01020e030000'
+    '09040100000e010000'
+    '0d240100012800006cdc020102'
+    '122402010102000000000000000003000000'
+    '092403020101000100'
+    '09040200010e020000'
+    '0e2401013d008200020000000100'
+    '0b24060101010100000000'
+    '1e240701000005d00200'
+    '005e1a00005e1a0000e100151605000115160500'
+    '06240d010104'
+    '07058202000200'
+)
+ZVE10_UVC_CONFIG_DESCRIPTOR_SHA256 = (
+    'cc99cbd9ca3ed62b009de00e69095cf04fdc6986b337719dbda8e7c2d197231f')
+ZVE10_UVC_ACTIVATION_SEQUENCE = (
+    'StreamingGadget_init / usb_streaming_register_gadget',
+    'usb_gadgetcore_register_driver',
+    'host SET_CONFIG / proc_kevent_video',
+    'StateMachine Idle/Ready funcHostStartVideoEvt',
+    'funcStartVideoDriverCmp / VideoEsManager video_stream_start',
+    'funcProbeReqVideoEvt / SendProbeInfo (UVC PROBE)',
+    'funcCommitReqVideoEvt / SendCommitInfo (UVC COMMIT)',
+    'funcVideoStartBulkEvt / RegVideoDataBufInfo / UpdateVideoBufEvt',
+    'usbg_video iso-in + dma330_mem_transfer_async / uvc_transfer_dmac_cb',
+    'WaitVideoReadCmp / buffer completion',
+    'funcHostStopVideoEvt / video_stream_stop / unregister',
+)
+ZVE10_UVC_VIDEO_BUFFER_API = (
+    'RegVideoDataBufInfo', 'UnregVideoDataBufInfo', 'UpdateVideoBufEvt',
+    'WaitVideoReadCmp', 'SendProbeInfo', 'SendCommitInfo',
+)
+
+
+# ZV-E10 UVC descriptor source cross-check (E0317)
+#
+# The E0154 verified UVC+PTP configuration descriptor is byte-derived from the
+# ZV-E10 2.03 libInfraUsbCmn.so descriptor tables (SHA-256 af830315...):
+#   VC class-specific 40 B at file offset 0x12598
+#   VS class-specific 61 B at file offset 0x12625 (endpoint byte 0x81)
+#   MJPEG 1280x720/30fps frame 30 B at file offset 0x1263e
+# with exactly two documented adaptations (VC baInterfaceNr 1->2, VS endpoint
+# 0x81->0x82).  Descriptor evidence only: the otgcore SET_CONFIG template
+# remains unresolved and no UVC function is claimed.
+ZVE10_UVC_SOURCE_BLOBS = {
+    'vc_class_specific': {
+        'file_offset': 0x12598,
+        'length': 40,
+        'hex': ('0d240100012800006cdc020101'
+                '122402010102000000000000000003000000'
+                '092403020101000100'),
+    },
+    'vs_class_specific': {
+        'file_offset': 0x12625,
+        'length': 61,
+        'hex': ('0e2401013d008100020000000100'
+                '0b24060101010100000000'
+                '1e240701000005d00200005e1a00005e1a0000e100151605000115160500'
+                '06240d010104'),
+    },
+    'ntsc_frame': {
+        'file_offset': 0x1263e,
+        'length': 30,
+        'hex': '1e240701000005d00200005e1a00005e1a0000e100151605000115160500',
+    },
+}
+ZVE10_UVC_DESCRIPTOR_CHANGES = (
+    ('vc_class_specific', 12, 0x01, 0x02, 'baInterfaceNr 1 -> 2'),
+    ('vs_class_specific', 6, 0x81, 0x82, 'bEndpointAddress 0x81 -> 0x82'),
+)
+
+
+def uvc_ptp_configuration_source_crosscheck():
+    '''Verify the E0154 descriptor against the ZV-E10 source blobs (E0317).
+
+    Returns a dict with booleans and the exact documented byte changes.  Pure
+    byte comparison; no firmware read and no camera access.
+    '''
+    entries = parse_usb_configuration_descriptor(
+        bytes.fromhex(ZVE10_UVC_CONFIG_DESCRIPTOR_HEX))
+    class_blobs = {off: blob for off, _length, dtype, blob in entries
+                   if dtype == 0x24}
+    vc = b''.join(class_blobs[off] for off in (0x38, 0x45, 0x57))
+    vs = b''.join(class_blobs[off] for off in (0x69, 0x77, 0x82, 0xA0))
+    frame = class_blobs[0x82]
+    source = {name: bytes.fromhex(info['hex'])
+              for name, info in ZVE10_UVC_SOURCE_BLOBS.items()}
+    adapted = {'vc_class_specific': bytearray(source['vc_class_specific']),
+               'vs_class_specific': bytearray(source['vs_class_specific'])}
+    applied = []
+    for name, index, old, new, meaning in ZVE10_UVC_DESCRIPTOR_CHANGES:
+        blob = adapted[name]
+        matched = len(blob) > index and blob[index] == old
+        if matched:
+            blob[index] = new
+        applied.append({'block': name, 'index': index, 'old_byte': old,
+                        'new_byte': new, 'meaning': meaning,
+                        'source_byte_matched': matched})
+    return {
+        'vc_equal': bytes(adapted['vc_class_specific']) == vc,
+        'vs_equal': bytes(adapted['vs_class_specific']) == vs,
+        'frame_equal': source['ntsc_frame'] == frame,
+        'source_offsets': {name: info['file_offset']
+                           for name, info in ZVE10_UVC_SOURCE_BLOBS.items()},
+        'changes': applied,
+        'vc_bytes': len(vc),
+        'vs_bytes': len(vs),
+        'frame_bytes': len(frame),
+    }
+
+
+def parse_usb_configuration_descriptor(raw):
+    '''Return the flat descriptor list of a USB configuration blob.
+
+    Each item is ``(offset, length, descriptor_type, bytes)``.  Pure structure
+    parsing; no field interpretation or validation of device behaviour.
+    '''
+    entries = []
+    offset = 0
+    while offset + 2 <= len(raw):
+        length = raw[offset]
+        if length < 2 or offset + length > len(raw):
+            break
+        entries.append((offset, length, raw[offset + 1],
+                        bytes(raw[offset:offset + length])))
+        offset += length
+    return tuple(entries)
+
+
+def summarize_uvc_ptp_configuration(raw=None):
+    '''Summarize the verified UVC+PTP configuration descriptor (E0154/E0316).'''
+    data = bytes.fromhex(ZVE10_UVC_CONFIG_DESCRIPTOR_HEX) if raw is None else bytes(raw)
+    summary = {'total_length': len(data), 'interfaces': [], 'endpoints': [],
+               'class_specific': [], 'other': []}
+    for offset, length, dtype, blob in parse_usb_configuration_descriptor(data):
+        if dtype == 0x02:
+            summary['config'] = {
+                'offset': offset,
+                'wTotalLength': int.from_bytes(blob[2:4], 'little'),
+                'bNumInterfaces': blob[4],
+                'bConfigurationValue': blob[5],
+            }
+        elif dtype == 0x04:
+            summary['interfaces'].append({
+                'offset': offset,
+                'number': blob[2],
+                'alternate': blob[3],
+                'endpoints': blob[4],
+                'class_code': blob[5],
+                'subclass': blob[6],
+                'protocol': blob[7],
+            })
+        elif dtype == 0x05:
+            summary['endpoints'].append({
+                'offset': offset,
+                'address': blob[2],
+                'attributes': blob[3],
+                'max_packet_size': int.from_bytes(blob[4:6], 'little'),
+                'interval': blob[6],
+            })
+        elif dtype == 0x24:
+            entry = {'offset': offset, 'subtype': blob[2], 'length': length}
+            if blob[2] == 0x07 and length >= 26:
+                entry['frame'] = {
+                    'width': int.from_bytes(blob[5:7], 'little'),
+                    'height': int.from_bytes(blob[7:9], 'little'),
+                    'max_frame_buffer': int.from_bytes(blob[17:21], 'little'),
+                    'default_interval_100ns': int.from_bytes(blob[21:25], 'little'),
+                }
+            summary['class_specific'].append(entry)
+        else:
+            summary['other'].append({'offset': offset, 'type': dtype,
+                                     'length': length})
+    return summary
 
 
 def parse_otgcore_config(raw):

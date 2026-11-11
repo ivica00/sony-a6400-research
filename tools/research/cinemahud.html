@@ -1,0 +1,456 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CinemaHUD · Sony α6400</title><style>*{box-sizing:border-box} :root{color-scheme:dark;--gold:#f3bc62;--ink:#080909;--muted:#858885}body{margin:0;background:#050606;color:#d7d8d5;font-family:"Arial Narrow","Segoe UI",sans-serif;overflow:hidden;height:100dvh;user-select:none}.monitor{height:100%;display:grid;grid-template-columns:84px minmax(0,1fr) 84px;grid-template-rows:48px minmax(0,1fr) 37px;padding:8px 14px 5px;gap:0 12px;background:#050606}header{grid-column:1/4;display:flex;align-items:center;padding:0 10px;gap:20px;white-space:nowrap;overflow-x:auto;scrollbar-width:none}.readout{display:flex;align-items:baseline;gap:7px}.key{font-size:9px;font-weight:700;letter-spacing:1.6px;color:#898d89}.value,select{font-family:"Arial Narrow","Segoe UI",sans-serif;font-size:20px;font-weight:650;color:#e1e1dc;font-variant-numeric:tabular-nums}select{appearance:none;background:transparent;border:0;border-bottom:1px solid transparent;padding:4px 3px;cursor:pointer;max-width:105px;outline:none;border-radius:0}select:hover,select:focus{border-bottom-color:var(--gold);color:var(--gold)}select:disabled{color:#727671;cursor:default}option{background:#191b19;font-size:15px;color:#eee}.profile{margin-left:auto;display:flex;gap:9px;align-items:center}.tag{font-size:11px;letter-spacing:1px;font-weight:750}.camera-id{background:#dedfd8;color:#101210;padding:5px 8px;border-radius:2px;font-weight:800}.rail{display:flex;flex-direction:column;gap:8px;padding:10px 0;align-items:center}.rail button{width:57px;height:32px}.rail .space{height:10px}.rail .bottom{margin-top:auto}button{border:1px solid #313330;background:#262825;border-radius:4px;color:#c8cbc6;font-size:10px;font-weight:750;letter-spacing:1.25px;cursor:pointer;transition:background .15s,color .15s}button:hover{background:#3b3e38;color:#fff}button.active{background:var(--gold);border-color:#d9a04d;color:#201b12}button:disabled{opacity:.32;cursor:default}button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}#viewport-container{min-width:0;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#000}#picture{width:100%;aspect-ratio:16/9;max-height:100%;position:relative;overflow:hidden}#glcanvas{width:100%;height:100%;display:block;object-fit:contain}#hud-overlay{position:absolute;inset:0;pointer-events:none}.hud-box{position:relative;width:100%;height:100%}.frame-guide{position:absolute;inset:4%;border:1px solid rgba(202,68,61,.8)}.frame-guide:before,.frame-guide:after{content:'';position:absolute;top:50%;width:12px;height:1px;background:#d76a58}.frame-guide:before{left:0}.frame-guide:after{right:0}.grid-line{position:absolute;background:#ffffff20}.crosshair{position:absolute;background:#d4d4c6a0}.aspect-mask{position:absolute;left:0;width:100%;background:#000c;display:none}.split-label-left,.split-label-right{position:absolute;bottom:16px;font-size:10px;letter-spacing:1px;padding:5px;background:#000b;display:none}.split-label-left{left:16px}.split-label-right{right:16px}.toast{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 18px;background:#171a16ee;border:1px solid #505747;color:#e3e4dc;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;border-radius:5px;max-width:85%;z-index:10}.toast.show{opacity:1}footer{grid-column:1/4;display:flex;align-items:center;gap:22px;padding:0 9px;font-size:10px;letter-spacing:1px;font-variant-numeric:tabular-nums}footer b{font-size:11px;font-weight:600;color:#d7dad2}.status{margin:auto;display:flex;align-items:center;gap:7px;color:#97bbaa;font-size:12px;font-weight:700;letter-spacing:2px}.dot{width:8px;height:8px;border-radius:50%;background:#72c59a;box-shadow:0 0 9px #72c59a30}.source-info{color:#93978e;font-size:10px;letter-spacing:.5px}.rec-dot{color:#e95359;font-size:14px;margin-right:3px}dialog{background:#141713;color:#dedfd8;border:1px solid #43493e;border-radius:8px;padding:24px;min-width:330px;max-width:90vw;box-shadow:0 30px 100px #000b}dialog::backdrop{background:#0009;backdrop-filter:blur(5px)}dialog h2{font-size:12px;letter-spacing:3px;font-weight:650;margin:0 0 25px}dialog label{display:flex;justify-content:space-between;align-items:center;gap:30px;margin:18px 0;color:#adb2a6;font-size:12px}dialog button{padding:9px 13px}dialog select{font-size:13px;max-width:170px}input{accent-color:var(--gold)}.menu-actions{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}.menu-close{float:right;background:transparent;border:0;margin-top:-8px}#stat-gpu,#stat-out{font-size:11px}.hidden{display:none}@media(min-aspect-ratio:2/1){.monitor{grid-template-columns:80px minmax(0,1fr) 80px}#picture{width:auto;height:100%;max-width:100%}}@media(max-width:900px){.monitor{grid-template-columns:56px minmax(0,1fr) 56px;grid-template-rows:40px minmax(0,1fr) 30px;padding:4px;gap:0 8px}header{gap:13px;padding:0 4px}.key{font-size:8px;letter-spacing:1px}.value,select{font-size:15px;max-width:78px}.rail{gap:5px;padding:6px 0}.rail button{width:46px;height:27px;font-size:8px}.profile{gap:6px}footer{gap:12px;font-size:8px}footer b{font-size:9px}.source-info{font-size:8px}}@media(max-height:480px){.monitor{grid-template-rows:32px minmax(0,1fr) 25px}.rail{gap:4px;padding:3px 0}.rail button{height:24px}.rail .space{height:3px}}</style></head><body><img id="live-stream-img" src="/liveview.mjpg" style="position:fixed;left:-9999px;width:1px;height:1px" crossorigin="anonymous"><main class="monitor"><header><div class="readout"><span class="key">FPS</span><b class="value" id="stat-fps">—</b></div><label class="readout"><span class="key">SHUTTER</span><select aria-label="SHUTTER" id="sel-shutter" disabled onchange="sendControl('shutter',Number(this.value))"><option>—</option></select></label><label class="readout"><span class="key">IRIS</span><select aria-label="IRIS" id="sel-aperture" disabled onchange="sendControl('aperture',Number(this.value))"><option>—</option></select></label><label class="readout"><span class="key">EI</span><select aria-label="EI" id="sel-iso" disabled onchange="sendControl('iso',Number(this.value))"><option>—</option></select></label><label class="readout"><span class="key">EV</span><select aria-label="EV" id="sel-ev" disabled onchange="sendControl('ev',Number(this.value))"><option>—</option></select></label><div class="readout"><span class="key">WB</span><b class="value" id="readout-wb">—</b></div><div class="readout"><span class="key">FOCUS</span><b class="value" id="readout-focus">—</b></div><div class="profile"><span class="tag">STD</span><span class="tag" id="readout-mode">—</span><span class="camera-id">A</span></div></header><aside class="rail"><button id="btn-mode-bilinear" onclick="setUpscaler('bilinear')" title="Standard image">STD</button><button disabled title="Log conversion is not connected">709</button><button disabled title="Exposure assist is not connected">EXP</button><button id="btn-peaking" onclick="togglePeaking()" title="Focus peaking">PEAK</button><button disabled title="Zebras are not connected">ZEBRA</button><button id="btn-zoom" onclick="toggleZoom()" title="Display magnification">2.00×</button><div class="space"></div><button id="btn-frame" class="active" onclick="toggleFrame()">FRAME</button><button id="btn-grid" class="active" onclick="toggleGrid()">GUIDE</button><button id="btn-crop" onclick="toggleCrop()">CROP</button><button class="bottom" onclick="document.getElementById('settings-menu').showModal()">MENU</button></aside><section id="viewport-container"><div id="picture"><canvas id="glcanvas" width="1920" height="1080"></canvas><div id="hud-overlay"><div id="hud-box" class="hud-box"><div id="frame-guide" class="frame-guide"></div><div id="grid-v1" class="grid-line" style="top:0;bottom:0;left:33.33%;width:1px"></div><div id="grid-v2" class="grid-line" style="top:0;bottom:0;left:66.66%;width:1px"></div><div id="grid-h1" class="grid-line" style="left:0;right:0;top:33.33%;height:1px"></div><div id="grid-h2" class="grid-line" style="left:0;right:0;top:66.66%;height:1px"></div><div id="ch-v" class="crosshair" style="top:48.5%;height:3%;left:50%;width:1px"></div><div id="ch-h" class="crosshair" style="left:49%;width:2%;top:50%;height:1px"></div><div id="mask-top" class="aspect-mask" style="top:0;height:12.5%"></div><div id="mask-bottom" class="aspect-mask" style="bottom:0;height:12.5%"></div><div id="lbl-left" class="split-label-left">NATIVE</div><div id="lbl-right" class="split-label-right">ENHANCED</div></div></div></div><div id="toast" class="toast" role="status"></div></section><aside class="rail"><button disabled title="Scopes are not connected">SCOPE</button><button id="btn-mode-fsr" class="active" onclick="setUpscaler('fsr')" title="Enhanced image · FSR">ENH</button><button disabled title="Motion interpolation is not connected">MOTION</button><button disabled title="Noise reduction is not connected">NR1</button><div class="space"></div><button disabled>AF</button><button disabled>AEL</button><button disabled>◂ NEAR</button><button disabled>FAR ▸</button><button disabled>STILL</button><button id="btn-rec" class="bottom" disabled title="Recording control is not connected"><span class="rec-dot">●</span>REC</button></aside><footer><span><span class="key">PWR</span> <b id="stat-bat">—</b></span><span class="key">A · ILCE-6400</span><span class="status"><span class="dot"></span>LIVE PTP</span><span class="source-info">sRGB <span id="stream-format">1024 × 680</span></span></footer></main><dialog id="settings-menu"><button class="menu-close" onclick="this.closest('dialog').close()" aria-label="Close menu">✕</button><h2>CINEMA HUD / MONITOR</h2><label>RCAS sharpness <input type="range" id="sharpness-slider" min="0" max="1" step="0.05" value="0.75" oninput="updateSharpness(this.value)"><span id="sharpness-val">0.75</span></label><label>Framing <select id="sel-aspect" onchange="setAspect(this.value)"><option>16:9</option><option>2.39:1</option><option>4:3</option></select></label><div class="menu-actions"><button id="btn-flip-v" class="active" onclick="toggleFlipV()">FLIP V</button><button id="btn-flip-h" onclick="toggleFlipH()">MIRROR</button><button id="btn-split" onclick="toggleSplitScreen()">A/B</button><button id="btn-crosshair" class="active" onclick="toggleCrosshair()">CROSSHAIR</button><button onclick="toggleFullscreen()">FULL SCREEN</button></div><label>Input <span id="stat-in">—</span></label><label>Output <span id="stat-out">1920 × 1080</span></label><label>Renderer <span id="stat-gpu">WebGL2 · FSR</span></label><p style="font-size:11px;color:#838b7b;line-height:1.8">SONY ILCE-6400 · USB PTP<br>Exposure values are confirmed by the camera.</p></dialog><script>
+    const canvas = document.getElementById('glcanvas');
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false });
+
+    if (!gl) {
+      alert("WebGL2 not supported on this browser!");
+    }
+
+    // State
+    let flipV = 1; // Default upright (1 = flip inverted WebGL coordinate to match camera)
+    let flipH = 0; // Horizontal mirror
+    let upscalerMode = 'fsr';
+    let rcasSharpness = 0.75; // Noticeable, high-definition contrast-adaptive sharpness
+    let splitScreen = 0;
+    let splitPos = 0.5;
+    let peakingActive = 0;
+
+    // Mouse drag for A/B split divider
+    let isDraggingSplit = false;
+    canvas.addEventListener('mousedown', (e) => {
+      if (splitScreen) {
+        isDraggingSplit = true;
+        updateSplitFromMouse(e);
+      }
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (isDraggingSplit) updateSplitFromMouse(e);
+    });
+    window.addEventListener('mouseup', () => { isDraggingSplit = false; });
+
+    function updateSplitFromMouse(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      splitPos = Math.max(0.05, Math.min(0.95, x));
+    }
+
+    // Vertex Shader with Orientation Controls
+    const vsSource = `#version 300 es
+    in vec2 a_position;
+    out vec2 v_texCoord;
+    uniform int u_flipV;
+    uniform int u_flipH;
+
+    void main() {
+      vec2 uv = a_position * 0.5 + 0.5;
+      if (u_flipV == 1) uv.y = 1.0 - uv.y;
+      if (u_flipH == 1) uv.x = 1.0 - uv.x;
+      v_texCoord = uv;
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }`;
+
+    // Pass 1: AMD FidelityFX EASU (Continuous Catmull-Rom Bicubic Upsampling)
+    // Eliminates any blocky grid, creases or stair-stepping across pixel boundaries
+    const fsEASU = `#version 300 es
+    precision highp float;
+    in vec2 v_texCoord;
+    out vec4 fragColor;
+
+    uniform sampler2D u_texture;
+    uniform vec2 u_sourceSize; // (1024, 576)
+    uniform vec2 u_targetSize; // (1920, 1080)
+    uniform int u_splitScreen;
+    uniform float u_splitPos;
+
+    float catmullRom(float x) {
+      x = abs(x);
+      if (x <= 1.0) {
+        return 1.5 * x * x * x - 2.5 * x * x + 1.0;
+      } else if (x < 2.0) {
+        return -0.5 * x * x * x + 2.5 * x * x - 4.0 * x + 2.0;
+      }
+      return 0.0;
+    }
+
+    void main() {
+      // If Split Screen and left of divider: pass through pure bilinear
+      if (u_splitScreen == 1 && v_texCoord.x < u_splitPos) {
+        fragColor = texture(u_texture, v_texCoord);
+        return;
+      }
+      // Divider line
+      if (u_splitScreen == 1 && abs(v_texCoord.x - u_splitPos) < (1.5 / u_targetSize.x)) {
+        fragColor = vec4(1.0, 1.0, 1.0, 1.0);
+        return;
+      }
+
+      vec2 pos = v_texCoord * u_sourceSize - 0.5;
+      vec2 fp = fract(pos);
+      vec2 base = floor(pos);
+
+      vec4 color = vec4(0.0);
+      float totalWeight = 0.0;
+
+      for (int j = -1; j <= 2; j++) {
+        float wy = catmullRom(float(j) - fp.y);
+        for (int i = -1; i <= 2; i++) {
+          float wx = catmullRom(float(i) - fp.x);
+          float w = wx * wy;
+          vec2 sampleCoord = (base + vec2(float(i) + 0.5, float(j) + 0.5)) / u_sourceSize;
+          color += texture(u_texture, sampleCoord) * w;
+          totalWeight += w;
+        }
+      }
+
+      fragColor = clamp(color / max(totalWeight, 1e-4), 0.0, 1.0);
+    }`;
+
+    // Pass 2: AMD FidelityFX CAS (Contrast-Adaptive Sharpening) with Noise Suppression
+    const fsRCAS = `#version 300 es
+    precision highp float;
+    in vec2 v_texCoord;
+    out vec4 fragColor;
+
+    uniform sampler2D u_texture;
+    uniform vec2 u_resolution; // (1920, 1080)
+    uniform float u_sharpness;
+    uniform int u_peaking;
+    uniform int u_splitScreen;
+    uniform float u_splitPos;
+
+    void main() {
+      if (u_splitScreen == 1 && v_texCoord.x < u_splitPos) {
+        fragColor = texture(u_texture, v_texCoord);
+        return;
+      }
+      if (u_splitScreen == 1 && abs(v_texCoord.x - u_splitPos) < (1.5 / u_resolution.x)) {
+        fragColor = vec4(1.0, 1.0, 1.0, 1.0);
+        return;
+      }
+
+      vec2 pt = 1.0 / u_resolution;
+      vec4 c = texture(u_texture, v_texCoord);
+      vec4 a = texture(u_texture, v_texCoord + vec2(0.0, -pt.y));
+      vec4 b = texture(u_texture, v_texCoord + vec2(-pt.x, 0.0));
+      vec4 d = texture(u_texture, v_texCoord + vec2(pt.x, 0.0));
+      vec4 e = texture(u_texture, v_texCoord + vec2(0.0, pt.y));
+
+      // Min & Max local contrast
+      vec3 minRGB = min(min(min(a.rgb, b.rgb), min(d.rgb, e.rgb)), c.rgb);
+      vec3 maxRGB = max(max(max(a.rgb, b.rgb), max(d.rgb, e.rgb)), c.rgb);
+      vec3 contrast = maxRGB - minRGB;
+      float maxContrast = max(max(contrast.r, contrast.g), contrast.b);
+
+      if (u_peaking == 1 && maxContrast > 0.16) {
+        fragColor = vec4(0.0, 1.0, 0.3, 1.0);
+        return;
+      }
+
+      // AMD CAS weight: dampens in flat noise/shadow areas to prevent macroblocking,
+      // and sharpens genuine high-contrast structural edges.
+      vec3 amp = clamp(min(minRGB, 1.0 - maxRGB) / max(maxRGB, 1e-4), 0.0, 1.0);
+      vec3 w = -sqrt(amp) * (u_sharpness * 0.14);
+
+      vec3 sharpened = (a.rgb + b.rgb + d.rgb + e.rgb) * w + c.rgb;
+      sharpened /= (4.0 * w + 1.0);
+
+      // Clamp to local neighborhood bounds
+      fragColor = vec4(clamp(sharpened, minRGB, maxRGB), c.a);
+    }`;
+
+    // Pass: Direct Bilinear (Native)
+    const fsBilinear = `#version 300 es
+    precision highp float;
+    in vec2 v_texCoord;
+    out vec4 fragColor;
+    uniform sampler2D u_texture;
+    void main() {
+      fragColor = texture(u_texture, v_texCoord);
+    }`;
+
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    function createProgram(gl, vs, fs) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      return prog;
+    }
+
+    const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+    const progEASU = createProgram(gl, vs, createShader(gl, gl.FRAGMENT_SHADER, fsEASU));
+    const progRCAS = createProgram(gl, vs, createShader(gl, gl.FRAGMENT_SHADER, fsRCAS));
+    const progBilinear = createProgram(gl, vs, createShader(gl, gl.FRAGMENT_SHADER, fsBilinear));
+
+    // Fullscreen quad
+    const quadVAO = gl.createVertexArray();
+    gl.bindVertexArray(quadVAO);
+    const quadVBO = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,  1, -1, -1,  1,
+      -1,  1,  1, -1,  1,  1,
+    ]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    // Textures & Framebuffer
+    const sourceTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, sourceTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    const easuTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, easuTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1920, 1080, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    const easuFBO = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, easuFBO);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, easuTex, 0);
+
+    const liveImg = document.getElementById('live-stream-img');
+
+    let lastTime = performance.now();
+    let frameCounter = 0;
+
+    function renderLoop(time) {
+      if (liveImg && liveImg.naturalWidth > 0) {
+        gl.bindTexture(gl.TEXTURE_2D, sourceTex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, liveImg);
+
+        const srcW = liveImg.naturalWidth;
+        const srcH = liveImg.naturalHeight;
+
+        if (upscalerMode === 'fsr' || splitScreen === 1) {
+          // Pass 1: EASU into FBO
+          gl.bindFramebuffer(gl.FRAMEBUFFER, easuFBO);
+          gl.viewport(0, 0, 1920, 1080);
+          gl.useProgram(progEASU);
+          gl.uniform2f(gl.getUniformLocation(progEASU, "u_sourceSize"), srcW, srcH);
+          gl.uniform2f(gl.getUniformLocation(progEASU, "u_targetSize"), 1920, 1080);
+          gl.uniform1i(gl.getUniformLocation(progEASU, "u_splitScreen"), splitScreen);
+          gl.uniform1f(gl.getUniformLocation(progEASU, "u_splitPos"), splitPos);
+          gl.uniform1i(gl.getUniformLocation(progEASU, "u_flipV"), flipV);
+          gl.uniform1i(gl.getUniformLocation(progEASU, "u_flipH"), flipH);
+          gl.uniform1i(gl.getUniformLocation(progEASU, "u_texture"), 0);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, sourceTex);
+          gl.bindVertexArray(quadVAO);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+          // Pass 2: RCAS from FBO to Screen Canvas
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.viewport(0, 0, 1920, 1080);
+          gl.useProgram(progRCAS);
+          gl.uniform2f(gl.getUniformLocation(progRCAS, "u_resolution"), 1920, 1080);
+          gl.uniform1f(gl.getUniformLocation(progRCAS, "u_sharpness"), rcasSharpness);
+          gl.uniform1i(gl.getUniformLocation(progRCAS, "u_peaking"), peakingActive);
+          gl.uniform1i(gl.getUniformLocation(progRCAS, "u_splitScreen"), splitScreen);
+          gl.uniform1f(gl.getUniformLocation(progRCAS, "u_splitPos"), splitPos);
+          // Orientation already applied in Pass 1
+          gl.uniform1i(gl.getUniformLocation(progRCAS, "u_flipV"), 0);
+          gl.uniform1i(gl.getUniformLocation(progRCAS, "u_flipH"), 0);
+          gl.uniform1i(gl.getUniformLocation(progRCAS, "u_texture"), 0);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, easuTex);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        } else {
+          // Pure Bilinear
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.viewport(0, 0, 1920, 1080);
+          gl.useProgram(progBilinear);
+          gl.uniform1i(gl.getUniformLocation(progBilinear, "u_flipV"), flipV);
+          gl.uniform1i(gl.getUniformLocation(progBilinear, "u_flipH"), flipH);
+          gl.uniform1i(gl.getUniformLocation(progBilinear, "u_texture"), 0);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, sourceTex);
+          gl.bindVertexArray(quadVAO);
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+        }
+
+        frameCounter++;
+        if (time - lastTime >= 1000) {
+          const fps = ((frameCounter * 1000) / (time - lastTime)).toFixed(1);
+          // Display the PTP capture rate rather than the browser repaint rate.
+          document.getElementById('stat-in').innerText = `${srcW}x${srcH}`;
+          frameCounter = 0;
+          lastTime = time;
+        }
+      }
+      requestAnimationFrame(renderLoop);
+    }
+    requestAnimationFrame(renderLoop);
+
+    // UI Handlers
+    function setUpscaler(mode) {
+      upscalerMode = mode;
+      splitScreen = 0;
+      document.getElementById('btn-mode-fsr').className = mode === 'fsr' ? 'active' : '';
+      document.getElementById('btn-mode-bilinear').className = mode === 'bilinear' ? 'active' : '';
+      document.getElementById('btn-split').className = '';
+      document.getElementById('lbl-left').style.display = 'none';
+      document.getElementById('lbl-right').style.display = 'none';
+      showToast(mode === 'fsr' ? "AMD FSR 1.0 (EASU+RCAS) Active" : "Native Bilinear (Off)");
+    }
+
+    function toggleSplitScreen() {
+      splitScreen = splitScreen ? 0 : 1;
+      document.getElementById('btn-split').className = splitScreen ? 'active' : '';
+      document.getElementById('lbl-left').style.display = splitScreen ? 'block' : 'none';
+      document.getElementById('lbl-right').style.display = splitScreen ? 'block' : 'none';
+      if (splitScreen) {
+        showToast("A/B Split Screen ON (Drag across canvas to compare)");
+      } else {
+        setUpscaler(upscalerMode);
+      }
+    }
+
+    function toggleFlipV() {
+      flipV = flipV ? 0 : 1;
+      document.getElementById('btn-flip-v').className = flipV ? 'active' : '';
+      showToast(flipV ? "Vertical Flip ON (Upright)" : "Vertical Flip OFF (Inverted)");
+    }
+
+    function toggleFlipH() {
+      flipH = flipH ? 0 : 1;
+      document.getElementById('btn-flip-h').className = flipH ? 'active' : '';
+      showToast(flipH ? "Horizontal Mirror ON" : "Horizontal Mirror OFF");
+    }
+
+    function updateSharpness(val) {
+      rcasSharpness = parseFloat(val);
+      document.getElementById('sharpness-val').innerText = val;
+    }
+
+    function togglePeaking() {
+      peakingActive = peakingActive ? 0 : 1;
+      document.getElementById('btn-peaking').className = peakingActive ? 'active' : '';
+      showToast(peakingActive ? "Focus Peaking ON" : "Focus Peaking OFF");
+    }
+
+    function toggleGrid() {
+      const v1 = document.getElementById('grid-v1');
+      const show = v1.style.display === 'none';
+      ['grid-v1', 'grid-v2', 'grid-h1', 'grid-h2'].forEach(id => {
+        document.getElementById(id).style.display = show ? 'block' : 'none';
+      });
+      document.getElementById('btn-grid').className = show ? 'active' : '';
+    }
+
+    function toggleCrosshair() {
+      const ch = document.getElementById('ch-v');
+      const show = ch.style.display === 'none';
+      ['ch-v', 'ch-h'].forEach(id => {
+        document.getElementById(id).style.display = show ? 'block' : 'none';
+      });
+      document.getElementById('btn-crosshair').className = show ? 'active' : '';
+    }
+
+    function setAspect(aspect) {
+      const top = document.getElementById('mask-top');
+      const bot = document.getElementById('mask-bottom');
+      if (aspect === '2.39:1') {
+        top.style.display = 'block';
+        bot.style.display = 'block';
+      } else {
+        top.style.display = 'none';
+        bot.style.display = 'none';
+      }
+      showToast(`Aspect Guide: ${aspect}`);
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    function toggleRecord() {
+      sendControl('recording', true);
+    }
+
+    let cameraCommandPending = false;
+    async function refreshCameraSettings() {
+      try {
+        const response = await fetch('/api/status', {cache: 'no-store'});
+        if (!response.ok) throw new Error('Camera status unavailable');
+        const state = await response.json();
+        document.getElementById('stat-fps').textContent = Number(state.fps || 0).toFixed(2);
+        document.getElementById('stream-format').textContent = `${state.input_width || '—'} × ${state.input_height || '—'}`;
+        document.getElementById('stat-bat').textContent = state.battery == null ? '—' : `${state.battery}%`;
+        document.getElementById('readout-wb').textContent=state.white_balance || '—';
+        document.getElementById('readout-focus').textContent=state.focus_mode || '—';
+        document.getElementById('readout-mode').textContent=state.exposure_mode || '—';
+        for (const name of ['shutter', 'aperture', 'iso', 'ev']) {
+          const select = document.getElementById(`sel-${name}`);
+          const control = (state.controls || {})[name];
+          select.disabled = cameraCommandPending || !control || !control.writable;
+          select.title = state.controls_reason || '';
+          if (cameraCommandPending) continue;
+          select.replaceChildren();
+          if (!control) {
+            select.add(new Option('Unavailable', ''));
+            continue;
+          }
+          const options = [...control.options];
+          if (!options.some(o => o.value === control.value)) options.unshift({value: control.value, label: control.label});
+          for (const option of options) select.add(new Option(option.label, String(option.value)));
+          select.value = String(control.value);
+        }
+      } catch (error) {
+        for (const name of ['shutter', 'aperture', 'iso', 'ev']) document.getElementById(`sel-${name}`).disabled = true;
+      }
+    }
+    refreshCameraSettings();
+    setInterval(refreshCameraSettings, 1000);
+
+    function sendControl(param, value) {
+      if (cameraCommandPending) return;
+      cameraCommandPending = true;
+      for (const name of ['shutter', 'aperture', 'iso', 'ev']) document.getElementById(`sel-${name}`).disabled = true;
+      fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ param, value })
+      })
+      .then(async res => {
+        const data = await res.json();
+        if (!res.ok || data.applied !== true) {
+          throw new Error(data.message || 'Camera command was not confirmed');
+        }
+        showToast(`${param.toUpperCase()}: ${value}`);
+      })
+      .catch(err => showToast(err.message))
+      .finally(() => { cameraCommandPending = false; refreshCameraSettings(); });
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.className = 'toast show';
+      clearTimeout(window._toastTimeout);
+      window._toastTimeout = setTimeout(() => t.className = 'toast', 2000);
+    }
+  
+    function toggleFrame(){const el=document.getElementById('frame-guide'); const on=el.style.display==='none';el.style.display=on?'block':'none';document.getElementById('btn-frame').className=on?'active':'';}
+    function toggleCrop(){const el=document.getElementById('btn-crop');const on=el.className!=='active';setAspect(on?'2.39:1':'16:9');el.className=on?'active':'';}
+    function toggleZoom(){const el=document.getElementById('btn-zoom');const on=el.className!=='active';canvas.style.transform=on?'scale(2)':'';el.className=on?'active':'';}
+    document.addEventListener('keydown',e=>{if(e.target.matches('select,input'))return;if(e.key==='Escape')document.getElementById('settings-menu').close();if(e.key.toLowerCase()==='n')document.getElementById('settings-menu').showModal();if(e.key.toLowerCase()==='g')toggleGrid();if(e.key.toLowerCase()==='f')toggleFrame();if(e.key.toLowerCase()==='p')togglePeaking();});
+</script></body></html>

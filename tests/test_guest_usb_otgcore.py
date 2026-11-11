@@ -25,6 +25,16 @@ from src.a6400.execution.guest_usb_otgcore import (
     GADGET_FUNCTION_TABLE,
     gadget_function,
     parse_otgcore_config,
+    parse_usb_configuration_descriptor,
+    summarize_uvc_ptp_configuration,
+    ZVE10_UVC_CHAIN_COMPONENTS,
+    ZVE10_UVC_CONFIG_DESCRIPTOR_HEX,
+    ZVE10_UVC_CONFIG_DESCRIPTOR_SHA256,
+    ZVE10_UVC_ACTIVATION_SEQUENCE,
+    ZVE10_UVC_VIDEO_BUFFER_API,
+    ZVE10_UVC_SOURCE_BLOBS,
+    ZVE10_UVC_DESCRIPTOR_CHANGES,
+    uvc_ptp_configuration_source_crosscheck,
 )
 
 
@@ -591,3 +601,84 @@ class TestGuestUsbOtgCoreGadgetFunctions(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestZvE10UvcChainEvidence(unittest.TestCase):
+    """E0316: ZV-E10 UVC chain reference evidence (hash-pinned, static only)."""
+
+    def test_component_hashes_and_descriptor_sha(self):
+        import hashlib
+        raw = bytes.fromhex(ZVE10_UVC_CONFIG_DESCRIPTOR_HEX)
+        self.assertEqual(len(raw), 173)
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         ZVE10_UVC_CONFIG_DESCRIPTOR_SHA256)
+        self.assertEqual(len(ZVE10_UVC_CHAIN_COMPONENTS), 4)
+        self.assertEqual(ZVE10_UVC_CHAIN_COMPONENTS['/usr/kmod/usbg_video.ko']['size'],
+                         20668)
+        self.assertEqual(len(ZVE10_UVC_CHAIN_COMPONENTS['/usr/kmod/usbg_video.ko']
+                             ['sha256']), 64)
+
+    def test_descriptor_chain_matches_uvc_ptp_layout(self):
+        summary = summarize_uvc_ptp_configuration()
+        self.assertEqual(summary['config']['wTotalLength'], 173)
+        self.assertEqual(summary['config']['bNumInterfaces'], 3)
+        ifaces = [(i['number'], i['class_code'], i['subclass'], i['protocol'],
+                   i['endpoints']) for i in summary['interfaces']]
+        self.assertEqual(ifaces, [(0, 0x06, 0x01, 0x01, 3),
+                                  (1, 0x0E, 0x01, 0x00, 0),
+                                  (2, 0x0E, 0x02, 0x00, 1)])
+        endpoints = [(e['address'], e['attributes'], e['max_packet_size'],
+                      e['interval']) for e in summary['endpoints']]
+        self.assertEqual(endpoints, [(0x81, 2, 512, 0), (0x02, 2, 512, 0),
+                                     (0x83, 3, 32, 7), (0x82, 2, 512, 0)])
+        frames = [c['frame'] for c in summary['class_specific'] if 'frame' in c]
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0]['width'], 1280)
+        self.assertEqual(frames[0]['height'], 720)
+        self.assertEqual(frames[0]['default_interval_100ns'], 333333)
+        self.assertEqual(frames[0]['max_frame_buffer'], 14745600)
+
+    def test_uvc_table_entries_still_bound_the_otgcore_template(self):
+        for name in ('ptp', 'uvc-control', 'uvc-streaming',
+                     'composite-ptp-uvc'):
+            entry = gadget_function(name)
+            self.assertIn(entry.kind, ('usb-interface', 'usb-composite'))
+            if name != 'ptp':
+                self.assertIsNone(entry.otgcore_template)
+                self.assertTrue(entry.unresolved_fields)
+                self.assertIn('ZV-E10', entry.evidence)
+        self.assertIn('libptp.so', gadget_function('ptp').evidence)
+        self.assertTrue(ZVE10_UVC_ACTIVATION_SEQUENCE)
+        self.assertIn('RegVideoDataBufInfo', ZVE10_UVC_VIDEO_BUFFER_API)
+
+
+class TestZvE10UvcDescriptorCrossCheck(unittest.TestCase):
+    """E0317: E0154 descriptor bytes equal ZV-E10 source bytes + 2 changes."""
+
+    def test_descriptor_is_source_bytes_with_documented_changes(self):
+        result = uvc_ptp_configuration_source_crosscheck()
+        self.assertTrue(result['vc_equal'])
+        self.assertTrue(result['vs_equal'])
+        self.assertTrue(result['frame_equal'])
+        self.assertEqual(result['vc_bytes'], 40)
+        self.assertEqual(result['vs_bytes'], 61)
+        self.assertEqual(result['frame_bytes'], 30)
+        self.assertEqual(result['source_offsets'],
+                         {'vc_class_specific': 0x12598,
+                          'vs_class_specific': 0x12625,
+                          'ntsc_frame': 0x1263e})
+        changes = [(c['block'], c['index'], c['old_byte'], c['new_byte'])
+                   for c in result['changes']]
+        self.assertEqual(changes, [('vc_class_specific', 12, 0x01, 0x02),
+                                   ('vs_class_specific', 6, 0x81, 0x82)])
+        self.assertTrue(all(c['source_byte_matched']
+                            for c in result['changes']))
+
+    def test_source_blob_lengths_match_offsets(self):
+        self.assertEqual(len(bytes.fromhex(
+            ZVE10_UVC_SOURCE_BLOBS['vc_class_specific']['hex'])), 40)
+        self.assertEqual(len(bytes.fromhex(
+            ZVE10_UVC_SOURCE_BLOBS['vs_class_specific']['hex'])), 61)
+        self.assertEqual(len(bytes.fromhex(
+            ZVE10_UVC_SOURCE_BLOBS['ntsc_frame']['hex'])), 30)
+        self.assertEqual(len(ZVE10_UVC_DESCRIPTOR_CHANGES), 2)

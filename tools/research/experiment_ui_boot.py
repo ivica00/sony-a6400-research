@@ -83,16 +83,53 @@ def build_parser():
                         help='symbol name to capture; empty uses the Dataflow OSD mute symbol')
     parser.add_argument('--trace-address', type=lambda value: int(value, 0), default=None,
                         help='observe-only stop at one guest guest address and record the last instructions')
+    parser.add_argument('--watch-write-range', default=None,
+                        help='observe-only write watch on a guest range BEGIN:END (hex), bounded records')
+    parser.add_argument('--allocator-audit', action='store_true',
+                        help='observe-only glibc malloc/free audit (records sizes and validates free chunk headers)')
+    parser.add_argument('--stop-instruction', type=lambda value: int(value, 0), default=None,
+                        help='observe-only hard stop when the absolute instruction count reaches this value')
+    parser.add_argument('--guest-patch-logalloc-0x50', action='store_true',
+                        help='experimental modified-firmware patch: change the stella log-block malloc size 0x4C->0x50 '
+                             'in the loaded libObj copy (separate output; recorded in the report)')
+    parser.add_argument('--guest-inventory-dir', type=Path, default=None,
+                        help='alternate inventory folder (guest-filesystem/baseline/elf-inventory) for a fidelity experiment')
+    parser.add_argument('--guest-patch', action='append', default=[],
+                        help='experimental modified-firmware patch SPEC = VA:EXPECTED_HEX:REPLACEMENT_HEX '
+                             '(e.g. 0x5482E984:0430:0030); repeatable; verified before writing')
+    parser.add_argument('--trace-when-r2', type=lambda value: int(value, 0), default=None,
+                        help='with --trace-address: only record a hit whose r2 register equals this value')
+    parser.add_argument('--trace-when-r0', type=lambda value: int(value, 0), default=None,
+                        help='with --trace-address: only record a hit whose r0 register equals this value')
+    parser.add_argument('--trace-max-hits', type=int, default=1,
+                        help='with --trace-address: record this many matching hits before stopping')
     parser.add_argument('--trace-gles-bar', action='store_true',
                         help='observe-only MMIO read/write logging on the resumed dmpgles2 BAR mapping')
+    parser.add_argument('--thread-timeslice', type=int, default=0,
+                        help='opt-in deterministic timer preemption: switch a running thread to a '
+                             'runnable peer every N guest instructions (0 keeps cooperative baseline)')
+    parser.add_argument('--thread-poll-yield', action='store_true',
+                        help='opt-in cooperative switch at a syscall boundary when a non-blocking '
+                             'UIPC poll returns EAGAIN (lets runnable peers run safely)')
     parser.add_argument('--gles-engine-model', choices=('none', 'command-completion'), default='none',
                         help='opt-in GPES device-work model: command submitted in BAR+0xE8 header '
                              'yields the physically observed IRQ status class 0x40000000 (decoded ack; '
                              'no guest ctx completion)')
+    parser.add_argument('--gles-engine-seed-observed-block', action='store_true',
+                        help='seed the exact e0377-observed BAR command block (hash d38fef042304f2ae) '
+                             'on resume, before running; evidence-backed device state only')
     parser.add_argument('--uipc-inject-queue', type=lambda value: int(value, 0), default=None,
                         help='verified UIPC target queue id for one scripted message (opt-in)')
     parser.add_argument('--uipc-inject-payload', default=None,
                         help='hex payload for the one scripted UIPC message')
+    parser.add_argument('--uipc-inject-objmsg-setconfig-queue', type=lambda value: int(value, 0),
+                        default=None,
+                        help='opt-in experiment: deliver the labelled emulated inbound SETCONFIG '
+                             'ObjMsg (E0323/E0324 layout; zeroed param map) to this UIPC queue')
+    parser.add_argument('--uipc-inject-objmsg-wake-uaddr', type=lambda value: int(value, 0),
+                        default=None,
+                        help='optional futex address to wake after the emulated SETCONFIG enqueue '
+                             '(e.g. the receiver OSAL condvar observed at the resumed state)')
     parser.add_argument('--uipc-pool-options', choices=('legacy-empty', 'kernel-e0300', 'kernel-e0301', 'kernel-e0303'),
                         default='legacy-empty', help='opt-in kernel options; e0300 keeps completion boundary, e0301 adds ordinary async completion, same-process sync callbacks and kernel dynamic IDs, e0303 adds generic multi-consumer/broadcast completion, sync queue 0x009c015b and allocator-driven CONNECT/dynamic IDs')
     parser.add_argument('--usb-otgcore-device', choices=('stop', 'driver-bound'), default='stop',
@@ -142,6 +179,14 @@ def main():
     session = build_boot_session(args, parser)
     probe = session.probe
     probe.gles_bar_trace = bool(getattr(args, 'trace_gles_bar', False))
+    if getattr(args, 'thread_timeslice', 0) > 0:
+        probe.thread_timeslice = args.thread_timeslice
+        probe.report['thread_timeslice'] = args.thread_timeslice
+        print(f'[*] Deterministic timer preemption enabled: {args.thread_timeslice} instructions.')
+    if getattr(args, 'thread_poll_yield', False):
+        probe.thread_poll_yield = True
+        probe.report['thread_poll_yield'] = True
+        print('[*] Cooperative UIPC poll-yield enabled.')
     if getattr(args, 'gles_engine_model', 'none') != 'none':
         probe.gles.engine_model = True
         # A resumed checkpoint may already contain a submitted command and the
@@ -150,6 +195,8 @@ def main():
         probe.gles.engine_command_seen = False
         probe.gles.dev_a8 = 0
         probe.gles.engine_completions = 0
+        probe.gles.engine_state_events = 0
+        probe.gles.engine_submitted = False
         probe.report['gles_engine_model'] = args.gles_engine_model
         ranges = probe.discover_resumed_gles_bar()
         if ranges:
@@ -157,6 +204,26 @@ def main():
                   f'(BAR 0x{ranges[0][0]:x}+0x{ranges[0][1]:x}; command-completion -> '
                   'observed IRQ class 0x40000000; no guest ctx completion).')
             probe.install_resumed_gles_bar_hooks()
+            if getattr(args, 'gles_engine_seed_observed_block', False):
+                # Exact command block recorded from the guest's own writes in
+                # e0377 (ring-values hash d38fef042304f2ae): header +0xE8..+0xF0
+                # then the 0x80-byte descriptor +0xF4..+0x174.
+                import struct as _struct
+                block = bytearray(0x8C)
+                block[0x00:0x04] = _struct.pack('<I', 0x00050001)
+                _struct.pack_into('<I', block, 0x04, 0xFFFFFFFF)
+                _struct.pack_into('<I', block, 0x08, 0)
+                _struct.pack_into('<I', block, 0x04, 0)
+                words = [0x21, 0x8, 0x3E8, 0x579CF460, 0x2, 0x599F8, 0x59948,
+                         0x11B7B0, 0x11B7A0, 0x1, 0, 0, 5, 0, 0, 0x579D8020,
+                         0x202E8020, 0x4] + [0] * 12 + [0x99E10, 0x99E30]
+                for index, value in enumerate(words):
+                    _struct.pack_into('<I', block, 0x0C + index * 4, value)
+                probe.mu.mem_write(ranges[0][0] + 0xE8, bytes(block))
+                probe.report['gles_engine_seed'] = {
+                    'source': 'e0377 observed BAR command block',
+                    'bar': ranges[0][0], 'length': len(block),
+                    'sha256': __import__('hashlib').sha256(bytes(block)).hexdigest()}
         else:
             print(f'[*] GPES engine model enabled: {args.gles_engine_model} '
                   '(no resumed BAR range yet; fresh mmap will bind it).')
@@ -173,8 +240,67 @@ def main():
         else:
             print('[!] --trace-gles-bar: no resumed dmpgles2 device range found.')
     if getattr(args, 'trace_address', None) is not None:
-        probe.install_trace_address(args.trace_address)
+        probe.install_trace_address(args.trace_address,
+                                    when_r2=getattr(args, 'trace_when_r2', None),
+                                    when_r0=getattr(args, 'trace_when_r0', None),
+                                    max_hits=getattr(args, 'trace_max_hits', 1))
         print(f'[*] Observing one guest address at 0x{args.trace_address:08x}.')
+    if getattr(args, 'watch_write_range', None):
+        try:
+            begin_text, end_text = args.watch_write_range.split(':', 1)
+            watch_begin, watch_end = int(begin_text, 0), int(end_text, 0)
+        except ValueError as error:
+            raise SystemExit(f'--watch-write-range expects BEGIN:END (hex): {error}')
+        probe.install_write_watch(watch_begin, watch_end)
+        print(f'[*] Observing writes in 0x{watch_begin:08x}-0x{watch_end:08x}.')
+    if getattr(args, 'allocator_audit', False):
+        probe.install_allocator_audit()
+        print('[*] glibc allocator audit enabled (malloc/free chunk validation).')
+    if getattr(args, 'stop_instruction', None):
+        probe.install_instruction_stop(args.stop_instruction)
+        print(f'[*] Hard stop at absolute instruction {args.stop_instruction}.')
+    for patch_spec in (getattr(args, 'guest_patch', None) or []):
+        try:
+            va_text, expected_text, replacement_text = patch_spec.split(':')
+            patch_va = int(va_text, 0)
+            expected = bytes.fromhex(expected_text)
+            replacement = bytes.fromhex(replacement_text)
+        except ValueError as error:
+            raise SystemExit(f'--guest-patch expects VA:EXPECTED:REPLACEMENT: {error}')
+        if len(expected) != len(replacement):
+            raise SystemExit('--guest-patch expected and replacement lengths must match')
+        try:
+            current = bytes(probe.mu.mem_read(patch_va, len(expected)))
+        except Exception as error:
+            raise SystemExit(f'guest patch: cannot read 0x{patch_va:08x}: {error}')
+        if current != expected:
+            raise SystemExit(f'guest patch: unexpected bytes at 0x{patch_va:08x}: '
+                             f'{current.hex()} (expected {expected.hex()})')
+        probe.mu.mem_write(patch_va, replacement)
+        entry = {'label': 'guest_patch_cli', 'va': patch_va,
+                 'expected_hex': expected.hex(), 'replacement_hex': replacement.hex(),
+                 'source': 'guest-patch CLI (modified-firmware experiment)'}
+        probe.report.setdefault('guest_patches', []).append(entry)
+        print(f'[*] Experimental guest patch 0x{patch_va:08x}: {expected.hex()} -> {replacement.hex()}')
+    if getattr(args, 'guest_patch_logalloc_0x50', False):
+        patch_va = 0x5482FE16
+        expected = b'\x4c\x20'
+        replacement = b'\x50\x20'
+        try:
+            current = bytes(probe.mu.mem_read(patch_va, 2))
+        except Exception as error:
+            raise SystemExit(f'guest patch: cannot read 0x{patch_va:08x}: {error}')
+        if current != expected:
+            raise SystemExit(f'guest patch: unexpected bytes at 0x{patch_va:08x}: '
+                             f'{current.hex()} (expected {expected.hex()})')
+        probe.mu.mem_write(patch_va, replacement)
+        probe.report['guest_patch'] = {
+            'label': 'stella_logalloc_chunksize_0x50_overlay',
+            'va': patch_va, 'expected_hex': expected.hex(),
+            'replacement_hex': replacement.hex(),
+            'source': 'extracted libObj.so offset 0x79FE16 (movs r0,#0x4C -> #0x50)'}
+        print(f'[*] Experimental guest patch applied at 0x{patch_va:08x}: '
+              f'{expected.hex()} -> {replacement.hex()} (log-block malloc 0x4C->0x50).')
     manifest = session.manifest
     if session.usb_connect_event:
         probe.arm_usb_connect_event(session.usb_connect_event, session.usb_connect_at)
@@ -188,6 +314,17 @@ def main():
         except Exception as error:
             probe.report['uipc_injection_error'] = str(error)
             print(f'[!] UIPC injection failed: {error}')
+    if session.uipc_setconfig_objmsg_queue is not None:
+        try:
+            entry = probe.inject_uipc_setconfig_objmsg(
+                session.uipc_setconfig_objmsg_queue,
+                wake_uaddr=session.uipc_setconfig_objmsg_wake)
+            print(f"[*] Injected emulated SETCONFIG ObjMsg queue=0x"
+                  f"{entry['queue']:08x} obj=0x{entry['objmsg']:08x} "
+                  f"woken={entry['woken']} (labelled experiment).")
+        except Exception as error:
+            probe.report['uipc_objmsg_injection_error'] = str(error)
+            print(f'[!] SETCONFIG ObjMsg injection failed: {error}')
 
     print(f"[*] Running probe (budget: {args.instructions} instructions)...")
     report = probe.run(instruction_budget=args.instructions, timeout_us=args.timeout_us)

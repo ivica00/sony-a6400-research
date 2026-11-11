@@ -75,3 +75,9 @@ tools/native_camera/zve10_uvc_tree.h
 /tools/native_camera/test_ptrace_call
 /tools/native_camera/test_uipc_media
 /tools/native_camera/uvc_probe_dma_meta
+
+# Local Android tool downloads
+/.android-tools/
+
+# User-owned LUT pack: bundled only in local APKs
+/android/cinemahud/assets/user_luts/

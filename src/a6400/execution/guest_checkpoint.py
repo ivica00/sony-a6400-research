@@ -89,6 +89,10 @@ def save_checkpoint(probe, filepath: Path) -> int:
     # 3. Python Subsystem State
     subsystems: Dict[str, Any] = {
         'instructions': probe.instructions,
+        'runtime': {
+            'thread_timeslice': getattr(probe, 'thread_timeslice', 0),
+            'timeslice_mark': getattr(probe, '_timeslice_mark', 0),
+        },
         'signal_handlers': dict(probe.signal_handlers),
         'serviced_syscalls': list(probe.report.get('serviced_syscalls', [])),
         'syscall_responses_supplied': probe.report.get('syscall_responses_supplied', 0),
@@ -224,6 +228,11 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
     # 4. Restore Python Subsystem State
     sub = payload['subsystems']
     probe.instructions = sub['instructions']
+    runtime = sub.get('runtime') or {}
+    if runtime:
+        if 'thread_timeslice' in runtime:
+            probe.thread_timeslice = runtime['thread_timeslice']
+        probe._timeslice_mark = runtime.get('timeslice_mark', probe.instructions)
     probe.signal_handlers = sub['signal_handlers']
     probe.report['serviced_syscalls'] = sub['serviced_syscalls']
     probe.report['syscall_responses_supplied'] = sub['syscall_responses_supplied']

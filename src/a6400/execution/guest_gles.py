@@ -103,6 +103,7 @@ class GuestGles:
         self.engine_event_status = 0
         self.dev_a8 = 0
         self.event_waiters = []
+        self.engine_state_events = 0
 
     def __setstate__(self, state):
         """Restore old checkpoints that predate the BAR/engine-model fields."""
@@ -126,6 +127,10 @@ class GuestGles:
             self.dev_a8 = 0
         if not hasattr(self, 'event_waiters'):
             self.event_waiters = []
+        if not hasattr(self, 'engine_state_events'):
+            self.engine_state_events = 0
+        if not hasattr(self, 'engine_submitted'):
+            self.engine_submitted = False
 
     def open(self, flags, caller_pid, caller_tgid, user_ranges=()):
         if self.binding is None:
@@ -239,6 +244,28 @@ class GuestGles:
                 mask = 0x04000000
             if getattr(self, 'engine_model', False):
                 self._poll_engine_command(mem_read, mem_write)
+                if (self.dev_a8 == 0 and getattr(self, 'engine_submitted', False)
+                        and getattr(self, 'engine_state_events', 0) < 16):
+                    # Bounded engine-state event source: the physical BAR+0x34
+                    # poll (E0313) observed the states 0x80000000 (492x) and
+                    # 0x40000000 (793x) while the engine was active; deliver at
+                    # most 16 of these per submitted descriptor, matching the
+                    # class the caller is waiting for.
+                    self.engine_state_events += 1
+                    if mask & 0x80000000:
+                        event_bit = 0x80000000
+                    elif mask & 0x04000000:
+                        event_bit = 0x04000000
+                    else:
+                        event_bit = 0x80000000
+                    # 0x01000000 is the event-present bit the guest's 0x72B660
+                    # tests; the class bit alone keeps it in the wait loop
+                    # (task-68/E0447). Include it with the selected class.
+                    self.dev_a8 |= event_bit | 0x01000000
+                    self.transactions.append({'operation': 'engine-state',
+                                              'event_bit': event_bit,
+                                              'index': self.engine_state_events,
+                                              'mask': mask, 'tid': tid})
                 # grm_gles.ko loop checks [dev+0xA8] for a pending status; the
                 # mask selects which classes the caller cares about but any
                 # pending event is reported (observed guest masks include
@@ -383,6 +410,15 @@ class GuestGles:
                 ctx_key, ctx_info = self._ctx_identity(mem_read, arg, tid, owner, 'signal')
                 if event_id == 0:
                     ctx_map.setdefault(ctx_key, {'done': False})['done'] = True
+                    # The kernel wait resolves its ctx from the current task
+                    # (not the signal's user descriptor); the process-level key
+                    # is the model proxy for that task ctx. Mark it too, as an
+                    # explicit assumption (gles_ctx_process_completion_assumption),
+                    # so a key-0 signal from a thread of the process can release
+                    # the process' waiter.
+                    process_key = owner.get('caller_tgid') or tid
+                    if process_key != ctx_key:
+                        ctx_map.setdefault(process_key, {'done': False})['done'] = True
                     mem_write(arg, struct.pack('<I', 0))
                     outcome = 'complete_current_task'
                 else:
@@ -517,6 +553,17 @@ class GuestGles:
                      'arg': arg, 'tid': tid, 'source': source,
                      'key_source': 'resolved_ctx' if ctx_ptr else 'tgid_fallback'}
 
+    def _engine_descriptor_present(self, mem_read):
+        if self.bar_virtual is None:
+            return False
+        try:
+            descriptor = bytes(mem_read(self.bar_virtual + 0xF4, 4))
+            completion = bytes(mem_read(self.bar_virtual + 0x16C, 4))
+        except Exception:
+            return False
+        return (len(descriptor) >= 4 and descriptor[0] == 0x21
+                and len(completion) >= 4 and any(completion))
+
     def _poll_engine_command(self, mem_read, mem_write):
         """Opt-in device-work model for the GPES command block.
 
@@ -540,6 +587,7 @@ class GuestGles:
         if not (header_ok or descriptor_ok):
             return None
         self.engine_command_seen = True
+        self.engine_submitted = True
         self.engine_completions += 1
         self.engine_event_status |= 0x45000000
         self.dev_a8 |= 0x45000000
@@ -562,7 +610,9 @@ class GuestGles:
         if self.engine_command_seen:
             return None
         self.engine_command_seen = True
+        self.engine_submitted = True
         self.engine_completions += 1
+        self.engine_submitted = True
         self.engine_event_status |= 0x45000000
         self.dev_a8 |= 0x45000000
         self.transactions.append({'operation': 'engine-command', 'status': 0x40000000,

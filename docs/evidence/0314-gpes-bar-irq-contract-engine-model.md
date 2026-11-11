@@ -111,6 +111,17 @@ Suite **880 OK**.
   **blocked_gles_wait** at 0x72BAF0 (LR 0x72BB19). 0x820E=2, 0x820D=1004,
   dev_a8 consumed to 0; TID1011 still futex 0x99E34; TID1009/INFRA0 blocked;
   no THREAD_APP/sem/view yet.
+* `ctxfix1` (resume `boot-e0421-new-BB50.ckpt` 308,692,133, 1M): the kernel
+  wait resolves its ctx from the **current task**, while the signal resolves
+  through the user descriptor, so the model marks both the resolved ctx and
+  the process-level ctx on a key-0 signal (assumption
+  `gles_ctx_process_completion_assumption`). Result: TID1054's 0x72BAF0 wait
+  returned completed (twice), **0x820E=3 / 0x820D=1006**, TID1054 advanced to
+  an event-wait again (blocked_gles_event), TID1011 still futex 0x99E34. More
+  executor cycles now run; the remaining dependency is the guest-side cond
+  release (0x72E704) that would unblock TID1011, then the lazy-init/INFRA0 →
+  main → sem 0x0083037A → THREAD_APP chain.
+
 * Remaining dependency: the 0x72BAF0 wait needs a **different ctx** to be
   completed by a cross-thread/keyed 0x820E (kernel nonzero-key path walks the
   task list and compares `[obj+0x108]` with the key; our guest-side signal so
@@ -119,7 +130,63 @@ Suite **880 OK**.
   targets (`futex_0x99e34_release_unmodelled`, keyed-ctx signal).
 
 
-## 4. Boundaries (current)
+## 3c. Round 2 (progressive lineage, seed, event-present bit)
+
+* The **progressive lineage** is `boot-e0421-new-BB50.ckpt` →
+  `boot-e0434-prog-E704.ckpt` (308,692,133 / 310,121,241). Under the current
+  model it advances: TID1054 exits the 0x72BAF0 wait to caller 0x72B824,
+  runs `0x72D6E0` with status `0xC5000000`, `0x820E=8`, `0x820D=1017`,
+  **THREAD_INFRA0 running**, TID1011 moves off the record cond 0x99E34 to
+  `0x5548680C`. Slot `libObj+0x13F0868=0`, sem `0x0083037A` absent,
+  THREAD_APP/view absent.
+* **Evidence-backed BAR command-block seed** added
+  (`--gles-engine-seed-observed-block`, exact e0377 bytes, sha256
+  `f34ffe4614ad2ea3db7048775a09bfb1bdc18f5edb9d914c40ca533ebe417baf`).
+  A seed alone does not advance the quiescent ctxfix1 lineage.
+* `0x72B660` dispatch decoded (task-68): event id 1/7/8 wait on `0x80000000`,
+  id 2 on `0x40000000`, id 3 on `0x04000000`, ids 4-6 return immediately;
+  **the wait must return `status & 0x01000000`** (event-present) or the guest
+  re-issues the wait and never reaches `0x72D6E0`/`0x72D07E`
+  (`pthread_cond_signal([rec+0x7c])`, the intended TID1011 release).
+* The bounded engine-state event now includes `0x01000000`
+  (`event_bit | 0x01000000`); engine21 (20M from prog-E704) nevertheless
+  produced **no new 0x8203/0x820E activity** because the resume state has no
+  runnable caller of 0x8203: TID1054 is back in the 0x72BAF0 completion wait,
+  TID1011 blocks on a different libObj cond, INFRA0 is runnable but the
+  main↔INFRA0 rendezvous (libObj 0x780D60, sem 0x0083037A, main 0xa0d6-0xa0de)
+  has not completed. This is the current stall.
+* Remaining boundaries: `futex_0x99e34_release_unmodelled` /
+  INFRA0-main handshake, `gles_wait_signal_keymap_unmodelled`,
+  `usb_vbus_changed_mwf_0x0a4000_producer_not_derivable` (physical
+  /dev/uipc pool read at phys 0x08800000 found only 0x008F013A messages;
+  queue objects live in kernel vmalloc, /proc/kcore absent).
+
+
+## 3d. Round 3 (gate decode, long progression runs, camera reboot incident)
+
+* `0x72B1D0` decoded as the 0x72D010 gate predicate: loads a global count;
+  `count<=0` → return 0 (drained) so `0x72BD88 bl 0x72D010` runs; otherwise
+  it calls ioctl 0x8004820A and returns its value. `0x72D010` then requires
+  `0x72CA70(r7)==0`, record `flags&1`, `[rec+0x78]` mutex and `[rec+0x7C]`
+  cond, then locks and `pthread_cond_signal([rec+0x7C])` via 0x72E6F0.
+* Long progression runs from `boot-e0421-new-BB50.ckpt` (engine22, 50M) and
+  from `boot-e0434-prog-E704.ckpt` (engine20, 30M) are **stalled**: counters
+  stay `0x8203=8`, `0x820D=1017`, `0x820E=8`; TID1054 re-parks in the
+  0x72BAF0 completion wait, TID1011 blocks on a libObj cond (0x5548680C),
+  THREAD_INFRA0 stays runnable, main blocked, slot 0, sem/THREAD_APP/view
+  absent. The executor never reaches 0x72BD80 because its 0x820D wait has no
+  completer in the modelled device (the 0x8203 event path is not the same
+  wait); this is the current stall.
+* **Camera incident (E0454):** a read-only bulk `/dev/mem` scan (16 MiB chunk)
+  dropped the camera's USB and the camera **rebooted** (uptime reset to 61 s);
+  it recovered and stayed responsive, no persistent modification. Bulk
+  `/dev/mem` sweeps are now excluded from the standing read-only allowance;
+  only bounded/small reads and /proc//sys/kallsyms views remain. The kernel
+  module `osal_uipc` has no data/bss symbols; its vmalloc region
+  (`0x5f046000`, 45 KiB) is not linear-mapped and `/proc/kcore` is absent, so
+  the LMSGQ 0x6004/USB queue objects remain unreadable → USB producer boundary
+  stands.
+
 
 | boundary | state |
 | --- | --- |
@@ -131,12 +198,44 @@ Suite **880 OK**.
 | `usb_vbus_changed_mwf_0x0a4000_producer_not_derivable` | stands; physical registration view decoded, producer/message still unobserved |
 | `mwf_monitor_input_poll` | unchanged |
 
+## 3e. Round 4 breakthrough (timer preemption, THREAD_APP, heap assertion)
+
+* Root cause of the long stall (E0473): the cooperative scheduler only switched
+  on block/yield/≥100 ms sleep, so a non-blocking UIPC poll loop (332k ioctls
+  from one PC) monopolised execution and never scheduled the runnable
+  THREAD_INFRA0/ULOGIOD. Real Linux timer preemption is the missing behaviour.
+* Implemented **opt-in `--thread-timeslice N`** deterministic preemption in
+  `InterpreterProbe._block/_code` (`0` = historical baseline), with
+  `thread_preemptions` accounting and a focused clone/loop unit test
+  (**881 tests OK**).
+* With `--thread-timeslice 50000` from `boot-e0460-engine22.ckpt` + engine
+  model + seed, run e0484-preempt1 (10M) reaches **88 threads**: THREAD_INFRA0
+  **terminated**, **sem 0x0083037A present**, **THREAD_APP (TID1086) +
+  Appframework (TID1087) created**, `gui.so` and fonts (`Sony_DI_Icons.ttf`,
+  `UniversOTS`, `HeiseiKakuGoth`, `MYingHeiC`) loaded.
+* Corrected the Linux ARM affinity syscall mapping (**241 =
+  sched_setaffinity, 242 = sched_getaffinity**); UTM had logged
+  `***UTM ERROR*** set <tid> to cpu any = -1024!` for every thread.
+* The app then stops at `syscall_boundary` **r7=268 tgkill(1000,1087,SIGABRT)**
+  after a 3878-byte UTM/GPE monitor dump (`C3P_PACKET cmd 0x009400e1`,
+  phys 0x20098000/0x200EB400/0x202e0000, dummywrite 0x02000000). Captured
+  stderr: **`im.elf: malloc.c:4652: _int_malloc: Assertion
+  '(unsigned long)(size) >= (unsigned long)(nb)' failed.`** — a glibc heap
+  assertion, likely triggered by UTM/GPE monitor init (mapping/affinity/ioctl).
+* Next: decode the UTM/monitor init and the heap-corruption trigger, then
+  continue the now-unblocked app toward viewUnified2/OSD; USB producer
+  boundary unchanged.
+
 ## 5. Next
 
-* Analyze e0383 engine2: did 0xC0048203 return `0x40000000`, did the guest
-  broadcast 0x99E34, did TID1011 resume and TID1054 exit? If not, identify the
-  exact remaining dependency (event-wait caller thread/scheduling vs engine
-  timing) with the next trace.
-* Continue read-only physical work: full `/proc/osal/uipc` pages, `/log` ULOG
-  records for the real USB 0x6103/0x0A4000-family flow, full PID maps and
-  libosal pool scan for live queue objects/messages.
+* Trace the INFRA0/main rendezvous from `boot-e0434-prog-E704.ckpt`
+  (INFRA0 running): libObj 0x780D60 body (0x780E0A cond signal / 0x780E2C
+  cond wait), main futex (PC 0x5008D146 / LR 0x50085DFD), im.elf 0xa0d6 /
+  0x94F8 (THREAD_APP), and the 0x72BD88/0x72D010 gate
+  (0x72B1D0 return, record flags/mutex/cond). No fabricated sem/thread.
+* Continue the read-only physical USB chase: kernel-vmalloc route to
+  `osal_uipc` data or a bounded physical scan for the LMSGQ 0x6004/USB queue
+  objects (owner u16 0x38, callback libObj+0x81E01D), then read pending
+  Category-0x6103 / MessageId-0x0A4000-family payloads.
+* The physical `/dev/uipc` pool read (phys 0x08800000) is characterised: only
+  `0x008F013A`-targeted messages; no USB queue ids in that mapping.

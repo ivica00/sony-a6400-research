@@ -300,7 +300,9 @@ class GuestGlesTests(unittest.TestCase):
                          reader, writer, tid=1003)
         self.assertEqual(ret, 0)
         self.assertEqual(struct.unpack('<I', memory[0x2000])[0], 0x45000000)
-        # The reported status is consumed: the next wait is pending again.
+        # The reported status is consumed; with the bounded engine-state
+        # budget exhausted the next wait is pending again.
+        gles.engine_state_events = 16
         self.assertIsNone(gles.ioctl(owner['owner_id'], GLES_RELEASE_RESOURCE, 0x2000, reader,
                                  lambda address, data: memory.__setitem__(address, bytes(data)), tid=1003))
         self.assertEqual(gles.engine_completions, 1)
@@ -337,7 +339,9 @@ class GuestGlesTests(unittest.TestCase):
                          tid=1003)
         self.assertEqual(ret, 0)
         self.assertEqual(struct.unpack('<I', memory[0x2000])[0], 0x45000000)
-        # The reported status is consumed: the next wait is pending again.
+        # The reported status is consumed; with the bounded engine-state
+        # budget exhausted the next wait is pending again.
+        gles.engine_state_events = 16
         self.assertIsNone(gles.ioctl(owner['owner_id'], GLES_RELEASE_RESOURCE, 0x2000, reader,
                                  lambda address, data: memory.__setitem__(address, bytes(data)), tid=1003))
         self.assertEqual(gles.engine_completions, 1)
