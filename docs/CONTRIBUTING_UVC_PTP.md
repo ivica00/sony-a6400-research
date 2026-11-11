@@ -63,20 +63,24 @@ and documentation in a plain Python environment for most items.
 
 ### 1. Model kernel to user sync callback delivery (highest impact)
 
-- Boundary: `uipc_sync_callback_delivery_unmodelled`.
-- Context: [E0331](evidence/0331-usb-lane-local-queue-vs-sync-callback.md),
+- Boundary: **transport done** — `sync_callback_packet_format_unmodelled`
+  (the h4109/h4110 packet format and downstream post path are still unknown).
+- Context: [E0332](evidence/0332-sync-callback-delivery-first-invocation.md),
+  [E0331](evidence/0331-usb-lane-local-queue-vs-sync-callback.md),
   [E0330](evidence/0330-libosal-queue-object-layout.md),
   [E0329](evidence/0329-libosal-receive-queue-protocol.md).
-- Do: decode `handle_snd_sync_msg` / `handle_snd_sync_direct` in
-  [`src/a6400/execution/guest_uipc.py`](../src/a6400/execution/guest_uipc.py)
-  and the `libosal_uipc` sync wrappers, then add an explicit opt-in policy that
-  delivers a kernel-originated message to a `flags=1` registered callback and
-  lets the original guest callback run.
-- Acceptance: the original UsbControl code posts and consumes a message; the
-  FSM event is observed without host-side message fabrication, or a precise new
-  boundary is recorded. Keep default baselines unchanged.
-- Files: `guest_uipc.py`, `interpreter_probe.py`, `tests/test_guest_uipc*.py`,
-  `tests/test_interpreter_probe.py`.
+- Done: `--uipc-sync-callback-delivery kernel-origin` delivers pending messages to
+  `flags=1` registrations on the original WAIT_CB proxy path; experiment e0684
+  shows the original callback h4109 executing and completing without fault.
+- Do: decode callback pointers 1447342303 (h4109) and 1447373447 (h4110) in live
+  `libUsbControl`, learn the expected packet fields and the downstream post path
+  into local queue `0x00CA8192`; then re-deliver with the decoded fields and
+  instrument `UsbControl::ProcessMsg` / `MsgId2EventId` / FSM dispatch.
+- Acceptance: the original code posts and consumes a message and FSM event `0x13`
+  is observed without host-side fabrication, or a precise new boundary is
+  recorded. Keep default baselines unchanged.
+- Files: `guest_uipc.py`, `interpreter_probe.py`,
+  `tools/research/experiment_ui_boot.py`, `tests/test_sync_callback_delivery.py`.
 - Difficulty: medium.
 
 ### 2. Host-side UVC enumeration / SET_CONFIG contract

@@ -130,6 +130,10 @@ def build_parser():
                         default=None,
                         help='optional futex address to wake after the emulated SETCONFIG enqueue '
                              '(e.g. the receiver OSAL condvar observed at the resumed state)')
+    parser.add_argument('--uipc-sync-callback-delivery',
+                        choices=('unmodelled', 'kernel-origin'), default='unmodelled',
+                        help='opt-in: deliver queued messages to flags=1 sync-registered '
+                             'callbacks through the WAIT_CB proxy path (default unmodelled)')
     parser.add_argument('--uipc-pool-options', choices=('legacy-empty', 'kernel-e0300', 'kernel-e0301', 'kernel-e0303'),
                         default='legacy-empty', help='opt-in kernel options; e0300 keeps completion boundary, e0301 adds ordinary async completion, same-process sync callbacks and kernel dynamic IDs, e0303 adds generic multi-consumer/broadcast completion, sync queue 0x009c015b and allocator-driven CONNECT/dynamic IDs')
     parser.add_argument('--usb-otgcore-device', choices=('stop', 'driver-bound'), default='stop',

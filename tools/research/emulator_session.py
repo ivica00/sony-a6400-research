@@ -318,6 +318,8 @@ def build_boot_session(args, parser=None) -> BootSession:
 
     from src.a6400.execution.guest_checkpoint import restore_checkpoint
     probe.uipc.pool_options_policy = getattr(args, 'uipc_pool_options', 'legacy-empty')
+    probe.uipc.sync_callback_delivery_policy = getattr(
+        args, 'uipc_sync_callback_delivery', 'unmodelled')
     if args.load_checkpoint and not args.load_checkpoint.exists():
         # A missing checkpoint previously fell through silently and cold-booted,
         # which produced misleading "continuation" experiments.
@@ -335,6 +337,10 @@ def build_boot_session(args, parser=None) -> BootSession:
                 raise ValueError('kernel-e0301/e0303 contract requires a fresh boot or a matching revision checkpoint')
             probe.uipc.pool_options_policy = requested_uipc
         probe.uipc.handle_rcv_msg_tmo = patched_rcv_msg_tmo
+        # Restore replaces the whole UIPC subsystem, so re-apply the opt-in
+        # sync-callback delivery policy after checkpoint restoration.
+        probe.uipc.sync_callback_delivery_policy = getattr(
+            args, 'uipc_sync_callback_delivery', 'unmodelled')
         active_tid = probe.threads.current_tid if hasattr(probe, 'threads') else 1000
         print(f'[*] Checkpoint restored! Resuming at instruction {probe.instructions:,} (active TID {active_tid}).')
         if hasattr(probe, 'threads') and 1004 in probe.threads.threads:

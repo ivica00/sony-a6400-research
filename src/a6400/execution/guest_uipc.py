@@ -67,13 +67,17 @@ class GuestUipc:
                  graphics_service_policy: str = 'stop',
                  grm_service: Optional[object] = None,
                  media_service_policy: str = 'stop',
-                 media_service: Optional[object] = None):
+                 media_service: Optional[object] = None,
+                 sync_callback_delivery_policy: str = 'unmodelled'):
         if backup_service_policy not in ('stop', 'unverified-ack', 'preset-backed'):
             raise ValueError('Unknown backup service policy')
         if graphics_service_policy not in ('stop', 'authentic-grm'):
             raise ValueError('Unknown graphics service policy')
         if media_service_policy not in ('stop', 'authentic-sd'):
             raise ValueError('Unknown media service policy')
+        if sync_callback_delivery_policy not in ('unmodelled', 'kernel-origin'):
+            raise ValueError('Unknown sync callback delivery policy')
+        self.sync_callback_delivery_policy = sync_callback_delivery_policy
         self.media_service_policy = media_service_policy
         self.media_service = media_service
         if self.media_service_policy == 'authentic-sd' and self.media_service is None:
@@ -769,19 +773,25 @@ class GuestUipc:
 
     def callback_ready(self):
         policy = getattr(self, 'pool_options_policy', '')
+        busy = {entry['queue'] for entry in getattr(self, 'callback_inflight', {}).values()}
+        sync_ready = (
+            getattr(self, 'sync_callback_delivery_policy', 'unmodelled') == 'kernel-origin'
+            and any(cb['flags'] == 1 and cb['queue'] not in busy
+                    and self.message_queues.get(cb['queue'])
+                    for cb in self.callbacks.values()))
         if policy == KERNEL_E0303:
             # E0303: any registered async consumer of a non-busy queue with a
             # pending message makes the proxy loop ready; multiple consumers
             # and broadcast queues are no longer boundaries.
             busy = {entry['queue'] for entry in getattr(self, 'callback_inflight', {}).values()}
-            return any(cb['flags'] == 0 and cb['queue'] not in busy
-                       and self.message_queues.get(cb['queue'])
-                       for cb in self.callbacks.values())
+            return sync_ready or any(cb['flags'] == 0 and cb['queue'] not in busy
+                                     and self.message_queues.get(cb['queue'])
+                                     for cb in self.callbacks.values())
         if policy == 'kernel-e0301':
             busy = {entry['queue'] for entry in getattr(self, 'callback_inflight', {}).values()}
-            return any(cb['flags'] == 0 and cb['queue'] not in busy
-                       and self.message_queues.get(cb['queue']) for cb in self.callbacks.values())
-        return any(self.message_queues.get(cb['queue']) for cb in self.callbacks.values())
+            return sync_ready or any(cb['flags'] == 0 and cb['queue'] not in busy
+                                     and self.message_queues.get(cb['queue']) for cb in self.callbacks.values())
+        return sync_ready or any(self.message_queues.get(cb['queue']) for cb in self.callbacks.values())
 
     def handle_wait_cb(self, reader, writer, arg, tid=None):
         """E0300 __k_4u_wait_cb: return a tuple to the original proxy loop.
@@ -813,6 +823,22 @@ class GuestUipc:
                 raise UnsupportedUipc('uipc_callback_completion_not_implemented',
                                       proxy=index, previous=previous)
             registered = self.callbacks.get(previous['handle'])
+            if (previous.get('mode') == 'kernel_sync'
+                    and getattr(self, 'sync_callback_delivery_policy', 'unmodelled') == 'kernel-origin'):
+                if (registered is None or registered['flags'] != 1
+                        or registered['queue'] != previous['queue']):
+                    raise UnsupportedUipc('uipc_sync_callback_completion_mismatch',
+                                          proxy=index, previous=previous)
+                header = reader(previous['msg_ptr'] - 7, 1)[0]
+                writer(previous['msg_ptr'] - 7, bytes([header & 0x7f]))
+                self.transactions.append({
+                    'type': 'wait_cb_sync_completion', 'proxy': index,
+                    'handle': previous['handle'], 'queue': previous['queue'],
+                    'msg_ptr': previous['msg_ptr'], 'tid': tid,
+                    'header_flags': header})
+                del inflight[index]
+                self.callback_inflight = inflight
+                return 0
             if policy == KERNEL_E0303:
                 # Generic completion: original finish_callback decrements the
                 # callback activity and redispatches; it neither inspects nor
@@ -846,6 +872,32 @@ class GuestUipc:
                 del inflight[index]
         if policy == KERNEL_E0303:
             return self._deliver_generic_callback(reader, writer, params, index)
+        if getattr(self, 'sync_callback_delivery_policy', 'unmodelled') == 'kernel-origin':
+            if reader is None or writer is None:
+                raise UnsupportedUipc('uipc_sync_callback_memory_required')
+            for handle, cb in self.callbacks.items():
+                if cb['flags'] != 1:
+                    continue
+                messages = self.message_queues.get(cb['queue'], [])
+                if not messages:
+                    continue
+                if any(entry.get('queue') == cb['queue'] for entry in inflight.values()):
+                    raise UnsupportedUipc('uipc_sync_callback_already_active', queue=cb['queue'])
+                if not cb['callback']:
+                    raise UnsupportedUipc('uipc_null_callback', handle=handle)
+                msg = messages.pop(0)
+                header = reader(msg - 7, 1)[0]
+                writer(msg - 7, bytes([header | 0x80]))
+                writer(params, struct.pack('<4I', cb['callback'], cb['user_data'], msg, index))
+                inflight[index] = {'handle': handle, 'queue': cb['queue'],
+                                   'msg_ptr': msg, 'mode': 'kernel_sync'}
+                self.callback_inflight = inflight
+                self.transactions.append({
+                    'type': 'wait_cb_sync_delivery', 'proxy': index,
+                    'callback': cb['callback'], 'user_data': cb['user_data'],
+                    'handle': handle, 'queue': cb['queue'], 'msg_ptr': msg,
+                    'tid': tid, 'mode': 'kernel_sync'})
+                return 0
         for handle, cb in self.callbacks.items():
             if getattr(self, 'pool_options_policy', '') == 'kernel-e0301':
                 # Async list is queue+8; sync registration lives at queue+24.
