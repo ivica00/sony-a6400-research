@@ -16,7 +16,7 @@ follow the local CinemaHUD implementation. This is a Flutter UI, not a WebView.
 The PC server intentionally listens only on loopback. Entering a LAN address
 alone does not make that server reachable; use the USB reverse tunnel above.
 No Wi-Fi debugging or network-wide server exposure is enabled by this project.
-On Windows, `launch_cinemahud_android.ps1` recreates this USB tunnel and opens
+On Windows, `scripts/launch_cinemahud_android.ps1` recreates this USB tunnel and opens
 the installed app; `-Install` also installs the APK from `dist/cinemahud-android/`.
 
 ## Features

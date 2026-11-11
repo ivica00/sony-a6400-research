@@ -1,6 +1,14 @@
 #include "uvc_ptp_adapter.h"
 _Static_assert(sizeof(void *)==4, "ARM32 endpoint ABI");
 
+/* E0360 Run B pre-flight instrumentation: make the live START selector audible.
+ * The selector fails closed and, before this change, silently returned 0 for any
+ * of the five live preconditions, which the bridge turns into "skip reference
+ * START". These printks only report values; no control flow, return value or
+ * memory access is changed. printk is the same kernel symbol the rest of the
+ * module already imports (`uvc_composite_shim.c:17`). */
+extern int printk(const char *fmt, ...);
+
 int a6400_uvc_ptp_translate_setup(const unsigned char *wire,
                                 unsigned int wire_interface,
                                 unsigned char *native)
@@ -23,18 +31,48 @@ unsigned int a6400_uvc_ptp_select_endpoint(void *dwc, unsigned int packed_count,
     unsigned int count=packed_count&0xffu, i;
     void *raw, *found=(void *)0;
     const unsigned char *desc;
-    if (!dwc || !list || !count || count>16) return 0;
+    unsigned int flags;
+    if (!dwc || !list || !count || count>16) {
+        printk("[a6400_sel] reject args dwc=%p list=%p count=%u\n",dwc,list,count);
+        return 0;
+    }
     /* Original dwc3_wIndex_to_dep: ((ep&15)*2 + direction + 0x34)*4. */
     raw=*(void **)((unsigned char *)dwc+0xf4);
-    if (!raw || !(*(unsigned int *)((unsigned char *)raw+0x4c)&1u)) return 0;
+    if (!raw) {
+        printk("[a6400_sel] reject dep=NULL (dwc=%p)\n",dwc);
+        return 0;
+    }
+    flags=*(unsigned int *)((unsigned char *)raw+0x4c);
+    if (!(flags&1u)) {
+        printk("[a6400_sel] reject dep-disabled dep=%p flags=%08x\n",raw,flags);
+        return 0;
+    }
     desc=*(const unsigned char **)((unsigned char *)raw+0x1c);
-    if (!desc || desc[0]!=7 || desc[1]!=5 || desc[2]!=0x84 ||
-        (desc[3]&3)!=2 || desc[4]!=0 || desc[5]!=2) return 0;
+    if (!desc) {
+        printk("[a6400_sel] reject desc=NULL dep=%p\n",raw);
+        return 0;
+    }
+    if (desc[0]!=7 || desc[1]!=5 || desc[2]!=0x84 ||
+        (desc[3]&3)!=2 || desc[4]!=0 || desc[5]!=2) {
+        printk("[a6400_sel] reject desc bytes=%02x %02x %02x %02x %02x %02x\n",
+               desc[0],desc[1],desc[2],desc[3],desc[4],desc[5]);
+        return 0;
+    }
     for (i=0; i<count; ++i) {
         void *wrapper=list[i];
         if (!wrapper || *(void **)((unsigned char *)wrapper+0x24)!=raw) continue;
-        if (found) return 0; /* ambiguous/duplicate ownership */
+        if (found) {
+            printk("[a6400_sel] reject duplicate-owner wrapper=%p first=%p dep=%p\n",
+                   wrapper,found,raw);
+            return 0; /* ambiguous/duplicate ownership */
+        }
         found=wrapper;
     }
+    if (!found) {
+        printk("[a6400_sel] reject no-owner dep=%p in %u entries\n",raw,count);
+        return 0;
+    }
+    printk("[a6400_sel] match wrapper=%p raw=%p ep=0x84 flags=%08x count=%u\n",
+           found,raw,flags,count);
     return (unsigned int)found;
 }

@@ -1,31 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="670" viewBox="0 0 1000 670" role="img" aria-labelledby="title desc">
-<title id="title">Sony a6400 research status through E0314</title>
-<desc id="desc">880 tests recorded passing. GPES BAR and IRQ contracts decoded using read-only camera observations. Opt-in engine model advances original guest code to a second signal, with labelled result-bit assumptions. Keyed completion and condition release remain open. No emulator GUI frame.</desc>
-<rect width="1000" height="670" rx="16" fill="#0d1117" />
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="810" viewBox="0 0 1000 810" role="img" aria-labelledby="title desc">
+<title id="title">Sony a6400 research status through E0353</title>
+<desc id="desc">1283 tests recorded passing. Offline original-code execution, read-only physical observation and authored demonstrations are reported separately. No emulator GUI frame and no UVC frame are claimed.</desc>
+<rect width="1000" height="810" rx="16" fill="#0d1117" />
 <g font-family="Segoe UI,Arial,sans-serif">
 <text x="28" y="42" fill="#f0f6fc" font-size="26" font-weight="700">Research status</text>
-<text x="740" y="40" fill="#c9d1d9" font-size="17" font-weight="400">2026-11-10 | E0314</text>
-<text x="28" y="78" fill="#36c88a" font-size="18" font-weight="400">880 tests recorded passing | No verified emulator GUI frame</text>
-<rect x="28" y="103" width="944" height="114" rx="8" fill="#161b22" />
+<text x="740" y="40" fill="#c9d1d9" font-size="17" font-weight="400">2026-11-11 | E0353</text>
+<text x="28" y="78" fill="#36c88a" font-size="18" font-weight="400">1283 tests recorded passing | No verified emulator GUI frame</text>
+<rect x="28" y="103" width="944" height="152" rx="8" fill="#161b22" />
 <text x="44" y="125" fill="#9da7b3" font-size="12" font-weight="400">OFFLINE ORIGINAL CODE</text>
-<text x="44" y="150" fill="#f0f6fc" font-size="19" font-weight="700">UIPC / USB</text>
-<text x="44" y="175" fill="#c9d1d9" font-size="16" font-weight="400">VBUS callback completes; OTG input wakes UsbControl (wake-only).</text>
-<text x="44" y="200" fill="#f0bd55" font-size="16" font-weight="400">Open: USB FSM transition and the missing MWF message producer.</text>
-<rect x="28" y="230" width="944" height="114" rx="8" fill="#161b22" />
-<text x="44" y="252" fill="#9da7b3" font-size="12" font-weight="400">READ-ONLY PHYSICAL EVIDENCE + OPT-IN MODEL</text>
-<text x="44" y="277" fill="#f0f6fc" font-size="19" font-weight="700">GPES engine / display</text>
-<text x="44" y="302" fill="#c9d1d9" font-size="16" font-weight="400">BAR / IRQ decoded; engine experiment reaches a second guest signal.</text>
-<text x="44" y="327" fill="#f0bd55" font-size="16" font-weight="400">Open: keyed completion, guest condition release, OSD and rasterizer.</text>
-<rect x="28" y="357" width="944" height="114" rx="8" fill="#161b22" />
-<text x="44" y="379" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL OBSERVATION</text>
-<text x="44" y="404" fill="#f0f6fc" font-size="19" font-weight="700">PTP / composite USB</text>
-<text x="44" y="429" fill="#c9d1d9" font-size="16" font-weight="400">PC Remote sensor JPEG; composite enumeration demonstrated.</text>
-<text x="44" y="454" fill="#f0bd55" font-size="16" font-weight="400">Open: composite frames and reliable teardown; paused.</text>
-<rect x="28" y="484" width="944" height="114" rx="8" fill="#161b22" />
-<text x="44" y="506" fill="#9da7b3" font-size="12" font-weight="400">AUTHORED PATTERN + PHYSICAL TRANSPORT</text>
-<text x="44" y="531" fill="#f0f6fc" font-size="19" font-weight="700">UVC / custom menu</text>
-<text x="44" y="556" fill="#c9d1d9" font-size="16" font-weight="400">Static 720p UVC at 29.9592 FPS; authored menu displayed.</text>
-<text x="44" y="581" fill="#f0bd55" font-size="16" font-weight="400">Open: sensor feeder and original menu compatibility.</text>
-<text x="28" y="638" fill="#9da7b3" font-size="15" font-weight="400">Independent results, not a compatibility percentage. Evidence and limits linked in README.</text>
+<text x="44" y="151" fill="#f0f6fc" font-size="19" font-weight="700">UIPC / USB</text>
+<text x="44" y="175" fill="#c9d1d9" font-size="14" font-weight="400">Kernel-to-user sync callback delivery runs the original h4109 callback and completes it without</text>
+<text x="44" y="195" fill="#c9d1d9" font-size="14" font-weight="400">fault.</text>
+<text x="44" y="219" fill="#f0bd55" font-size="14" font-weight="400">Open: ADJ packet format, the 0x0A4000 producer and the USB FSM transition</text>
+<text x="44" y="239" fill="#f0bd55" font-size="14" font-weight="400">(sync_callback_packet_format_unmodelled).</text>
+<rect x="28" y="267" width="944" height="152" rx="8" fill="#161b22" />
+<text x="44" y="289" fill="#9da7b3" font-size="12" font-weight="400">READ-ONLY PHYSICAL + OPT-IN MODEL</text>
+<text x="44" y="315" fill="#f0f6fc" font-size="19" font-weight="700">GPES engine / display</text>
+<text x="44" y="339" fill="#c9d1d9" font-size="14" font-weight="400">GPES BAR and IRQ contracts decoded from read-only observations; the opt-in engine model reaches a</text>
+<text x="44" y="359" fill="#c9d1d9" font-size="14" font-weight="400">second original guest signal.</text>
+<text x="44" y="383" fill="#f0bd55" font-size="14" font-weight="400">Open: keyed 0x820E completion, guest condition release, OSD mapping and the rasterizer.</text>
+<rect x="28" y="431" width="944" height="152" rx="8" fill="#161b22" />
+<text x="44" y="453" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL OBSERVATION</text>
+<text x="44" y="479" fill="#f0f6fc" font-size="19" font-weight="700">PTP / composite USB</text>
+<text x="44" y="503" fill="#c9d1d9" font-size="14" font-weight="400">Pipelined PTP liveview: a foreign GET_JPEG sees real frames from the DMM unit at 29.8 FPS while the</text>
+<text x="44" y="523" fill="#c9d1d9" font-size="14" font-weight="400">host stream runs.</text>
+<text x="44" y="547" fill="#f0bd55" font-size="14" font-weight="400">Open: the composite enumerates (E0350) but DirectShow cannot connect the UVC pins, so no UVC frame</text>
+<text x="44" y="567" fill="#f0bd55" font-size="14" font-weight="400">is claimed.</text>
+<rect x="28" y="595" width="944" height="152" rx="8" fill="#161b22" />
+<text x="44" y="617" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL, RAM-ONLY</text>
+<text x="44" y="643" fill="#f0f6fc" font-size="19" font-weight="700">Track B teardown (physical)</text>
+<text x="44" y="667" fill="#c9d1d9" font-size="14" font-weight="400">Run A: fresh-boot DMA window, INIT, composite enumeration, clean unconfigure-first soft disconnect</text>
+<text x="44" y="687" fill="#c9d1d9" font-size="14" font-weight="400">and reconnect; MSC returned without a battery pull.</text>
+<text x="44" y="711" fill="#f0bd55" font-size="14" font-weight="400">Open: UVC frames and DirectShow RenderStream; next is Run B with a host stream, ETW capture and the</text>
+<text x="44" y="731" fill="#f0bd55" font-size="14" font-weight="400">receipt-fixed daemon.</text>
+<text x="28" y="786" fill="#9da7b3" font-size="15" font-weight="400">Independent results, not a compatibility percentage. Evidence and limits are linked from README.md.</text>
 </g>
 </svg>

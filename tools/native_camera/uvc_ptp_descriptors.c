@@ -108,6 +108,10 @@ int a6400_uvc_ptp_candidate_identity(struct a6400_uvc_ptp_candidate *p,
     p->speed[0].device_fields[4]=1; /* composite/IAD grouping candidate */
     for (i=0;i<5;++i) p->speed[1].device_fields[i]=p->speed[0].device_fields[i];
     for (i=0;i<6;++i) p->metadata[i]=device[8+i]; /* VID/PID/bcdDevice */
+    /* Host binding: enumerate the composite function set under the UVC/PTP
+     * product id instead of the single-function WPD id, so Windows usbccgp
+     * binds the PTP and UVC children from a fresh device instance. */
+    p->metadata[2]=0x22;p->metadata[3]=0x03; /* idProduct = 0x0322 */
     p->metadata[7]=1;p->metadata[8]=2;p->metadata[9]=3;
     p->metadata[10]=1;
     *(void **)&p->metadata[12]=&p->language;

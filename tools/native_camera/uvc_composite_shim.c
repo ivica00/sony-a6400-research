@@ -774,36 +774,107 @@ static int a6400_uvc_restore_descriptors(void)
     return 0;
 }
 
+/* VideoStreaming bulk-IN address from the gadgetcore ACTIVE descriptor table.
+ *
+ * gc+0x6c is the descriptor-table pointer this module installs through
+ * save_desc_tbl (commit) and the pointer the original driver registers; the
+ * existing commit/restore code already reads it. Its head is the native
+ * 88-byte per-speed table from zve10_uvc_tree.h / uvc_ptp_descriptors.h:
+ *   speed[3]  16-byte entries; entry 0 is the active high-speed entry:
+ *             {device_fields[5], config_count, pad[2], configs* at +8}
+ *   config    {index, value, bInterfaceCount at +2, interfaces* at +4}
+ *   interface {number, bAlternateSettingCount at +1, alternates* at +4}
+ *   alternate {alternate, bNumEndpoints at +1, endpoints* at +4,
+ *              bInterfaceClass at +8, bInterfaceSubClass at +9}
+ *   endpoint  {bEndpointAddress at +0, bmAttributes at +1}
+ * Only the VideoStreaming interface (class 0x0e, subclass 0x02) is considered
+ * and only a Bulk IN endpoint (address bit 7 set, attributes[1:0]==2) is
+ * accepted. That yields the endpoint identity for this boot instead of a
+ * constant: 0x81 in the UVC-only bundle, 0x84 in the UVC+PTP composite
+ * descriptor (uvc_ptp_descriptors.c: VS input header and video_endpoint).
+ * All counts are capped before dereferencing. Returns 0 when the topology
+ * cannot be resolved; the caller then falls back to the matched endpoint's own
+ * active descriptor, which carries the same bEndpointAddress/bmAttributes.
+ */
+static uvc_u32 a6400_uvc_active_video_in(void *gc)
+{
+    const unsigned char *tbl,*cfg,*ifs,*alts,*eps;
+    uvc_u32 i,j,k,count,found=0;
+    if (!gc) return 0;
+    tbl=*(const unsigned char *const *)((char *)gc+0x6c);
+    if (!tbl) return 0;
+    cfg=*(const unsigned char *const *)(tbl+8); /* speed[0].configs */
+    if (!cfg) return 0;
+    count=cfg[2];                                /* config bInterfaceCount */
+    if (!count || count>8) return 0;
+    ifs=*(const unsigned char *const *)(cfg+4);
+    if (!ifs) return 0;
+    for (i=0;i<count;i++,ifs+=8) {
+        uvc_u32 alt_count=ifs[1],ep_count;
+        alts=*(const unsigned char *const *)(ifs+4);
+        if (!alts || !alt_count || alt_count>8) continue;
+        for (j=0;j<alt_count;j++,alts+=20) {
+            if (alts[8]!=0x0e || alts[9]!=0x02) continue;
+            ep_count=alts[1];
+            eps=*(const unsigned char *const *)(alts+4);
+            if (!eps || !ep_count || ep_count>8) continue;
+            for (k=0;k<ep_count;k++,eps+=20) {
+                if (!(eps[0]&0x80u) || (eps[1]&3u)!=2u) continue;
+                if (found && found!=eps[0]) return 0; /* ambiguous topology */
+                found=eps[0];
+            }
+        }
+    }
+    return found;
+}
+
 /* ep_ctrl_create_ep (602ba8e4) stores the native usb_ep at wrapper+24.
- * The video module consumes this wrapper, not the raw DWC3 usb_ep. */
+ * The video module consumes this wrapper, not the raw DWC3 usb_ep. The START
+ * list is the endpoint list of the interface being started, so exactly one
+ * wrapper may match: the controller's enabled endpoint (wrapper+0x24 ==
+ * *(dwc+0xdc), the ownership check this bridge always used) whose ACTIVE
+ * endpoint descriptor (*(raw+0x1c): bLength/bDescriptorType/bEndpointAddress/
+ * bmAttributes) is the video Bulk IN derived above. No wrapper is invented:
+ * missing/duplicate/unreadable/foreign endpoints all fail closed with 0, which
+ * makes the bridge skip the reference START callback. */
 static uvc_u32 a6400_uvc_bulk_endpoint(uvc_u32 count, uvc_u32 array)
 {
     void *gc=*(void **)0x6051b17cu;
     void *dwc=a6400_get_dwc(gc);
     void *raw;
-    uvc_u32 i;
+    uvc_u32 i,expected,found=0;
     printk("[a6400_uvc] START arguments count=%u array=%08x\n",count,array);
-    if (!dwc || !array || count>16) return 0;
-    raw=*(void **)((char *)dwc+0xdc);
+    if (!dwc || !array || !count || count>16) return 0;
+    raw=*(void **)((char *)dwc+0xdc); /* controller enabled-endpoint slot */
     if (!raw) return 0;
+    expected=a6400_uvc_active_video_in(gc);
+    printk("[a6400_uvc] START active video bulk-IN=%s%02x\n",expected?"0x":"none:",expected);
     for (i=0;i<count;i++) {
         void *ep=((void **)array)[i];
-        unsigned char *desc;
-        printk("[a6400_uvc] endpoint[%u] wrapper=%p dwc_raw=%p\n",i,ep,raw);
+        const unsigned char *desc;
         if (!ep || *(void **)((char *)ep+0x24)!=raw) continue;
-        desc=*(unsigned char **)((char *)raw+0x1c);
-        printk("[a6400_uvc] endpoint raw matched; descriptor=%p\n",desc);
-        if (!desc || desc[0]!=7 || desc[1]!=5 || desc[2]!=0x81 ||
-            (desc[3]&3)!=2) continue;
-        printk("[a6400_uvc] START bulk bridge count=%u wrapper=%p raw=%p ep=0x81\n",count,ep,raw);
-#ifdef A6400_UVC_START_PROBE_ONLY
-        printk("[a6400_uvc] START probe-only: reference callback not invoked\n");
-        return 0;
-#endif
-        return (uvc_u32)ep;
+        desc=*(const unsigned char *const *)((char *)raw+0x1c);
+        if (!desc || desc[0]!=7 || desc[1]!=5) continue;      /* no EP descriptor */
+        if (!(desc[2]&0x80u) || (desc[3]&3u)!=2u) continue;   /* not Bulk IN */
+        if (expected && desc[2]!=expected) continue;          /* not the VS endpoint */
+        if (found) {
+            printk("[a6400_uvc] START skipped: ambiguous bulk-IN endpoint ownership\n");
+            return 0;
+        }
+        found=(uvc_u32)ep;
+        printk("[a6400_uvc] endpoint matched wrapper=%p raw=%p addr=0x%02x\n",
+               ep,raw,desc[2]);
     }
-    printk("[a6400_uvc] START skipped: no enabled Bulk IN 0x81 in %u endpoints\n",count);
+    if (!found) {
+        printk("[a6400_uvc] START skipped: no valid video Bulk IN in %u endpoints\n",count);
+        return 0;
+    }
+    printk("[a6400_uvc] START bulk bridge count=%u wrapper=%08x raw=%p\n",count,found,raw);
+#ifdef A6400_UVC_START_PROBE_ONLY
+    printk("[a6400_uvc] START probe-only: reference callback not invoked\n");
     return 0;
+#endif
+    return found;
 }
 
 int a6400_uvc_gadgetcore_register_hook(struct uvc_reference_descriptor *r)
@@ -1051,12 +1122,14 @@ long a6400_uvc_video_core_ioctl(void *filp, unsigned int cmd, unsigned long arg)
         if (!data.frame_size || !data.phys_addr ||
             data.phys_addr > 0xffffffffu-data.frame_size) return -22;
 #ifdef A6400_UVC_COHERENT_ALLOC
+#ifndef A6400_COMPOSITE_TRANSPORT
         /* Original Update writes a 12-byte header in its owned destination
          * before copying the source JPEG. A source inside either destination
          * slot can therefore be corrupted even when frame length is valid. */
         if (g_dma_phys && (g_dma_phys > 0xffffffffu-A6400_UVC_DMA_SIZE ||
             (data.phys_addr < g_dma_phys+A6400_UVC_DMA_SIZE &&
              data.phys_addr+data.frame_size > g_dma_phys))) return -22;
+#endif
 #endif
     }
 

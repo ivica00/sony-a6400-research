@@ -258,8 +258,8 @@ def describe_mwf_wire_format():
 # Emulated inbound SETCONFIG ObjMsg image (E0328) - LABELLED EXPERIMENT.
 # Builds the obj/body object layout from E0324/E0323 evidence so the emulator
 # can deliver a kernel-style notification through the real UIPC queue path.
-# The param map container is left zeroed (E0325 boundary); the ObjMsg vtable
-# field is not dereferenced by GetMessageId.
+# E0336 adds the decoded MWF::Param container for Param 0x1006 = int32 0 so the
+# FSM event-0x13 action's UFW::MsgUtil::GetInt32 no longer asserts.
 # ---------------------------------------------------------------------------
 import struct
 
@@ -267,21 +267,242 @@ SETCONFIG_CATEGORY = 0x6103
 SETCONFIG_MESSAGE_ID = 0x0A4001
 SETCONFIG_PARAM_ID = 0x1006
 
+# ---------------------------------------------------------------------------
+# E0336: MWF::Param object binding needed by UFW::MsgUtil::GetInt32.
+#
+# Live libUsbControl.so `_ZN3UFW7MsgUtil8GetInt32EPN3MWF6ObjMsgEj` (0xA3F4,
+# 56 B) is:
+#   0xA3F6 movs r2,#7                    ; Param::Type::int32
+#   0xA3FA blx ObjMsg::GetParam(id, Param::Type)
+#   0xA3FE cbnz r0,#0xA418               ; null -> assert
+#   0xA400..0xA414 __assert_fail("ufw/MsgUtil/MsgUtil.cpp", 0x40 = line 64)
+#   0xA418..0xA41C tail -> ParamStd<int,7>::GetValue (0x233A9: ldr r0,[r0])
+# So `GetInt32` needs the *typed* GetParam to return non-null; only then does it
+# read the value word.  The typed GetParam is:
+#   ObjMsgBody::GetParam(id,type) (0x20303): ParamMap::Get(id) -> param*; if
+#     type != 0 -> Param::GetType() and compare, null on mismatch.
+#   Param::GetType (0x1F140): ldr r3,[param,#4]; ldr r0,[r3]
+#     => param+4 is the MWF funcTable pointer and funcTable+0 is Param::Type.
+#   ParamMap::Get(0x22BD3) -> ParamMap::GetParam(0x22BB7) also calls
+#     Param::GetType for its type==10 unwrap check.
+# Therefore a value-only Param is NOT sufficient: a real funcTable pointer with
+# +0 == 7 is required.  Param is not a C++ RTTI class: each specialization has
+# a 12-byte `funcTable` {+0 Param::Type, +4 virtual_Clear, +8 virtual_Clone}
+# in libMWF .data.rel.ro (no _ZTV/_ZTI symbols for ParamStd<>).
+#
+# Live libMWF.so base in the e0673/e0684/e0686 checkpoints is 0x53660000
+# (mapping table; ASLR disabled assumption).  Verified runtime bytes there:
+#   0x536A067C ParamStd<int,7>::funcTable: 07 00 00 00 | 4F 2D 68 53 |
+#                                          05 34 68 53   (type 7, +0x22D4F,
+#                                          +0x23405)
+#   0x536A0598 ObjMsg::funcTable:          29 00 00 00 | 71 03 68 53 |
+#                                          45 04 68 53
+# ObjMsg derives from Param: ObjMsg::ObjMsg() (0x203AD) calls Param ctor then
+# stores &ObjMsg::funcTable at obj+4; obj+0 stays the body pointer.
+# ---------------------------------------------------------------------------
+LIVE_LIBMWF_BASE = 0x53660000
+LIVE_LIBMWF_DATA_BASE = 0x536A0000  # e0686/e0684 mapping (base + 0x40000)
+PARAM_TYPE_INT32 = 7
+
+_OBJMSG_FUNCTABLE_OFFSET = 0x40598
+_PARAMSTD_INT32_FUNCTABLE_OFFSET = 0x4067C
+OBJMSG_FUNCTABLE_VA = LIVE_LIBMWF_BASE + _OBJMSG_FUNCTABLE_OFFSET
+PARAMSTD_INT32_FUNCTABLE_VA = LIVE_LIBMWF_BASE + _PARAMSTD_INT32_FUNCTABLE_OFFSET
+#: MWF funcTable object layout (12 bytes; no C++ RTTI vtable/typeinfo).
+FUNCTABLE_FIELDS = {
+    0x00: 'param_type',
+    0x04: 'virtual_Clear',
+    0x08: 'virtual_Clone',
+}
+#: MWF::Param object fields (E0325/E0326): value at +0, funcTable at +4.
+PARAM_VALUE_OFFSET = 0x00
+PARAM_FUNCTABLE_OFFSET = 0x04
+#: MWF::ObjMsgBody fields (E0336 ctor 0x2027F): refcount/category/messageId/
+#: ParamMap(16 B)/ObjLock; ObjMsg holds body at obj+0 and funcTable at obj+4.
+OBJMSG_BODY_REFCOUNT_OFFSET = 0x00
+OBJMSG_BODY_LOCK_OFFSET = 0x1C
+#: MWF::ParamMap = MWF::ParamList (16 bytes): count, capacity, entry array*,
+#: ParamListItem* chain.  Entry array entries are 8 B {u32 id, Param*}.
+PARAMMAP_COUNT_OFFSET = 0x00
+PARAMMAP_CAPACITY_OFFSET = 0x04
+PARAMMAP_ARRAY_OFFSET = 0x08
+PARAMMAP_ITEM_CHAIN_OFFSET = 0x0C
+PARAMMAP_ENTRY_SIZE = 0x08
+PARAMMAP_ENTRY_ID_OFFSET = 0x00
+PARAMMAP_ENTRY_PARAM_OFFSET = 0x04
+#: Image-relative placement used by the builder.  The array/Param are kept
+#: beyond the zeroed ObjLock object (vptr + pthread_mutex_t, at body+0x1C, up
+#: to ~0x40 bytes) so body lock/unlock cannot clobber them; the map itself sits
+#: at ObjMsgBody+0xC (E0325).
+OBJMSG_PARAM_IMAGE_ARRAY_OFFSET_IN_BODY = 0x48
+OBJMSG_PARAM_IMAGE_PARAM_OFFSET_IN_BODY = 0x50
+OBJMSG_PARAM_IMAGE_REQUIRED_BODY_SIZE = 0x58
+
+
+def describe_mwf_param_object_binding():
+    """Return the E0336 evidence for the Param object/vtable binding.
+
+    ``vtable_required`` is True: the typed lookup dereferences param+4 and
+    reads the MWF funcTable type word; a value-only Param fails the type gate.
+    """
+    return {
+        'funcTable_fields': dict(FUNCTABLE_FIELDS),
+        'param_value_offset': PARAM_VALUE_OFFSET,
+        'param_functable_offset': PARAM_FUNCTABLE_OFFSET,
+        'parammap_offsets': {
+            'count': PARAMMAP_COUNT_OFFSET,
+            'capacity': PARAMMAP_CAPACITY_OFFSET,
+            'array': PARAMMAP_ARRAY_OFFSET,
+            'item_chain': PARAMMAP_ITEM_CHAIN_OFFSET,
+            'entry_size': PARAMMAP_ENTRY_SIZE,
+            'entry_id': PARAMMAP_ENTRY_ID_OFFSET,
+            'entry_param': PARAMMAP_ENTRY_PARAM_OFFSET,
+        },
+        'live_libmwf_base': LIVE_LIBMWF_BASE,
+        'objmsg_func_table_va': OBJMSG_FUNCTABLE_VA,
+        'paramstd_int32_func_table_va': PARAMSTD_INT32_FUNCTABLE_VA,
+        'vtable_required': True,
+        'function_addresses': {
+            'UFW::MsgUtil::GetInt32': 0xA3F4,
+            'ObjMsg::GetParam(id,type)': 0x205EB,
+            'ObjMsgBody::GetParam(id,type)': 0x20303,
+            'ParamMap::Get': 0x22BD3,
+            'ParamMap::GetParam(Param*)': 0x22BB7,
+            'Param::GetType': 0x1F140,
+            'ParamStd<int,7>::GetValue': 0x233A9,
+            'ObjMsg::ObjMsg()': 0x203AD,
+            'ObjMsgBody::ObjMsgBody()': 0x2027F,
+        },
+        'instruction_evidence': (
+            'Param::GetType 0x1F140: ldr r3,[param+4]; ldr r0,[r3] -> '
+            'funcTable+0 is Param::Type; ObjMsgBody::GetParam 0x20303 calls '
+            'it when type!=0; GetInt32 0xA3F6 passes r2=7 (int32) and asserts '
+            'at MsgUtil.cpp:64 (0x40) when GetParam returns null'),
+        'boundary': (
+            'param=0x1006 int32 value 0 is constructible with the live libMWF '
+            'funcTable VA; the ObjMsg/ParamMap teardown after ProcessMsg '
+            '(free of the fabricated in-image array, operator delete of the '
+            'pool ObjMsg) is still unmodelled'),
+    }
+
+
+def _validate_word(name, value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError('%s must be an integer, got %r' % (name, value))
+    if not 0 <= value <= 0xFFFFFFFF:
+        raise ValueError('%s out of 32-bit range: %r' % (name, value))
+    return value
+
 
 def build_setconfig_objmsg_image(obj_address, allocation_size=0x80,
-                                 body_offset=0x20):
-    """Return the labelled emulated ObjMsg image bytes for SETCONFIG.
+                                 body_offset=0x20, include_param=True,
+                                 param_id=SETCONFIG_PARAM_ID, param_value=0,
+                                 param_type=PARAM_TYPE_INT32,
+                                 libmwf_base=LIVE_LIBMWF_BASE,
+                                 objmsg_func_table_va=None):
+    """Return the labelled emulated SETCONFIG ObjMsg image bytes.
 
-    ``obj_address`` is the guest address where the image will be written;
-    the object's first word points at the body at ``obj_address+body_offset``.
-    Raises ValueError when the body does not fit or is unaligned.
+    ``obj_address`` is the guest address where the image will be written; the
+    object's first word points at the body at ``obj_address+body_offset``.
+    With ``include_param`` (default) the body carries a valid MWF ParamMap with
+    one ``ParamStd<int,7>`` entry (E0336): value at param+0 and the live
+    ``ParamStd<int,7>::funcTable`` VA at param+4, so
+    ``UFW::MsgUtil::GetInt32(msg, 0x1006)`` passes the typed lookup.  The
+    ObjMsg funcTable is stored at obj+4 (ObjMsg derives from Param, E0336).
+
+    Raises ValueError when the layout does not fit, the offsets are unaligned,
+    the requested param type is not the decoded int32 type (7), the value is
+    out of int32 range, or ``libmwf_base``/funcTable addresses are invalid.
     """
+    obj_address = _validate_word('obj_address', obj_address)
+    allocation_size = _validate_word('allocation_size', allocation_size)
+    body_offset = _validate_word('body_offset', body_offset)
     if body_offset % 4:
         raise ValueError('body offset must be word aligned')
-    if allocation_size < body_offset + 0x10:
-        raise ValueError('allocation too small for ObjMsg body')
+    required = body_offset + (OBJMSG_PARAM_IMAGE_REQUIRED_BODY_SIZE
+                              if include_param else 0x10)
+    if allocation_size < required:
+        raise ValueError(
+            'allocation too small: need 0x%x bytes, got 0x%x'
+            % (required, allocation_size))
+    if include_param:
+        if param_type != PARAM_TYPE_INT32:
+            raise ValueError(
+                'only the decoded Param::Type int32 (7) is modelled, got %r'
+                % (param_type,))
+        param_id = _validate_word('param_id', param_id)
+        if isinstance(param_value, bool) or not isinstance(param_value, int):
+            raise ValueError('param_value must be an integer')
+        if not -0x80000000 <= param_value <= 0x7FFFFFFF:
+            raise ValueError('param_value is not int32: %r' % (param_value,))
+        libmwf_base = _validate_word('libmwf_base', libmwf_base)
+        if libmwf_base == 0:
+            raise ValueError('libmwf_base is required for the Param funcTable VA')
+        if libmwf_base % 4:
+            raise ValueError('libmwf_base must be word aligned')
+        func_table_va = _validate_word(
+            'param funcTable VA', libmwf_base + _PARAMSTD_INT32_FUNCTABLE_OFFSET)
+        if objmsg_func_table_va is None:
+            objmsg_func_table_va = libmwf_base + _OBJMSG_FUNCTABLE_OFFSET
+    elif objmsg_func_table_va is None:
+        objmsg_func_table_va = 0
+    objmsg_func_table_va = _validate_word('objmsg_func_table_va',
+                                          objmsg_func_table_va)
+
     image = bytearray(allocation_size)
-    struct.pack_into('<I', image, 0, obj_address + body_offset)
-    struct.pack_into('<I', image, body_offset + 4, SETCONFIG_CATEGORY)
-    struct.pack_into('<I', image, body_offset + 8, SETCONFIG_MESSAGE_ID)
+    body = body_offset
+    struct.pack_into('<I', image, 0, obj_address + body)
+    struct.pack_into('<I', image, 4, objmsg_func_table_va)
+    struct.pack_into('<I', image, body + 0x04, SETCONFIG_CATEGORY)
+    struct.pack_into('<I', image, body + 0x08, SETCONFIG_MESSAGE_ID)
+    if include_param:
+        parammap = body + OBJMSG_PARAM_CONTAINER_OFFSET
+        array = body + OBJMSG_PARAM_IMAGE_ARRAY_OFFSET_IN_BODY
+        param = body + OBJMSG_PARAM_IMAGE_PARAM_OFFSET_IN_BODY
+        # ParamMap/ParamList: one entry; array/id/Param addresses are absolute.
+        struct.pack_into('<I', image, parammap + PARAMMAP_COUNT_OFFSET, 1)
+        struct.pack_into('<I', image, parammap + PARAMMAP_CAPACITY_OFFSET, 1)
+        struct.pack_into('<I', image, parammap + PARAMMAP_ARRAY_OFFSET,
+                         obj_address + array)
+        struct.pack_into('<I', image, parammap + PARAMMAP_ITEM_CHAIN_OFFSET, 0)
+        # Entry {param id, Param*}.
+        struct.pack_into('<I', image, array + PARAMMAP_ENTRY_ID_OFFSET,
+                         param_id)
+        struct.pack_into('<I', image, array + PARAMMAP_ENTRY_PARAM_OFFSET,
+                         obj_address + param)
+        # ParamStd<int,7>: value and the live libMWF funcTable pointer.
+        struct.pack_into('<i', image, param + PARAM_VALUE_OFFSET, param_value)
+        struct.pack_into('<I', image, param + PARAM_FUNCTABLE_OFFSET,
+                         func_table_va)
     return bytes(image)
+
+
+def describe_setconfig_objmsg_param_layout(obj_address=0x579CE000,
+                                           allocation_size=0x80,
+                                           body_offset=0x20,
+                                           libmwf_base=LIVE_LIBMWF_BASE):
+    """Return the decoded offsets/addresses of the E0336 SETCONFIG Param image."""
+    layout = {
+        'allocation_size': allocation_size,
+        'body_offset': body_offset,
+        'objmsg': obj_address,
+        'body': obj_address + body_offset,
+        'objmsg_func_table_va': libmwf_base + _OBJMSG_FUNCTABLE_OFFSET,
+        'param_functable_va': libmwf_base + _PARAMSTD_INT32_FUNCTABLE_OFFSET,
+        'category': SETCONFIG_CATEGORY,
+        'message_id': SETCONFIG_MESSAGE_ID,
+        'param_id': SETCONFIG_PARAM_ID,
+        'param_type': PARAM_TYPE_INT32,
+        'param_value': 0,
+        'parammap_offset': body_offset + OBJMSG_PARAM_CONTAINER_OFFSET,
+        'array_offset': body_offset + OBJMSG_PARAM_IMAGE_ARRAY_OFFSET_IN_BODY,
+        'param_offset': body_offset + OBJMSG_PARAM_IMAGE_PARAM_OFFSET_IN_BODY,
+        'image_size_required': (body_offset +
+                                OBJMSG_PARAM_IMAGE_REQUIRED_BODY_SIZE),
+        'vtable_required': True,
+        'evidence': 'E0336 (Param::GetType reads funcTable+0; funcTable VA '
+                    'verified in live libMWF data at base+0x4067C)',
+    }
+    layout['array_address'] = obj_address + layout['array_offset']
+    layout['param_address'] = obj_address + layout['param_offset']
+    return layout

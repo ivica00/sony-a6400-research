@@ -1,0 +1,20 @@
+# Offline test / emulation dependencies (verified environment).
+#
+# The offline contract suite runs with the Python standard library plus the four
+# packages below. Versions are the ones under which the recorded full suite ran;
+# they are pinned so a fresh Linux, macOS or Windows checkout is deterministic.
+#
+#   python -m pip install -r requirements.txt
+#   python -m unittest discover -s tests -q
+#
+# The camera-facing helpers in tools/ additionally want optional packages that
+# are deliberately NOT required for the offline suite or CI:
+#   pyusb (tools/research/check_camera.py, USB diagnostics)
+#   comtypes (Windows USB monitoring helpers)
+#   opencv-python / numpy (video evaluation helpers, e.g. motion_eval.py)
+# Those helpers fail closed when the optional package is absent.
+
+capstone==5.0.9
+pillow==13.0.0
+pyelftools==0.33
+unicorn==2.1.4

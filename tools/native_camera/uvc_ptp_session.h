@@ -5,6 +5,7 @@
 #define A6400_UVC_PTP_SESSION_H
 #include "uvc_callback_bridge.h"
 #include "uvc_ptp_descriptor_lease.h"
+#include "uvc_ptp_soft_disconnect.h"
 struct a6400_uvc_ptp_ops {
     /* quiesce must stop/disconnect AND drain native PTP/UVC/EP0 consumers. */
     int (*quiesce)(void *);
@@ -31,6 +32,10 @@ struct a6400_uvc_ptp_session {
     struct a6400_uvc_ptp_ops ops;
     struct uvc_bridge bridge;
     struct a6400_descriptor_lease lease;
+    /* Ordered-teardown record, kept after a held end so the stopped phase is
+     * still observable. Appended (not inserted) so every earlier offset and
+     * the existing fixtures stay ABI-compatible. */
+    struct a6400_uvc_teardown_trace teardown;
 };
 int a6400_uvc_ptp_session_begin(struct a6400_uvc_ptp_session *,void *,
                                struct uvc_reference_descriptor *,

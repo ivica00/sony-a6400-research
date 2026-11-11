@@ -1,7 +1,22 @@
-"""Data provider for project status visualizations."""
+"""Data provider for project status visualizations.
+
+Two independent outputs share this module:
+
+* ``get_a6400_project_status_data()`` feeds the treemap PNG
+  (``tools/research/generate_status_image.py`` -> ``docs/images/status_a6400.png``).
+  Its integer "done/total" counters deliberately keep their original scope.
+* ``STATUS_SNAPSHOT`` feeds the narrative status card
+  (``tools/research/render_research_status.py`` -> ``docs/images/research-status.svg``)
+  and is the single source of truth that ``tests/test_research_status_sync.py``
+  checks against ``README.md``.
+
+``STATUS_SNAPSHOT`` carries plain claims, evidence references and the recorded
+suite count; it never converts them into a compatibility percentage.
+"""
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -120,7 +135,7 @@ def get_a6400_project_status_data() -> list[Panel]:
         Category("devno_nodes", 28, devnodes_count, weight=38.0),    # flash block nodes, sio, dmac, ldec
         Category("kernel_drivers", 10, 37, weight=26.0),     # drivers1 (devno, dmac, ldec, emmc) + drivers2
         Category("flash_parts", 7, 30, weight=25.0),         # nflasha1-30: verified partitions
-        Category("display_subsys", 2, 4, weight=30.0),       # Read-only OSD/Sugilite contract, provenance and GUI (E0297); live guest rendering, GPU execution and camera comparison unverified
+        Category("display_subsys", 2, 4, weight=30.0),       # Read-only OSD A/B capture (E0298) then GPES BAR/IRQ contracts + opt-in engine model (E0313/E0314); live guest rendering, GPU execution and camera comparison unverified
         Category("sdhci_dma", 10, 10, weight=20.0),         # CMD17/18/24/25, SDHCI_PRESENT_STATE (0x2c), ADMA2 8-byte descriptors (0x58), scatterlist pipeline
         Category("etc_overlay", 4, 5, weight=16.0),          # vfat rw detection, empty rootfs, preload boundary
     ]
@@ -130,3 +145,176 @@ def get_a6400_project_status_data() -> list[Panel]:
         Panel(title="Hardware & Storage Subsystems", badge_label="hardware", categories=hardware_cats),
     ]
 
+
+
+# ---------------------------------------------------------------------------
+# Documentation synchronization data (README <-> docs/images/research-status.svg)
+# ---------------------------------------------------------------------------
+#
+# Each field is a claim that is also stated in README.md. tests/test_research_status_sync.py
+# fails when the README, this snapshot and the generated SVG disagree on the latest
+# evidence ID, the recorded suite count or the latest evidence record on disk.
+#
+# Update procedure for a new milestone:
+#   1. write the evidence record under docs/evidence/,
+#   2. add/refresh a card here and bump ``latest``, ``as_of`` and ``suite.test_count``,
+#   3. run the full suite once and record its "Ran N tests" value,
+#   4. regenerate the card:  python -m tools.research.render_research_status --write
+#   5. the suite must stay green (tests/test_research_status_sync.py enforces the rest).
+
+
+@dataclass(frozen=True)
+class EvidenceRef:
+    """One dated, bounded result shown on the status card.
+
+    ``tier`` states what kind of evidence the claim rests on; the renderer prints it
+    verbatim so an offline contract can never look like a physical observation.
+    """
+
+    evidence_id: str
+    path: str
+    date: str
+    title: str
+    demonstrated: str
+    boundary: str
+    tier: str
+
+
+@dataclass(frozen=True)
+class SuiteRecord:
+    """The recorded full-suite result this documentation refresh is pinned to."""
+
+    test_count: int
+    recorded_at: str
+    evidence_id: str
+    command: str
+
+
+@dataclass(frozen=True)
+class StatusSnapshot:
+    """Single source of truth for the narrative status card and its README sync."""
+
+    schema_version: int
+    as_of: str
+    latest: EvidenceRef
+    headline: str
+    cards: tuple[EvidenceRef, ...]
+    suite: SuiteRecord
+    footer: str
+
+    @property
+    def title(self) -> str:
+        return f"Sony a6400 research status through {self.latest.evidence_id}"
+
+    @property
+    def description(self) -> str:
+        return (
+            f"{self.suite.test_count} tests recorded passing. Offline original-code execution, "
+            "read-only physical observation and authored demonstrations are reported separately. "
+            "No emulator GUI frame and no UVC frame are claimed."
+        )
+
+
+STATUS_SNAPSHOT = StatusSnapshot(
+    schema_version=1,
+    as_of="2026-11-11",
+    latest=EvidenceRef(
+        evidence_id="E0353",
+        path="docs/evidence/0353-run-a-teardown-success.md",
+        date="2026-11-11",
+        title="Track B Run A: clean soft-disconnect teardown on hardware",
+        demonstrated=(
+            "First physical daemon session with the unconfigure-first soft disconnect: INIT, "
+            "composite enumeration (MI_00 + MI_01), [a6400_td] phases=1ff failed=9 reconnect=1, "
+            "clean exit, and Mass Storage returned without a battery pull."
+        ),
+        boundary=(
+            "Open: no UVC frame yet (no host liveview consumer in Run A) and DirectShow "
+            "RenderStream has not been retested; SD receipt content not yet read back."
+        ),
+        tier="PHYSICAL, RAM-ONLY",
+    ),
+    headline="1283 tests recorded passing | No verified emulator GUI frame",
+    cards=(
+        EvidenceRef(
+            evidence_id="E0332",
+            path="docs/evidence/0332-sync-callback-delivery-first-invocation.md",
+            date="2026-11-11",
+            title="UIPC / USB",
+            demonstrated=(
+                "Kernel-to-user sync callback delivery runs the original h4109 callback "
+                "and completes it without fault."
+            ),
+            boundary=(
+                "Open: ADJ packet format, the 0x0A4000 producer and the USB FSM "
+                "transition (sync_callback_packet_format_unmodelled)."
+            ),
+            tier="OFFLINE ORIGINAL CODE",
+        ),
+        EvidenceRef(
+            evidence_id="E0314",
+            path="docs/evidence/0314-gpes-bar-irq-contract-engine-model.md",
+            date="2026-11-10",
+            title="GPES engine / display",
+            demonstrated=(
+                "GPES BAR and IRQ contracts decoded from read-only observations; the opt-in "
+                "engine model reaches a second original guest signal."
+            ),
+            boundary=(
+                "Open: keyed 0x820E completion, guest condition release, OSD mapping and "
+                "the rasterizer."
+            ),
+            tier="READ-ONLY PHYSICAL + OPT-IN MODEL",
+        ),
+        EvidenceRef(
+            evidence_id="E0349",
+            path="docs/evidence/0349-p1-foreign-get-jpeg-succeeds-in-pc-remote.md",
+            date="2026-11-11",
+            title="PTP / composite USB",
+            demonstrated=(
+                "Pipelined PTP liveview: a foreign GET_JPEG sees real frames from the DMM "
+                "unit at 29.8 FPS while the host stream runs."
+            ),
+            boundary=(
+                "Open: the composite enumerates (E0350) but DirectShow cannot connect the "
+                "UVC pins, so no UVC frame is claimed."
+            ),
+            tier="PHYSICAL OBSERVATION",
+        ),
+        EvidenceRef(
+            evidence_id="E0353",
+            path="docs/evidence/0353-run-a-teardown-success.md",
+            date="2026-11-11",
+            title="Track B teardown (physical)",
+            demonstrated=(
+                "Run A: fresh-boot DMA window, INIT, composite enumeration, clean "
+                "unconfigure-first soft disconnect and reconnect; MSC returned without a battery pull."
+            ),
+            boundary=(
+                "Open: UVC frames and DirectShow RenderStream; next is Run B with a host "
+                "stream, ETW capture and the receipt-fixed daemon."
+            ),
+            tier="PHYSICAL, RAM-ONLY",
+        ),
+    ),
+    suite=SuiteRecord(
+        test_count=1283,
+        recorded_at="2026-11-11",
+        evidence_id="E0353",
+        command="python -m unittest discover -s tests -q",
+    ),
+    footer=(
+        "Independent results, not a compatibility percentage. "
+        "Evidence and limits are linked from README.md."
+    ),
+)
+
+
+def latest_evidence_id() -> str:
+    """Latest evidence ID the status documentation is synchronized to."""
+    return STATUS_SNAPSHOT.latest.evidence_id
+
+
+def recorded_test_count() -> int:
+    """Full-suite test count recorded for this documentation refresh."""
+    return STATUS_SNAPSHOT.suite.test_count

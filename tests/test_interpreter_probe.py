@@ -11,7 +11,15 @@ from unittest import mock
 from project_paths import PROJECT_ROOT
 from src.a6400.images.process_elf import inspect_image, map_image
 from src.a6400.execution.process_entry import build_stack, AT_PHDR, AT_BASE, AT_ENTRY, AT_NULL
-from src.a6400.execution.interpreter_probe import InterpreterProbe, summarize_loader_stop
+from src.a6400.execution.interpreter_probe import (
+    InterpreterProbe,
+    USB_CONTROL_DISPATCH_SYMBOLS,
+    inspect_elf_load_and_symbols,
+    module_mapping_entries,
+    normalise_packet_hex,
+    resumed_module_base,
+    summarize_loader_stop,
+)
 from src.a6400.execution.guest_kuser import extract_kuser_template
 
 
@@ -1245,6 +1253,358 @@ class LoaderWorkaroundTests(unittest.TestCase):
         self.assertIn('_code', callbacks)
         self.assertNotIn('_it_workaround', callbacks)
         self.assertNotIn('_ld_fixup_workaround', callbacks)
+
+
+class UsbControlDispatchHelperTests(unittest.TestCase):
+    """Pure resolvers/validation for the observe-only UsbControl dispatch trace."""
+
+    def test_normalise_packet_hex_accepts_hex_strings_and_bytes(self):
+        self.assertEqual(normalise_packet_hex('0xDEAD beef'),
+                         (bytes.fromhex('deadbeef'), 'deadbeef'))
+        self.assertEqual(normalise_packet_hex(b'\x00\x01'), (b'\x00\x01', '0001'))
+
+    def test_normalise_packet_hex_rejects_invalid_or_empty_input(self):
+        for value in ('', 'abc', 'zz', '0x', None, 12):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    normalise_packet_hex(value)
+
+    def test_module_mapping_entries_match_guest_basename(self):
+        mappings = [{'path': '/usr/lib/libUsbControl.so', 'address': 0x56440000, 'offset': 0},
+                    {'path': '/usr/lib/libMWF.so', 'address': 0x53660000, 'offset': 0}]
+        entries = module_mapping_entries('libMWF.so', mappings)
+        self.assertEqual([entry['address'] for entry in entries], [0x53660000])
+        self.assertEqual(module_mapping_entries('missing.so', mappings), [])
+
+    def test_resumed_module_base_uses_segments_and_cross_checks_mappings(self):
+        mappings = [
+            {'path': '/usr/lib/libUsbControl.so', 'address': 0x56440000, 'offset': 0},
+            {'path': '/usr/lib/libUsbControl.so', 'address': 0x5645e000, 'offset': 0x16000},
+        ]
+        segments = [{'file_offset': 0, 'vaddr': 0},
+                    {'file_offset': 0x16000, 'vaddr': 0x1e000}]
+        info = resumed_module_base('libUsbControl.so', mappings, segments)
+        self.assertEqual(info['base'], 0x56440000)
+        self.assertEqual(info['path'], '/usr/lib/libUsbControl.so')
+        self.assertEqual(len(info['mappings']), 2)
+
+    def test_resumed_module_base_fails_closed(self):
+        with self.assertRaises(ValueError):
+            resumed_module_base('libUsbControl.so', [],
+                                [{'file_offset': 0, 'vaddr': 0}])
+        with self.assertRaises(ValueError):
+            resumed_module_base(
+                'libUsbControl.so',
+                [{'path': '/usr/lib/libUsbControl.so', 'address': 0x1000, 'offset': 0}],
+                [{'file_offset': 0x2000, 'vaddr': 0}])
+
+    @unittest.skipUnless(
+        (PROJECT_ROOT / 'artifacts/hardware/live-libs/libUsbControl.so').exists(),
+        'live-libs evidence artifact is not present')
+    def test_inspect_elf_resolves_evidence_dynsym_offsets(self):
+        raw = (PROJECT_ROOT / 'artifacts/hardware/live-libs/libUsbControl.so').read_bytes()
+        names = [spec['symbol'] for spec in USB_CONTROL_DISPATCH_SYMBOLS
+                 if spec['module'] == 'libUsbControl.so']
+        segments, symbols = inspect_elf_load_and_symbols(
+            raw, names + ['_ZNK3MWF6ObjMsg12GetMessageIdEv'])
+        self.assertTrue(segments)
+        self.assertEqual(
+            symbols['_ZN10UsbControl10ProcessMsgEjPN3MWF6ObjMsgE']['value'], 0x10ED5)
+        self.assertEqual(
+            symbols['_ZN10UsbControl13MsgId2EventIdEj']['value'], 0x104AD)
+        self.assertEqual(
+            symbols['_ZN3UFW3Fsm13DispatchEventEiPv']['value'], 0xAFD3)
+        # The ObjMsg accessor is an import in libUsbControl, not a definition.
+        self.assertFalse(symbols['_ZNK3MWF6ObjMsg12GetMessageIdEv']['defined'])
+
+
+class _RecordingHookUc:
+    """Hook registrar fake: records hook registrations instead of executing."""
+
+    def __init__(self, arch=0, mode=0):
+        self.hooks = []
+        self.hook_dels = []
+
+    def ctl_set_cpu_model(self, model):
+        pass
+
+    def reg_write(self, register, value):
+        pass
+
+    def hook_add(self, kind, callback, **kwargs):
+        handle = len(self.hooks) + 1
+        self.hooks.append({'kind': kind, 'callback': callback,
+                           'begin': kwargs.get('begin'), 'end': kwargs.get('end'),
+                           'user_data': kwargs.get('user_data'), 'handle': handle})
+        return handle
+
+    def hook_del(self, handle):
+        self.hook_dels.append(handle)
+
+
+class _RegisterMemoryUc:
+    """Register/memory fake for exercising one hook callback directly."""
+
+    def __init__(self, registers, memory=None):
+        self.registers = dict(registers)
+        self.memory = dict(memory or {})
+
+    def reg_read(self, register):
+        return self.registers[register]
+
+    def mem_read(self, address, size):
+        for (start, length), data in self.memory.items():
+            if start <= address and address + size <= start + length:
+                offset = address - start
+                return data[offset:offset + size]
+        raise ValueError('unmapped read at 0x%x' % (address,))
+
+
+class UsbControlDispatchHookTests(unittest.TestCase):
+    """E0332 follow-up: fail-soft hook installation and observe-only hits."""
+
+    def _resolution(self):
+        return {
+            'UsbControl::ProcessMsg': {
+                'available': True, 'module': 'libUsbControl.so',
+                'address': 0x56450ED4, 'base': 0x56440000,
+                'symbol_value': 0x10ED5, 'symbol_source': 'unit-test',
+                'symbol_source_sha256': '0' * 64},
+            'MWF::ObjMsg::GetMessageId': {
+                'available': True, 'module': 'libMWF.so',
+                'address': 0x53680528, 'base': 0x53660000,
+                'symbol_value': 0x20529, 'symbol_source': 'unit-test',
+                'symbol_source_sha256': '0' * 64},
+            'UsbControl::MsgId2EventId': {
+                'available': True, 'module': 'libUsbControl.so',
+                'address': 0x564504AC, 'base': 0x56440000,
+                'symbol_value': 0x104AD, 'symbol_source': 'unit-test',
+                'symbol_source_sha256': '0' * 64},
+            'UFW::Fsm::DispatchEvent': {
+                'available': True, 'module': 'libUsbControl.so',
+                'address': 0x5644AFD2, 'base': 0x56440000,
+                'symbol_value': 0xAFD3, 'symbol_source': 'unit-test',
+                'symbol_source_sha256': '0' * 64},
+        }
+
+    def _probe(self):
+        from src.a6400.execution import interpreter_probe as module
+        self.module = module
+        with mock.patch.object(module.unicorn, 'Uc', _RecordingHookUc):
+            return InterpreterProbe()
+
+    def _spec(self, function):
+        return next(spec for spec in USB_CONTROL_DISPATCH_SYMBOLS
+                    if spec['function'] == function)
+
+    def _hit_hooks(self, probe):
+        return [hook for hook in probe.mu.hooks
+                if getattr(hook['callback'], '__name__', '') == '_usbcontrol_dispatch_hit']
+
+    def test_trace_is_disabled_by_default_and_writes_no_report_keys(self):
+        probe = self._probe()
+        config = probe.install_usbcontrol_dispatch_hooks(resolution=self._resolution())
+        self.assertFalse(config['enabled'])
+        self.assertEqual(self._hit_hooks(probe), [])
+        self.assertNotIn('usbcontrol_dispatch_trace', probe.report)
+        self.assertNotIn('usbcontrol_dispatch_hooks', probe.report)
+
+    def test_installs_one_hook_per_resolved_function(self):
+        probe = self._probe()
+        probe.trace_usbcontrol_dispatch = True
+        config = probe.install_usbcontrol_dispatch_hooks(resolution=self._resolution())
+        self.assertTrue(config['enabled'])
+        self.assertTrue(config['observe_only'])
+        self.assertEqual(
+            {hook['begin'] for hook in self._hit_hooks(probe)},
+            {0x56450ED4, 0x53680528, 0x564504AC, 0x5644AFD2})
+        self.assertEqual(set(config['functions']),
+                         {spec['function'] for spec in USB_CONTROL_DISPATCH_SYMBOLS})
+        self.assertTrue(all(info['available']
+                            for info in config['functions'].values()))
+        self.assertEqual(probe.report['usbcontrol_dispatch_trace'], [])
+
+    def test_missing_resolution_is_recorded_unavailable_without_fault(self):
+        probe = self._probe()
+        probe.trace_usbcontrol_dispatch = True
+        config = probe.install_usbcontrol_dispatch_hooks(resolution={})
+        self.assertTrue(config['enabled'])
+        self.assertEqual(len(config['functions']), 4)
+        for info in config['functions'].values():
+            self.assertFalse(info['available'])
+            self.assertEqual(info['reason'], 'resolution_missing')
+        self.assertEqual(self._hit_hooks(probe), [])
+        self.assertEqual(probe.report['usbcontrol_dispatch_trace'], [])
+
+    def test_unmapped_modules_are_recorded_unavailable_without_fault(self):
+        probe = self._probe()  # no resumed mmap table: fail-soft, no exception
+        probe.trace_usbcontrol_dispatch = True
+        config = probe.install_usbcontrol_dispatch_hooks()
+        self.assertTrue(config['enabled'])
+        for info in config['functions'].values():
+            self.assertFalse(info['available'])
+            self.assertEqual(info['reason'], 'module_not_mapped')
+
+    def test_processmsg_hit_records_args_and_objmsg_fields(self):
+        probe = self._probe()
+        probe.trace_usbcontrol_dispatch = True
+        probe.install_usbcontrol_dispatch_hooks(resolution=self._resolution())
+        obj, body = 0x139DB250, 0x139DB280
+        uc = _RegisterMemoryUc(
+            {arm.UC_ARM_REG_R0: 0x56440000, arm.UC_ARM_REG_R1: 0,
+             arm.UC_ARM_REG_R2: obj, arm.UC_ARM_REG_LR: 0x6001},
+            {(obj, 4): struct.pack('<I', body),
+             (body + 4, 8): struct.pack('<II', 0x6103, 0x0A4001)})
+        probe._usbcontrol_dispatch_hit(
+            uc, 0x56450ED4, 4, {'spec': self._spec('UsbControl::ProcessMsg')})
+        entry = probe.report['usbcontrol_dispatch_trace'][-1]
+        self.assertEqual(entry['function'], 'UsbControl::ProcessMsg')
+        self.assertEqual(entry['args'],
+                         {'this': 0x56440000, 'unsigned_arg': 0, 'msg': obj})
+        self.assertEqual(entry['objmsg']['category_id'], 0x6103)
+        self.assertEqual(entry['objmsg']['message_id'], 0x0A4001)
+        self.assertEqual(entry['instruction'], 0)
+        self.assertIsNone(entry['tid'])
+        self.assertNotIn('returns', entry)
+
+    def test_msgid2eventid_return_value_is_recorded(self):
+        probe = self._probe()
+        probe.trace_usbcontrol_dispatch = True
+        probe.install_usbcontrol_dispatch_hooks(resolution=self._resolution())
+        uc = _RegisterMemoryUc({arm.UC_ARM_REG_R0: 0x56440000,
+                                arm.UC_ARM_REG_R1: 0x0A4001,
+                                arm.UC_ARM_REG_LR: 0x6001})
+        probe._usbcontrol_dispatch_hit(
+            uc, 0x564504AC, 4, {'spec': self._spec('UsbControl::MsgId2EventId')})
+        return_hooks = [hook for hook in probe.mu.hooks
+                        if getattr(hook['callback'], '__name__', '')
+                        == '_usbcontrol_dispatch_return']
+        self.assertEqual([hook['begin'] for hook in return_hooks], [0x6000])
+        probe._usbcontrol_dispatch_return(
+            _RegisterMemoryUc({arm.UC_ARM_REG_R0: 0x13}), 0x6000, 4, None)
+        entry = probe.report['usbcontrol_dispatch_trace'][-1]
+        self.assertEqual(entry['args']['message_id'], 0x0A4001)
+        self.assertEqual(entry['returns'], {'value': 0x13, 'event_id': 0x13})
+
+    def test_getmessageid_return_value_is_recorded(self):
+        probe = self._probe()
+        probe.trace_usbcontrol_dispatch = True
+        probe.install_usbcontrol_dispatch_hooks(resolution=self._resolution())
+        obj, body = 0x139DB250, 0x139DB280
+        uc = _RegisterMemoryUc(
+            {arm.UC_ARM_REG_R0: obj, arm.UC_ARM_REG_LR: 0x6001},
+            {(obj, 4): struct.pack('<I', body),
+             (body + 4, 8): struct.pack('<II', 0x6103, 0x0A4001)})
+        probe._usbcontrol_dispatch_hit(
+            uc, 0x53680528, 4, {'spec': self._spec('MWF::ObjMsg::GetMessageId')})
+        probe._usbcontrol_dispatch_return(
+            _RegisterMemoryUc({arm.UC_ARM_REG_R0: 0x0A4001}), 0x6000, 4, None)
+        entry = probe.report['usbcontrol_dispatch_trace'][-1]
+        self.assertEqual(entry['objmsg']['message_id'], 0x0A4001)
+        self.assertEqual(entry['returns'],
+                         {'value': 0x0A4001, 'message_id': 0x0A4001})
+
+    def test_trace_hit_limit_truncates_and_flags_report(self):
+        probe = self._probe()
+        probe.trace_usbcontrol_dispatch = True
+        config = probe.install_usbcontrol_dispatch_hooks(
+            resolution=self._resolution(), max_hits=1)
+        spec = self._spec('UFW::Fsm::DispatchEvent')
+        uc = _RegisterMemoryUc({arm.UC_ARM_REG_R0: 0x56440000,
+                                arm.UC_ARM_REG_R1: 0x13,
+                                arm.UC_ARM_REG_R2: 0,
+                                arm.UC_ARM_REG_LR: 0x6001})
+        probe._usbcontrol_dispatch_hit(uc, 0x5644AFD2, 4, {'spec': spec})
+        probe._usbcontrol_dispatch_hit(uc, 0x5644AFD2, 4, {'spec': spec})
+        self.assertEqual(len(probe.report['usbcontrol_dispatch_trace']), 1)
+        self.assertTrue(config['truncated'])
+
+    def test_return_hook_captures_r0_in_real_unicorn(self):
+        """The dynamic return-address hook works on the real Unicorn engine."""
+        probe = InterpreterProbe()
+        probe.mu.mem_map(0x1000, 0x1000, 7)
+        # 0x1000: movs r0,#0x42 ; 0x1002: bx lr
+        probe.mu.mem_write(0x1000, struct.pack('<HH', 0x2042, 0x4770))
+        probe.mu.reg_write(arm.UC_ARM_REG_CPSR, 0x30)  # user mode + Thumb
+        probe.mu.reg_write(arm.UC_ARM_REG_LR, 0x1005)  # return to 0x1004
+        spec = {'function': 'unit-test-return', 'returns': 'message_id'}
+        entry = {'function': 'unit-test-return'}
+        probe._usbcontrol_dispatch_arm_return(probe.mu, spec, entry)
+        probe.mu.emu_start(0x1001, 0, count=4)
+        self.assertEqual(entry['returns'], {'value': 0x42, 'message_id': 0x42})
+
+
+class UsbControlObjmsgPacketInjectionTests(unittest.TestCase):
+    """Explicit packet_hex override of the emulated SETCONFIG envelope payload."""
+
+    class FakeThreads:
+        def __init__(self):
+            self.woken = []
+
+        def handle_uipc_wake(self, queue):
+            self.woken.append(queue)
+            return [1001]
+
+    def _probe(self, pool_size=0x2000):
+        from src.a6400.execution.guest_uipc import GuestUipc
+        probe = InterpreterProbe(syscall_policy='stop')
+        probe.mu.mem_map(0x2000, pool_size, 7)
+        probe.uipc = GuestUipc(total_pool_size=pool_size)
+        probe.uipc.pool_base = 0x2000
+        probe.threads = self.FakeThreads()
+        probe.instructions = 77
+        return probe
+
+    def test_default_injection_keeps_objmsg_pointer_payload(self):
+        probe = self._probe()
+        entry = probe.inject_uipc_setconfig_objmsg(0x288)
+        payload = bytes(probe.mu.mem_read(entry['envelope'], 4))
+        self.assertEqual(payload, struct.pack('<I', entry['objmsg']))
+        self.assertEqual(probe.uipc.message_queues[0x288], [entry['envelope']])
+        self.assertNotIn('packet_hex', entry)
+        self.assertEqual(entry['woken'], [1001])
+
+    def test_packet_hex_overrides_envelope_payload_and_ledger(self):
+        probe = self._probe()
+        packet = bytes.fromhex('0102030405060708')
+        entry = probe.inject_uipc_setconfig_objmsg(
+            0x288, packet_hex='01 02 03 04 05 06 07 08')
+        self.assertEqual(
+            bytes(probe.mu.mem_read(entry['envelope'], len(packet))), packet)
+        self.assertEqual(entry['packet_hex'], packet.hex())
+        self.assertEqual(entry['packet_size'], len(packet))
+        self.assertEqual(entry['packet_sha256'], hashlib.sha256(packet).hexdigest())
+        self.assertEqual(entry['envelope_size'], len(packet))
+        self.assertEqual(entry['payload_mode'], 'explicit-packet-hex')
+        self.assertIn('packet_hex override', entry['provenance'])
+        self.assertEqual(probe.report['uipc_objmsg_injection'][-1]['packet_hex'],
+                         packet.hex())
+
+    def test_packet_hex_accepts_bytes(self):
+        probe = self._probe()
+        entry = probe.inject_uipc_setconfig_objmsg(0x288, packet_hex=b'ABCD')
+        self.assertEqual(bytes(probe.mu.mem_read(entry['envelope'], 4)), b'ABCD')
+
+    def test_packet_hex_validation_fails_closed_before_guest_write(self):
+        probe = self._probe()
+        with self.assertRaises(ValueError):
+            probe.inject_uipc_setconfig_objmsg(0x288, packet_hex='abc')
+        self.assertNotIn(0x288, probe.uipc.message_queues)
+        self.assertEqual(probe.uipc.next_offset, 0x20)
+
+
+class UsbControlDispatchCliTests(unittest.TestCase):
+    def test_parser_exposes_opt_in_flags_disabled_by_default(self):
+        from tools.research.experiment_ui_boot import build_parser
+        defaults = build_parser().parse_args([])
+        self.assertFalse(defaults.trace_usbcontrol_dispatch)
+        self.assertIsNone(defaults.uipc_inject_objmsg_packet_hex)
+        explicit = build_parser().parse_args(
+            ['--trace-usbcontrol-dispatch',
+             '--uipc-inject-objmsg-setconfig-queue', '0x00CA0288',
+             '--uipc-inject-objmsg-packet-hex', 'deadbeef'])
+        self.assertTrue(explicit.trace_usbcontrol_dispatch)
+        self.assertEqual(explicit.uipc_inject_objmsg_packet_hex, 'deadbeef')
 
 
 if __name__ == '__main__':

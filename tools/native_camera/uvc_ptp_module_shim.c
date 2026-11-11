@@ -235,6 +235,11 @@ long a6400_uvc_shared_ioctl(void *file,unsigned int command,unsigned long arg)
     else if(command==0x4038e000u && !native_route_bound())ret=-19;
     else if(command==0x4038e000u || command==0x8010f020u)
         ret=a6400_uvc_legacy_dma_ioctl(file,command,arg);
+#ifdef A6400_COMPOSITE_TRANSPORT
+    else if(command==0x4008f000u || command==0x4008f003u ||
+            command==0x0000f006u || command==0x0000f002u || command==0x0000f001u)
+        ret=a6400_uvc_legacy_dma_ioctl(file,command,arg);
+#endif
     else ret=-95; /* enumeration/control candidate: no buffer/stream ioctls */
     return control_leave(ret);
 }

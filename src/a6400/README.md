@@ -1,20 +1,39 @@
 # Execution research implementation
 
-The first implementation is a bounded original Linux interpreter probe. It maps the original application/interpreter and constructs explicit process-entry state. Default mode stops before all kernel responses. The optional `brk` policy supplies a tested guest-only heap contract and stops on other requests. Camera hardware is not implemented.
+Bounded clean-room execution and hardware-contract modules for the Sony a6400 (ILCE-6400)
+and the shared BIONZ X `CXD90045` platform. The first implementation was a bounded original
+Linux interpreter probe; the tree has since grown into the execution backend, the device
+contract models and the multi-device target registry.
 
-The `brk-uname` policy also supplies image-backed kernel identity, with guards stopping reads of runtime-unknown fields. It reaches the first filesystem request, which remains unanswered. No host kernel identity or filesystem response is substituted.
+Launch the probe through `python -m tools.research.probe_interpreter` from the project root
+after generating the inventory and guest-layout reports, using the project environment.
 
-The `files` policy adds bounded read-only file contracts over hash-checked image snapshots and stops at successful stat/fstat metadata. Runtime namespaces remain unsupported. See [E0006](../../docs/evidence/0006-read-only-guest-filesystem.md) for the tested scope and current boundary.
+## Current modules
 
-Current modules: `images/process_elf.py`, `execution/process_entry.py`, and `execution/interpreter_probe.py`. Launch through `python -m tools.research.probe_interpreter` from the project root after generating the inventory and guest-layout reports, using the project environment.
-
-Responsibilities (other directories remain reserved):
-
+- `execution/`: the original-code interpreter/runner (`interpreter_probe.py`) plus the
+  opt-in contracts it can serve — OSAL/UIPC messaging, MWF `ObjMsg` wire format, USB
+  gadgetcore/otgcore/buspower/event, USB video, GPES/GRM, filesystem/flash namespaces,
+  VFAT/EXT2 metadata, threads/TLS and the syscall layer. Every contract is opt-in and
+  fails closed at its evidence boundary.
+- `targets/`: `TargetProfile` schema, fail-closed evidence validation and the multi-device
+  registry (`ilce_6400` verified, `zv_e10` reference chain, explicit stubs for other
+  bodies). See [ADDING_A_BIONZX_CAMERA](../../docs/ADDING_A_BIONZX_CAMERA.md).
+- `visualization/`: the treemap status renderer and its data provider.
 - `images/`: immutable input inventory and patch overlays.
-- `execution/`: backend and guest startup.
 - `machine/`: evidence-backed platform configuration.
 - `devices/`: guest-visible hardware contracts.
 - `trace/`: execution events and run reports.
 - `frontend/`: display presentation and physical-input delivery.
 
-Select interfaces after the platform investigation and backend experiment. Legacy simulation code remains outside this tree.
+Legacy simulation code remains outside this tree; host-written navigation or rendering is
+not firmware compatibility.
+
+## Probe policies
+
+The `brk` policy supplies a tested guest-only heap contract and stops on other requests.
+`brk-uname` adds image-backed kernel identity with guards stopping reads of runtime-unknown
+fields. The `files` policy adds bounded read-only file contracts over hash-checked image
+snapshots and stops at successful stat/fstat metadata. Runtime namespaces remain
+unsupported; see [E0006](../../docs/evidence/0006-read-only-guest-filesystem.md) for that
+tested scope and boundary. Every later contract follows the same rule: an explicit policy,
+a recorded boundary, and no silent success replies.

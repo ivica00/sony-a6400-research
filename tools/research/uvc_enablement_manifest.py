@@ -18,13 +18,28 @@ from elftools.elf.elffile import ELFFile
 from src.a6400.execution.zve10_uvc_enablement import (
     ZVE10_UVC_COMPONENTS,
     ZVE10_REQUIRED_USB_NODES,
+    ZVE10_VERMAGIC,
     A6400_PROVIDER_MODULES,
+    assess_enablement_hygiene,
     compare_components,
     enablement_verdict,
     hash_file,
+    model_devno_usb_namespace,
+    module_symbol_names,
     module_vermagic,
     parse_devno_table,
+    verify_api_symbols,
+    verify_component_hashes,
+    verify_vermagic,
 )
+
+# No physical-load authorization is ever assumed by the offline builder.
+DEFAULT_LOAD_AUTHORIZATION = {
+    'authorized': False,
+    'explicit_scope': False,
+    'recovery_plan': False,
+    'teardown_receipts': False,
+}
 
 A6400_IMAGE = (ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/'
                '0700_part_image/dev/nflasha15_unpacked')
@@ -102,6 +117,37 @@ def build_manifest():
     verdict = enablement_verdict(
         components, a6400_devno, a6400_vermagic == zve10_vermagic)
 
+    # Verification gates: hashes (above), vermagic, provider/consumer API
+    # symbols and the offline 248:32/248:33 node namespace model.  Physical
+    # load is never authorized by this builder.
+    vermagic_modules = {}
+    for name, path in (('usbg_video.ko', ZVE10_IMAGE / 'kmod/usbg_video.ko'),
+                       ('usbg_audio.ko', ZVE10_IMAGE / 'kmod/usbg_audio.ko'),
+                       ('usbg_cmn.ko', A6400_IMAGE / 'kmod/usbg_cmn.ko')):
+        if path.is_file():
+            vermagic_modules[name] = module_vermagic(path)
+    provider_symbols = {}
+    a6400_cmn = A6400_IMAGE / 'kmod/usbg_cmn.ko'
+    if a6400_cmn.is_file():
+        provider_symbols['usbg_cmn.ko'] = module_symbol_names(a6400_cmn)
+    consumer_symbols = {}
+    for name, path in (('usbg_video.ko', ZVE10_IMAGE / 'kmod/usbg_video.ko'),
+                       ('usbg_audio.ko', ZVE10_IMAGE / 'kmod/usbg_audio.ko')):
+        if path.is_file():
+            consumer_symbols[name] = module_symbol_names(path)
+    component_verification = verify_component_hashes(present)
+    vermagic_check = verify_vermagic(vermagic_modules)
+    api_check = verify_api_symbols(provider_symbols, consumer_symbols)
+    devno_model = model_devno_usb_namespace(a6400_devno)
+    hygiene = assess_enablement_hygiene(
+        {'components': components},
+        a6400_devno,
+        vermagic_by_component=vermagic_modules,
+        provider_symbols=provider_symbols,
+        consumer_symbols=consumer_symbols,
+        load_authorization=DEFAULT_LOAD_AUTHORIZATION,
+    )
+
     providers = {}
     for module in A6400_PROVIDER_MODULES:
         path = A6400_IMAGE / 'kmod' / module
@@ -136,7 +182,18 @@ def build_manifest():
                      'a6400_usbg_cmn': a6400_vermagic,
                      'equal': zve10_vermagic == a6400_vermagic},
         'a6400_provider_modules': providers,
+        'verification_gates': {
+            'components': component_verification,
+            'vermagic': vermagic_check,
+            'api_symbols': api_check,
+            'device_nodes': devno_model,
+            'load_authorization': hygiene['gates']['load_authorization'],
+        },
+        'devno_namespace_model': devno_model,
+        'hygiene': hygiene,
+        'load_authorization': DEFAULT_LOAD_AUTHORIZATION,
         'verdict': verdict,
+        'verdict_hygiene_refusals': list(hygiene['refusals']),
         'boundaries': [
             'no module load, no camera write, no mode change',
             'symbol/vermagic parity is not loadability proof',

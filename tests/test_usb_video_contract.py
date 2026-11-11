@@ -30,6 +30,24 @@ from src.a6400.execution.usb_video_contract import (
     describe_usbg_video_endpoint_list_contract,
     USB_VIDEO_PHYS_BUFFER_RPC,
     describe_usbg_video_phys_buffer_rpc,
+    USB_VIDEO_CONTEXT_COUNT_WRITER,
+    describe_usb_video_count_writer,
+    USB_VIDEO_REQUEST_OBJECT,
+    parse_usb_video_request_object,
+    USB_VIDEO_DMA_INFO_OBJECT,
+    parse_usb_video_dma_info_object,
+    USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE,
+    USB_VIDEO_BUFFER_TABLE_MAX_ENTRIES,
+    USB_VIDEO_BLOB_MAX_BYTES,
+    USB_VIDEO_FRAME_SOURCE,
+    parse_usb_video_buffer_table,
+    parse_usb_video_blob,
+    validate_usb_video_probe_info,
+    build_usb_video_phys_buffer_alloc_message,
+    build_usb_video_phys_buffer_free_message,
+    parse_usb_video_phys_buffer_reply,
+    usb_video_frame_source,
+    describe_usbg_video_gap_contract,
 )
 
 
@@ -208,3 +226,178 @@ class TestZve10UsbVideoPhysBufferRpc(unittest.TestCase):
                          0x2988)
         self.assertIn('0x2DA', report['open_usage'])
         self.assertIn('instruction-level', report['evidence'])
+
+
+class TestZve10UsbVideoGapDecoders(unittest.TestCase):
+    """E0319 gaps: count writer, 0xD0/0x24 objects, buffer table/blob."""
+
+    def test_context_count_writer_is_explicit_boundary(self):
+        self.assertEqual(USB_VIDEO_CONTEXT_COUNT_WRITER['context_offset'], 0x2D)
+        self.assertEqual(USB_VIDEO_CONTEXT_COUNT_WRITER['writer'],
+                         'unresolved_external')
+        self.assertEqual(USB_VIDEO_CONTEXT_COUNT_WRITER['stores_in_module_text'], 0)
+        report = describe_usb_video_count_writer()
+        self.assertEqual(report['context_zeroed_bytes'], 0xC0)
+        self.assertIn('usbg_cmn_copy_probe_info', report['note'])
+
+    def test_request_object_parser_labels_every_word_unresolved(self):
+        self.assertEqual(USB_VIDEO_REQUEST_OBJECT['context_offset'], 0xAC)
+        self.assertEqual(USB_VIDEO_REQUEST_OBJECT['size'], 0xD0)
+        parsed = parse_usb_video_request_object(b'\x00' * 0xD0)
+        self.assertEqual(parsed['size'], 0xD0)
+        self.assertEqual(parsed['known_fields'], {})
+        self.assertEqual(len(parsed['words']), 0xD0 // 4)
+        self.assertEqual(set(parsed['labels'].values()),
+                         {'unresolved_word'})
+        self.assertEqual(parsed['semantics'], 'unresolved')
+
+    def test_request_object_rejects_short_or_non_bytes(self):
+        with self.assertRaises(ValueError):
+            parse_usb_video_request_object(b'\x00' * 0xCF)
+        with self.assertRaises(ValueError):
+            parse_usb_video_request_object([0] * 0xD0)
+
+    def test_dma_info_object_fields(self):
+        raw = bytearray(0x24)
+        raw[0x00:0x04] = (1).to_bytes(4, 'little')
+        raw[0x04:0x08] = (1).to_bytes(4, 'little')
+        raw[0x08:0x0C] = (0x12345678).to_bytes(4, 'little')
+        raw[0x0C:0x10] = (0xAABBCCDD).to_bytes(4, 'little')
+        parsed = parse_usb_video_dma_info_object(bytes(raw))
+        self.assertEqual(parsed['context_offset'], 0xB0)
+        self.assertEqual(parsed['fields'][0x00]['label'], 'constant_1_observed')
+        self.assertEqual(parsed['fields'][0x00]['value'], 1)
+        self.assertEqual(parsed['fields'][0x08]['label'],
+                         'adjusted_physical_address')
+        self.assertEqual(parsed['fields'][0x08]['value'], 0x12345678)
+        self.assertEqual(parsed['fields'][0x0C]['label'],
+                         'unresolved_literal_word')
+        with self.assertRaises(ValueError):
+            parse_usb_video_dma_info_object(b'\x00' * 0x20)
+
+    def test_buffer_table_parser_is_bounded_and_labelled(self):
+        self.assertEqual(USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE, 2)
+        table = (0x1001).to_bytes(2, 'little') + (0x1002).to_bytes(2, 'little')
+        parsed = parse_usb_video_buffer_table(table, expected_count=2)
+        self.assertEqual(parsed['entries'], [0x1001, 0x1002])
+        self.assertEqual(parsed['count_source'],
+                         'context+0x2D (external writer unresolved)')
+        self.assertIn('unresolved', parsed['entry_semantics'])
+        empty = parse_usb_video_buffer_table(b'', expected_count=0)
+        self.assertEqual(empty['entries'], [])
+
+    def test_buffer_table_rejects_mismatch_and_oversize(self):
+        with self.assertRaises(ValueError):
+            parse_usb_video_buffer_table(b'\x00' * 3, expected_count=2)
+        with self.assertRaises(ValueError):
+            parse_usb_video_buffer_table(b'\x00' * 2, expected_count=-1)
+        with self.assertRaises(ValueError):
+            parse_usb_video_buffer_table(
+                b'\x00' * (USB_VIDEO_BUFFER_TABLE_MAX_ENTRIES * 2 + 2),
+                expected_count=USB_VIDEO_BUFFER_TABLE_MAX_ENTRIES + 1)
+
+    def test_blob_parser_bounds(self):
+        parsed = parse_usb_video_blob(b'\x01\x02\x03\x04')
+        self.assertEqual(parsed['length'], 4)
+        self.assertEqual(parsed['data_hex'], '01020304')
+        self.assertIn('unresolved', parsed['semantics'])
+        with self.assertRaises(ValueError):
+            parse_usb_video_blob(b'\x00' * (USB_VIDEO_BLOB_MAX_BYTES + 1))
+        with self.assertRaises(ValueError):
+            parse_usb_video_blob('nope')
+
+    def test_probe_info_validation_cross_checks(self):
+        data = bytearray(USB_VIDEO_PROBE_INFO_SIZE)
+        data[0x24:0x28] = (0x00010002).to_bytes(4, 'little')
+        data[0x30:0x34] = (0).to_bytes(4, 'little')
+        data[0x34:0x38] = (0).to_bytes(4, 'little')
+        report = validate_usb_video_probe_info(bytes(data), buffer_count=3)
+        self.assertEqual(report['expected_buffer_table_bytes'], 6)
+        self.assertFalse(report['blob_present'])
+        self.assertTrue(report['flags']['buffer_table_size_checked'])
+        self.assertIn('external writer unresolved',
+                      report['flags']['count_source'])
+        self.assertIn('no register/commit success', report['semantics'])
+
+    def test_probe_info_validation_refusals(self):
+        data = bytearray(USB_VIDEO_PROBE_INFO_SIZE)
+        data[0x34:0x38] = (1).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            validate_usb_video_probe_info(bytes(data))
+        data[0x30:0x34] = (0x1000).to_bytes(4, 'little')
+        data[0x34:0x38] = (USB_VIDEO_BLOB_MAX_BYTES + 1).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            validate_usb_video_probe_info(bytes(data))
+        data[0x34:0x38] = (4).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            validate_usb_video_probe_info(
+                bytes(data), buffer_count=USB_VIDEO_BUFFER_TABLE_MAX_ENTRIES + 1)
+
+
+class TestZve10UsbVideoPhysBufferBuilders(unittest.TestCase):
+    """E0319 §12: fail-closed alloc/free message builders and reply parser."""
+
+    def test_alloc_message_layout(self):
+        message = build_usb_video_phys_buffer_alloc_message(0x50E)
+        self.assertEqual(len(message), 0x18)
+        self.assertEqual(int.from_bytes(message[0x00:0x02], 'little'), 1)
+        self.assertEqual(int.from_bytes(message[0x02:0x04], 'little'), 0)
+        self.assertEqual(int.from_bytes(message[0x04:0x08], 'little'), 0x50E)
+        self.assertEqual(int.from_bytes(message[0x0C:0x10], 'little'),
+                         0xFFFFFFFF)
+        self.assertEqual(int.from_bytes(message[0x16:0x18], 'little'), 1)
+
+    def test_alloc_message_refusals(self):
+        for size in (-1, 0x100000000, 'big', None):
+            with self.assertRaises(ValueError):
+                build_usb_video_phys_buffer_alloc_message(size)
+
+    def test_free_message_layout_and_refusals(self):
+        message = build_usb_video_phys_buffer_free_message(0x2DA)
+        self.assertEqual(len(message), 0x18)
+        self.assertEqual(int.from_bytes(message[0x00:0x02], 'little'), 4)
+        self.assertEqual(int.from_bytes(message[0x02:0x04], 'little'), 0x2DA)
+        self.assertEqual(int.from_bytes(message[0x16:0x18], 'little'), 2)
+        for handle in (-1, 0x10000, 'x'):
+            with self.assertRaises(ValueError):
+                build_usb_video_phys_buffer_free_message(handle)
+
+    def test_reply_parser(self):
+        reply = bytearray(0x18)
+        reply[0x02:0x04] = (0x1234).to_bytes(2, 'little')
+        reply[0x04:0x06] = (0x50E).to_bytes(2, 'little')
+        reply[0x10:0x14] = (0x20098000).to_bytes(4, 'little')
+        reply[0x14:0x18] = (0x13E60000).to_bytes(4, 'little')
+        parsed = parse_usb_video_phys_buffer_reply(bytes(reply))
+        self.assertEqual(parsed['status_u16'], 0x1234)
+        self.assertEqual(parsed['length_u16'], 0x50E)
+        self.assertEqual(parsed['physical'], 0x20098000)
+        self.assertEqual(parsed['virtual'], 0x13E60000)
+        with self.assertRaises(ValueError):
+            parse_usb_video_phys_buffer_reply(b'\x00' * 0x17)
+
+
+class TestZve10UsbVideoFrameSourceAndGaps(unittest.TestCase):
+    """E0319 gaps: JPEG/DMM frame source stays unresolved and fail-closed."""
+
+    def test_frame_source_is_unresolved(self):
+        self.assertEqual(USB_VIDEO_FRAME_SOURCE['status'], 'unresolved')
+        for kind in ('jpeg', 'dmm'):
+            info = usb_video_frame_source(kind)
+            self.assertFalse(info['modelled'])
+            self.assertEqual(info['status'], 'unresolved')
+            self.assertIn('hypothesis', info['note'])
+
+    def test_frame_source_unknown_raises(self):
+        with self.assertRaises(ValueError):
+            usb_video_frame_source('raw')
+
+    def test_gap_report_lists_all_remaining_boundaries(self):
+        report = describe_usbg_video_gap_contract()
+        self.assertEqual(report['context_count_writer']['context_offset'], 0x2D)
+        self.assertEqual(report['request_object']['size'], 0xD0)
+        self.assertEqual(report['dma_info_object']['size'], 0x24)
+        self.assertEqual(report['buffer_table']['entry_size'], 2)
+        self.assertEqual(report['frame_source']['status'], 'unresolved')
+        self.assertIn('unresolved', report['buffer_table']['semantics'])
+        self.assertIn('fail closed', report['evidence'])

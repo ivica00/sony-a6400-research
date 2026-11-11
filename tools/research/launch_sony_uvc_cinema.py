@@ -79,7 +79,7 @@ proc = subprocess.Popen(server_cmd)
 print("\n=================================================================")
 print("  SONY A6400 UVC STREAM IS LIVE!")
 print("  Open browser: http://127.0.0.1:8080/")
-print("  Or run: launch_cinema_mpv.bat")
+print("  Or run: scripts/launch_cinema_mpv.bat")
 print("=================================================================\n")
 
 # Wait 3s and verify server is responding

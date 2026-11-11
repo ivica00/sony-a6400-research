@@ -15,7 +15,7 @@ LIB_DIR = os.path.join(
     EXTRACTED_DIR, "firmware.tar_unpacked", "0700_part_image", "dev", "nflasha15_unpacked", "lib"
 )
 
-from cxd90045_hle_emulator import (
+from legacy.cxd90045_hle_emulator import (
     CXD90045_HLE_Emulator, FRAMEBUFFER, FB_SIZE, LCD_WIDTH, LCD_HEIGHT,
     KEY_TACT_MENU, KEY_TACT_DISP, KEY_TACT_FN, KEY_TACT_PLAY,
     KEY_TACT_UP, KEY_TACT_DOWN, KEY_TACT_LEFT, KEY_TACT_RIGHT, KEY_TACT_ENTER,

@@ -50,6 +50,11 @@ class BootSession:
     uipc_inject_payload: Optional[bytes] = None
     uipc_setconfig_objmsg_queue: Optional[int] = None
     uipc_setconfig_objmsg_wake: Optional[int] = None
+    uipc_local_post_object: Optional[int] = None
+    uipc_local_post_waiter: Optional[int] = None
+    uipc_local_post_guest_alloc: bool = False
+    uipc_local_post_libosal_base: Optional[int] = None
+    uipc_local_post_libmwf_base: Optional[int] = None
 
 
 def usb_otgcore_options(args):
@@ -406,6 +411,11 @@ def build_boot_session(args, parser=None) -> BootSession:
         raise ValueError('UIPC injection requires both --uipc-inject-queue and --uipc-inject-payload')
     uipc_setconfig_objmsg_queue = getattr(args, 'uipc_inject_objmsg_setconfig_queue', None)
     uipc_setconfig_objmsg_wake = getattr(args, 'uipc_inject_objmsg_wake_uaddr', None)
+    uipc_local_post_object = getattr(args, 'uipc_local_post_setconfig_object', None)
+    uipc_local_post_waiter = getattr(args, 'uipc_local_post_waiter', None)
+    uipc_local_post_guest_alloc = getattr(args, 'uipc_local_post_guest_alloc', False)
+    uipc_local_post_libosal_base = getattr(args, 'uipc_local_post_libosal_base', None)
+    uipc_local_post_libmwf_base = getattr(args, 'uipc_local_post_libmwf_base', None)
 
     probe.stream2_device_policy = getattr(args, 'stream2_device', 'stop')
     probe.nflasha4_device_policy = getattr(args, 'nflasha4_device', 'stop')
@@ -459,4 +469,9 @@ def build_boot_session(args, parser=None) -> BootSession:
                        uipc_inject_queue=uipc_inject_queue,
                        uipc_inject_payload=uipc_inject_payload,
                        uipc_setconfig_objmsg_queue=uipc_setconfig_objmsg_queue,
-                       uipc_setconfig_objmsg_wake=uipc_setconfig_objmsg_wake)
+                       uipc_setconfig_objmsg_wake=uipc_setconfig_objmsg_wake,
+                       uipc_local_post_object=uipc_local_post_object,
+                       uipc_local_post_waiter=uipc_local_post_waiter,
+                       uipc_local_post_guest_alloc=uipc_local_post_guest_alloc,
+                       uipc_local_post_libosal_base=uipc_local_post_libosal_base,
+                       uipc_local_post_libmwf_base=uipc_local_post_libmwf_base)

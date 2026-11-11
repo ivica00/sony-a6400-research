@@ -75,14 +75,18 @@ def main() -> int:
     img.save(args.output, format="PNG")
     print(f"Successfully generated status image: {args.output} ({args.width}x{args.height})")
     
-    # Keep generated copies inside the project output paths.
-    root_status = ROOT / "status_a6400.png"
-    img.save(root_status, format="PNG")
-    print(f"Copied status image to project root: {root_status}")
+    # Keep generated copies inside the documented picture directories.
+    docs_status = ROOT / "docs" / "images" / "status_a6400.png"
+    docs_status.parent.mkdir(parents=True, exist_ok=True)
+    img.save(docs_status, format="PNG")
+    print(f"Copied status image to docs/images: {docs_status}")
 
     alt_out = args.output.parent / "status.png"
     if alt_out != args.output:
         img.save(alt_out, format="PNG")
+        docs_alt = ROOT / "docs" / "images" / "status.png"
+        if docs_alt != docs_status:
+            img.save(docs_alt, format="PNG")
     
     for panel in panels:
         print(f"  [{panel.badge_label}] {panel.title}: {panel.percentage:.2f}% ({panel.total_done}/{panel.total_count})")

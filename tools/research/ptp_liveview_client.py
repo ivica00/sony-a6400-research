@@ -4,6 +4,15 @@ Connects over USB in "PC Remote" mode via Windows WPD.
 Streams live frames and runs a local HTTP MJPEG / WebGL2 server at http://127.0.0.1:8080/
 Includes authentic AMD FidelityFX Super Resolution (EASU + RCAS) real-time upscaling,
 A/B Split-Screen comparison, Flip V/H controls, focus peaking, and cinema telemetry.
+
+Offline/CI-tested configurations: PTP response-code decoding, reconnect decisions,
+lifecycle transitions and teardown ordering are pure functions exercised without
+USB/WPD/camera. The WPD liveview/HTTP path itself is hardware-only and is not
+claimed tested here. Evidence for the response table is the PTP/libgphoto2
+reference (see docs/CINEMAHUD_STOCK_PTP.md protocol references); Sony vendor
+enums and capture/reconnect timing are not physically validated. Unknown
+response codes, shutdown errors and exhausted retry budgets are never reported
+as success; they produce explicit failure/stop decisions.
 """
 
 import argparse
@@ -11,6 +20,8 @@ import ctypes
 import json
 import os
 import socket
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 from urllib.parse import urlsplit, parse_qs
 from tools.research.cinema_frames import FrameHub
 import queue
@@ -68,6 +79,219 @@ def is_wpd_shutdown_error(exc):
     """True when a WPD COM object was invalidated (device re-enumerated)."""
     text = str(exc).lower()
     return 'shutdown was already called' in text or 'object that owns it' in text
+
+
+# PTP response codes (PTP spec / libgphoto2 ptp.h).  Entries are
+# (name, category, retryable).  This is a reference subset, not a claim that the
+# a6400 emits every code; unknown codes decode to success=False.
+PTP_RESPONSE_TABLE = {
+    0x2001: ('OK', 'success', False),
+    0x2002: ('GeneralError', 'failure', False),
+    0x2003: ('SessionNotOpen', 'session', False),
+    0x2004: ('InvalidTransactionID', 'invalid', False),
+    0x2005: ('OperationNotSupported', 'unsupported', False),
+    0x2006: ('ParameterNotSupported', 'unsupported', False),
+    0x2007: ('IncompleteTransfer', 'transfer', False),
+    0x2008: ('InvalidStorageID', 'storage', False),
+    0x2009: ('InvalidObjectHandle', 'invalid', False),
+    0x200A: ('DevicePropNotSupported', 'unsupported', False),
+    0x200B: ('InvalidObjectFormatCode', 'invalid', False),
+    0x200C: ('StoreFull', 'storage', False),
+    0x200D: ('ObjectWriteProtected', 'access', False),
+    0x200E: ('StoreReadOnly', 'access', False),
+    0x200F: ('AccessDenied', 'access', False),
+    0x2010: ('NoThumbnailPresent', 'invalid', False),
+    0x2011: ('SelfTestFailed', 'failure', False),
+    0x2012: ('PartialDeletion', 'transfer', False),
+    0x2013: ('StoreNotAvailable', 'storage', False),
+    0x2014: ('SpecificationByFormatUnsupported', 'unsupported', False),
+    0x2015: ('NoValidObjectInfo', 'invalid', False),
+    0x2016: ('InvalidCodeFormat', 'invalid', False),
+    0x2017: ('UnknownVendorCode', 'unsupported', False),
+    0x2018: ('CaptureAlreadyTerminated', 'failure', False),
+    0x2019: ('DeviceBusy', 'busy', True),
+    0x201A: ('InvalidParentObject', 'invalid', False),
+    0x201B: ('InvalidDevicePropFormat', 'invalid', False),
+    0x201C: ('InvalidDevicePropValue', 'invalid', False),
+    0x201D: ('InvalidParameter', 'invalid', False),
+    0x201E: ('SessionAlreadyOpen', 'session', False),
+    0x201F: ('TransactionCancelled', 'failure', False),
+}
+
+
+@dataclass(frozen=True)
+class PtpResponse:
+    code: int
+    name: Optional[str]
+    success: bool
+    retryable: bool
+    category: str
+    reason: Optional[str] = None
+
+
+def decode_response_code(rc: int) -> PtpResponse:
+    """Decode a PTP response; unknown codes are explicit failures, not success."""
+    entry = PTP_RESPONSE_TABLE.get(rc)
+    if entry is None:
+        return PtpResponse(rc, None, False, False, 'unknown',
+                           f'unknown PTP response 0x{rc:04x}')
+    name, category, retryable = entry
+    success = rc == PTP_RC_OK
+    return PtpResponse(rc, name, success, retryable, category,
+                       None if success else f'{name} (0x{rc:04x})')
+
+
+@dataclass(frozen=True)
+class RecoveryDecision:
+    """Pure reconnect decision; no I/O is performed here."""
+
+    action: str  # 'continue' | 'retry' | 'reconnect' | 'close_and_reconnect' | 'stop'
+    delay: float
+    reason: str
+    attempts_left: int
+
+
+class LiveviewRecoveryPolicy:
+    """Deterministic retry/reconnect policy for the WPD liveview owner loop."""
+
+    def __init__(self, max_attempts: int = 15, retry_delay: float = 0.02,
+                 max_delay: float = 0.2):
+        if max_attempts < 1:
+            raise ValueError('max_attempts must be positive')
+        if retry_delay < 0 or max_delay < 0:
+            raise ValueError('delays must be non-negative')
+        self.max_attempts = max_attempts
+        self.retry_delay = retry_delay
+        self.max_delay = max_delay
+
+    def delay_for(self, attempt: int) -> float:
+        exponent = min(max(attempt, 0), 4)
+        return min(self.max_delay, self.retry_delay * (2 ** exponent))
+
+    def _decision(self, action, delay, reason, attempt):
+        return RecoveryDecision(action, delay, reason,
+                                max(0, self.max_attempts - attempt - 1))
+
+    def for_exception(self, exc, attempt: int, driver_present: bool = True):
+        if attempt >= self.max_attempts:
+            return self._decision('stop', 0.0, 'retry budget exhausted', attempt)
+        if is_wpd_shutdown_error(exc):
+            action = 'close_and_reconnect' if driver_present else 'reconnect'
+            return self._decision(action, 0.0,
+                                  'WPD owner object shut down; driver invalidated', attempt)
+        return self._decision('retry', self.delay_for(attempt),
+                              f'transient liveview error: {exc!r}', attempt)
+
+    def for_empty_frame(self, attempt: int):
+        if attempt >= self.max_attempts:
+            return self._decision('stop', 0.0, 'retry budget exhausted', attempt)
+        return self._decision('retry', self.delay_for(attempt),
+                              'no frame in response', attempt)
+
+    def for_response(self, rc: int, attempt: int):
+        response = decode_response_code(rc)
+        if response.success:
+            return self._decision('continue', 0.0, 'PTP OK', attempt)
+        if attempt >= self.max_attempts:
+            return self._decision('stop', 0.0, 'retry budget exhausted', attempt)
+        if response.retryable:
+            return self._decision('retry', self.delay_for(attempt),
+                                  f'PTP busy: {response.reason}', attempt)
+        if response.category == 'session':
+            return self._decision('reconnect', 0.0,
+                                  f'PTP session invalid: {response.reason}', attempt)
+        return self._decision('stop', 0.0,
+                              f'PTP failure: {response.reason}', attempt)
+
+
+class LiveviewLifecycle:
+    """Small explicit state machine around connect/frame/reconnect/teardown."""
+
+    states = ('disconnected', 'streaming', 'degraded', 'reconnecting',
+              'closing', 'closed', 'failed')
+
+    def __init__(self):
+        self.state = 'disconnected'
+        self.frames = 0
+        self.reconnects = 0
+        self.failures = 0
+        self.last_reason: Optional[str] = None
+
+    def _require(self, allowed, action):
+        if self.state not in allowed:
+            raise ValueError(f'cannot {action} from {self.state}')
+
+    def connected(self):
+        self._require(('disconnected', 'reconnecting', 'degraded'), 'connect')
+        if self.state in ('reconnecting', 'degraded'):
+            self.reconnects += 1
+        self.state = 'streaming'
+        self.last_reason = None
+        return True
+
+    def frame_ok(self):
+        self._require(('streaming',), 'record a frame')
+        self.frames += 1
+        self.last_reason = None
+        return True
+
+    def frame_failed(self, reason: str):
+        self._require(('streaming', 'degraded'), 'record a failure')
+        self.failures += 1
+        self.state = 'degraded'
+        self.last_reason = str(reason)
+        return True
+
+    def begin_reconnect(self, reason: str):
+        self._require(('streaming', 'degraded'), 'begin reconnect')
+        self.state = 'reconnecting'
+        self.last_reason = str(reason)
+        return True
+
+    def request_close(self):
+        self._require(('disconnected', 'streaming', 'degraded', 'reconnecting',
+                       'failed', 'closed'), 'request close')
+        self.state = 'closing'
+        return True
+
+    def mark_closed(self):
+        self._require(('disconnected', 'closing', 'failed', 'closed'), 'close')
+        self.state = 'closed'
+        return True
+
+    def mark_failed(self, reason: str):
+        self.state = 'failed'
+        self.last_reason = str(reason)
+        return True
+
+
+@dataclass(frozen=True)
+class TeardownStep:
+    order: int
+    target: str
+    action: str
+    required: bool
+    reason: str
+
+
+def plan_liveview_teardown(*, server_present: bool, settings_present: bool,
+                           driver_present: bool,
+                           reason: str = 'requested') -> Tuple[TeardownStep, ...]:
+    """Pure teardown order: stop HTTP, clear control state, close driver, mark state."""
+    steps = []
+    order = 1
+    if server_present:
+        steps.append(TeardownStep(order, 'http', 'shutdown_and_close', True, reason))
+        order += 1
+    if settings_present:
+        steps.append(TeardownStep(order, 'settings',
+                                  'clear_ready_and_cached_controls', True, reason))
+        order += 1
+    if driver_present:
+        steps.append(TeardownStep(order, 'driver', 'close', True, reason))
+        order += 1
+    steps.append(TeardownStep(order, 'lifecycle', 'mark_closed', False, reason))
+    return tuple(steps)
 
 
 class SonyWpdPTPLiveView:

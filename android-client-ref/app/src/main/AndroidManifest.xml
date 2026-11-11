@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      USB host only. The camera transports are raw USB:
+        * transport A (primary, physically verified): PTP bulk, interface class 6
+        * transport B (secondary, UNVERIFIED): UVC bulk video, interface class 0x0E
+      android.permission.CAMERA is deliberately NOT declared: nothing in this app
+      goes through Camera2 or a camera HAL role, and the a6400 never enumerates as
+      a camera device. Declaring it would only add a runtime prompt for a
+      capability the app does not use.
+    -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="true" />
+
+    <application
+        android:label="@string/app_name"
+        android:allowBackup="false"
+        android:hasFragileUserData="false"
+        android:usesCleartextTraffic="false"
+        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+
+        <!--
+          configChanges covers orientation/screen-size so the GL surface (and the
+          EGL context that holds the renderer's state) is NOT recreated on
+          rotation. Without it a rotate would destroy the surface mid-stream.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="fullSensor"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:resizeableActivity="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Launch/attach handling for the camera being plugged in. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_device_filter" />
+        </activity>
+    </application>
+
+</manifest>

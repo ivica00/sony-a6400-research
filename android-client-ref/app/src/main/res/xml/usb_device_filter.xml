@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  USB device attach filter: Sony vendor id 0x054C (1356), both documented PIDs.
+
+    0x0CAA (3242) = ILCE-6400 PC Remote single-function PTP device.
+                    Physically verified: interface class 6/1/1, bulk OUT 0x02,
+                    bulk IN 0x81, interrupt IN 0x83. Transport A.
+    0x0322 (802)  = composite UVC + PTP device (PTP interface 0, UVC VC/VS
+                    interfaces 1/2, VS MJPEG 1280x720, bulk IN 0x84).
+                    Transport B. UNVERIFIED: no frame has ever been produced by
+                    this path.
+
+  The ids are decimal because that is what <usb-device> accepts.
+-->
+<resources>
+    <usb-device vendor-id="1356" product-id="3242" />
+    <usb-device vendor-id="1356" product-id="802" />
+</resources>

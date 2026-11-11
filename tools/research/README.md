@@ -1,6 +1,6 @@
 # Research utilities
 
-Firmware extraction and static analysis tools are preserved here, with root compatibility entry points. Camera tools interact with USB hardware and should be invoked deliberately. No camera write or service-mode operation is part of repository validation.
+Firmware extraction and static analysis tools are preserved here. Run them as modules from the repository root (for example `python -m tools.research.unpack_firmware`); the former root forwarding stubs were removed in the 2026-11-11 reorganization. Camera tools interact with USB hardware and should be invoked deliberately. No camera write or service-mode operation is part of repository validation.
 
 Bundled upstream dependencies remain at the project root to preserve their existing environments and provenance.
 

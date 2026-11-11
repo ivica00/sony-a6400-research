@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">a6400 Live</string>
+
+    <!-- Transport selector labels. The UNVERIFIED suffix is load-bearing: the
+         composite UVC path has never delivered a frame on this hardware. -->
+    <string name="transport_ptp">PTP / PC Remote (primary)</string>
+    <string name="transport_uvc">UVC composite (UNVERIFIED)</string>
+
+    <string name="label_start">Start</string>
+    <string name="label_stop">Stop</string>
+    <string name="label_refresh">Read back 0x9209</string>
+    <string name="label_sharpness">Sharpness (native)</string>
+    <string name="label_focus_peaking">Focus peaking</string>
+    <string name="label_upscale">Upscale mode (native)</string>
+</resources>

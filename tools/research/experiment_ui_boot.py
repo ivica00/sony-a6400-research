@@ -105,6 +105,11 @@ def build_parser():
                         help='with --trace-address: record this many matching hits before stopping')
     parser.add_argument('--trace-gles-bar', action='store_true',
                         help='observe-only MMIO read/write logging on the resumed dmpgles2 BAR mapping')
+    parser.add_argument('--trace-usbcontrol-dispatch', action='store_true',
+                        help='observe-only hooks on the original UsbControl dispatch chain '
+                             '(UsbControl::ProcessMsg, MWF::ObjMsg::GetMessageId, '
+                             'UsbControl::MsgId2EventId, UFW::Fsm::DispatchEvent) on the resumed '
+                             'run; hits are recorded in report usbcontrol_dispatch_trace')
     parser.add_argument('--thread-timeslice', type=int, default=0,
                         help='opt-in deterministic timer preemption: switch a running thread to a '
                              'runnable peer every N guest instructions (0 keeps cooperative baseline)')
@@ -130,10 +135,29 @@ def build_parser():
                         default=None,
                         help='optional futex address to wake after the emulated SETCONFIG enqueue '
                              '(e.g. the receiver OSAL condvar observed at the resumed state)')
+    parser.add_argument('--uipc-inject-objmsg-packet-hex', default=None,
+                        help='optional explicit envelope-payload packet (hex bytes) for the emulated '
+                             'SETCONFIG injection; overrides the default 4-byte ObjMsg pointer')
     parser.add_argument('--uipc-sync-callback-delivery',
                         choices=('unmodelled', 'kernel-origin'), default='unmodelled',
                         help='opt-in: deliver queued messages to flags=1 sync-registered '
                              'callbacks through the WAIT_CB proxy path (default unmodelled)')
+    parser.add_argument('--uipc-local-post-setconfig-object', type=lambda value: int(value, 0),
+                        default=None,
+                        help='opt-in: post the labelled SETCONFIG ObjMsg through the '
+                             'libosal LOCAL queue object at this resumed-checkpoint address')
+    parser.add_argument('--uipc-local-post-waiter', type=lambda value: int(value, 0),
+                        default=None,
+                        help='optional one-shot WAIT_CB record address for the local post')
+    parser.add_argument('--uipc-local-post-guest-alloc', action='store_true',
+                        help='opt-in: allocate the local-post ObjMsg/envelope from the '
+                             'guest OSAL allocator (requires --uipc-local-post-libosal-base)')
+    parser.add_argument('--uipc-local-post-libosal-base', type=lambda v: int(v, 0), default=None,
+                        help='resumed libosal_uipc load base for guest allocation')
+    parser.add_argument('--uipc-local-post-libmwf-base', type=lambda v: int(v, 0), default=None,
+                        help='resumed libMWF load base for the ObjMsg/Param funcTables')
+    parser.add_argument('--tty-device', choices=('stop', 'log-sink'), default='stop',
+                        help='opt-in: serve /dev/tty as a bounded console log sink (default stop)')
     parser.add_argument('--uipc-pool-options', choices=('legacy-empty', 'kernel-e0300', 'kernel-e0301', 'kernel-e0303'),
                         default='legacy-empty', help='opt-in kernel options; e0300 keeps completion boundary, e0301 adds ordinary async completion, same-process sync callbacks and kernel dynamic IDs, e0303 adds generic multi-consumer/broadcast completion, sync queue 0x009c015b and allocator-driven CONNECT/dynamic IDs')
     parser.add_argument('--usb-otgcore-device', choices=('stop', 'driver-bound'), default='stop',
@@ -180,9 +204,34 @@ def main():
     if args.instructions <= 0 or args.timeout_us <= 0:
         parser.error('Execution limits must be positive')
 
+    objmsg_packet = None
+    if getattr(args, 'uipc_inject_objmsg_packet_hex', None) is not None:
+        from src.a6400.execution.interpreter_probe import normalise_packet_hex
+        try:
+            objmsg_packet, packet_hex = normalise_packet_hex(
+                args.uipc_inject_objmsg_packet_hex)
+        except ValueError as error:
+            parser.error('--uipc-inject-objmsg-packet-hex: %s' % (error,))
+        if getattr(args, 'uipc_inject_objmsg_setconfig_queue', None) is None:
+            parser.error('--uipc-inject-objmsg-packet-hex requires '
+                         '--uipc-inject-objmsg-setconfig-queue')
+        print(f'[*] Explicit emulated SETCONFIG envelope packet: {len(objmsg_packet)} '
+              f'bytes (sha256 {hashlib.sha256(objmsg_packet).hexdigest()[:16]}...).')
+
     session = build_boot_session(args, parser)
     probe = session.probe
     probe.gles_bar_trace = bool(getattr(args, 'trace_gles_bar', False))
+    if getattr(args, 'trace_usbcontrol_dispatch', False):
+        probe.trace_usbcontrol_dispatch = True
+        trace_config = probe.install_usbcontrol_dispatch_hooks()
+        for name, info in trace_config.get('functions', {}).items():
+            if info.get('available'):
+                print(f"[*] Observing {name} at 0x{info['address']:08x} "
+                      f"({info['module']} base 0x{info['base']:08x} + "
+                      f"0x{info['symbol_value']:x}, {info['symbol_source']}).")
+            else:
+                print(f'[!] UsbControl dispatch hook unavailable for {name}: '
+                      f"{info.get('reason')}")
     if getattr(args, 'thread_timeslice', 0) > 0:
         probe.thread_timeslice = args.thread_timeslice
         probe.report['thread_timeslice'] = args.thread_timeslice
@@ -305,6 +354,11 @@ def main():
             'source': 'extracted libObj.so offset 0x79FE16 (movs r0,#0x4C -> #0x50)'}
         print(f'[*] Experimental guest patch applied at 0x{patch_va:08x}: '
               f'{expected.hex()} -> {replacement.hex()} (log-block malloc 0x4C->0x50).')
+    if getattr(args, 'tty_device', 'stop') == 'log-sink':
+        from src.a6400.execution.guest_tty import GuestTty
+        probe.tty = GuestTty()
+        probe.report['tty_device'] = {'policy': 'log-sink'}
+        print('[*] /dev/tty log-sink device enabled (opt-in).')
     manifest = session.manifest
     if session.usb_connect_event:
         probe.arm_usb_connect_event(session.usb_connect_event, session.usb_connect_at)
@@ -318,14 +372,34 @@ def main():
         except Exception as error:
             probe.report['uipc_injection_error'] = str(error)
             print(f'[!] UIPC injection failed: {error}')
+    if session.uipc_local_post_object is not None:
+        try:
+            entry = probe.inject_local_queue_objmsg(
+                session.uipc_local_post_object,
+                waiter_addr=session.uipc_local_post_waiter,
+                guest_alloc=session.uipc_local_post_guest_alloc,
+                libosal_base=session.uipc_local_post_libosal_base,
+                libmwf_base=session.uipc_local_post_libmwf_base or 0x53660000)
+            print(f"[*] Local-queue SETCONFIG post: object=0x"
+                  f"{entry['queue_object']:08x} writes={len(entry['writes'])} "
+                  f"wake={entry['wake'].get('futtex_uaddr') if False else entry['wake'].get('futex_uaddr')} "
+                  f"futex_woken={entry['futex_woken']} (labelled experiment).")
+        except Exception as error:
+            probe.report['local_queue_objmsg_injection_error'] = str(error)
+            print(f'[!] Local-queue SETCONFIG post failed: {error}')
     if session.uipc_setconfig_objmsg_queue is not None:
         try:
             entry = probe.inject_uipc_setconfig_objmsg(
                 session.uipc_setconfig_objmsg_queue,
-                wake_uaddr=session.uipc_setconfig_objmsg_wake)
+                wake_uaddr=session.uipc_setconfig_objmsg_wake,
+                packet_hex=objmsg_packet)
             print(f"[*] Injected emulated SETCONFIG ObjMsg queue=0x"
                   f"{entry['queue']:08x} obj=0x{entry['objmsg']:08x} "
                   f"woken={entry['woken']} (labelled experiment).")
+            if 'packet_hex' in entry:
+                print(f"[*] Envelope payload overridden by explicit packet "
+                      f"({entry['packet_size']} bytes, sha256 "
+                      f"{entry['packet_sha256'][:16]}...).")
         except Exception as error:
             probe.report['uipc_objmsg_injection_error'] = str(error)
             print(f'[!] SETCONFIG ObjMsg injection failed: {error}')
@@ -337,6 +411,15 @@ def main():
         from src.a6400.execution.guest_checkpoint import save_checkpoint
         sz = save_checkpoint(probe, args.save_checkpoint)
         print(f'[*] Checkpoint saved successfully ({sz:,} bytes) at instruction {probe.instructions:,}!')
+    if getattr(args, 'trace_usbcontrol_dispatch', False):
+        trace = report.get('usbcontrol_dispatch_trace') or []
+        counts = {}
+        for hit in trace:
+            name = hit.get('function')
+            counts[name] = counts.get(name, 0) + 1
+        summary = ', '.join(f'{name}={count}' for name, count in counts.items())
+        print(f"[*] UsbControl dispatch trace hits: {len(trace)}"
+              f"{' (' + summary + ')' if summary else ''}.")
     report['boot_stimulus'] = {
         'queue': '0x0094016a', 'injected': session.injected, 'deliveries': session.injection_records,
         'pending': [hex(event) for event in session.boot_events_to_inject],
@@ -409,6 +492,9 @@ def main():
             print("[!] Display contract active but no mapped display surface was found.")
     out_file = args.report
     out_file.parent.mkdir(parents=True, exist_ok=True)
+    tty = getattr(probe, 'tty', None)
+    if tty is not None:
+        probe.report.setdefault('tty_device', {}).update(tty.describe())
     out_file.write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(f"[*] Report saved to: {out_file}")
 

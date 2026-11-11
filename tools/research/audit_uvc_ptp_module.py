@@ -2,6 +2,21 @@
 
 Kernel copy services and original core ioctl/release entries are explicit
 recorders. Does not load the module or execute its init/exit on a camera.
+
+Two build contracts are audited:
+
+* enumeration (``start_probe_only``): the UVC transport ioctls must be rejected
+  with -EOPNOTSUPP and the reference video START is suppressed;
+* transport (``composite_transport`` or ``start_probe_only: false``): REG_BUF,
+  UPDATE, ENABLE, WAIT and buffer-unregistration must reach the original UVC
+  core, its owned-DMA capacity/source checks must stay active, and an unknown
+  command must still be rejected.
+
+All checks that still apply to a transport build are executed. Checks that are
+part of the enumeration-only contract are recorded in ``skipped_checks`` with
+the reason they do not apply, so the result is auditable instead of silently
+short. ``offline_module_audit_passed`` is written only after every executed
+check passes; a missing runtime dependency produces ``status: blocked``.
 """
 import argparse
 import hashlib
@@ -12,9 +27,45 @@ from pathlib import Path
 import struct
 import subprocess
 from elftools.elf.elffile import ELFFile
-from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_WRITE
-from unicorn.arm_const import UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_SP,UC_ARM_REG_LR,UC_ARM_REG_PC,UC_CPU_ARM_CORTEX_A9
+
+try:
+    from unicorn import Uc,UC_ARCH_ARM,UC_MODE_ARM,UC_HOOK_CODE,UC_HOOK_MEM_WRITE
+    from unicorn.arm_const import UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3,UC_ARM_REG_SP,UC_ARM_REG_LR,UC_ARM_REG_PC,UC_CPU_ARM_CORTEX_A9
+    UNICORN_IMPORT_ERROR=None
+except ImportError as error:  # reported as status=blocked, never as a pass
+    UNICORN_IMPORT_ERROR=error
 from tools.research.build_uvc_composite_module import ROOT,REF_KO,REF_SHA
+
+ENUMERATION_ONLY_IOCTLS=(0x4008f003,0xf006,0xf002,0x4008f000,0xf001)
+UNKNOWN_IOCTL=0x12345678
+_FAILURE_REPORT={}
+
+
+def resolve_audit_mode(manifest,allow_transport=False):
+    """Return 'enumeration' or 'transport' for a shared PTP/UVC candidate.
+
+    ``start_probe_only`` is authoritative because the builder sets it to False
+    only for ``--composite-transport`` builds. ``composite_transport: true`` is
+    accepted as an explicit declaration. Ambiguous or contradictory manifests
+    are rejected instead of being guessed.
+    """
+    if not manifest.get('shared_ptp_enumeration_candidate'):
+        raise ValueError('Not a shared PTP/UVC enumeration/transport candidate')
+    probe=manifest.get('start_probe_only')
+    transport=manifest.get('composite_transport')
+    if probe is True and transport is True:
+        raise ValueError('Manifest declares both enumeration-only and composite transport')
+    if probe is True:
+        mode='enumeration'
+    elif probe is False:
+        mode='transport'
+    elif transport is True:
+        mode='transport'
+    else:
+        raise ValueError("Manifest does not declare an audit mode ('start_probe_only'/'composite_transport')")
+    if allow_transport and mode!='transport':
+        raise ValueError('--allow-transport rejected: manifest is an enumeration-only build')
+    return mode
 
 
 def main():
@@ -23,11 +74,20 @@ def main():
     parser.add_argument('--output-dir',required=True,type=Path)
     parser.add_argument('--linked-elf',type=Path,help='Use a prebuilt fixture ELF; skip gcc/ld (WSL-less environments)')
     parser.add_argument('--prepare-only',action='store_true',help='Write the fixture and the exact gcc/ld commands, then exit')
+    parser.add_argument('--allow-transport',action='store_true',
+                        help='Confirm a transport audit (also auto-detected from start_probe_only=false)')
     args=parser.parse_args();out=args.output_dir.resolve()
     if not out.is_relative_to(ROOT/'artifacts'):parser.error('Output must be under artifacts')
     out.mkdir(parents=True,exist_ok=True)
+    if UNICORN_IMPORT_ERROR is not None and not args.prepare_only:
+        report=dict(status='blocked',missing_dependency='unicorn',
+                    blocked_reason='required Python dependency unavailable: unicorn (%s)'%UNICORN_IMPORT_ERROR,
+                    count=0,checks=[],skipped_count=0,skipped_checks=[],camera_access=False,loaded=False,
+                    limitations=['No fixture was executed, so no guard result is claimed.'])
+        (out/'manifest.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
+        print(json.dumps(report,indent=2));raise SystemExit(2)
     manifest=json.loads((args.build_dir/'manifest.json').read_text())
-    if not manifest['shared_ptp_enumeration_candidate'] or not manifest['start_probe_only']:raise ValueError('Not an enumeration candidate')
+    audit_mode=resolve_audit_mode(manifest,args.allow_transport)
     for relative,sha in manifest['files'].items():
         if hashlib.sha256((ROOT/relative).read_bytes()).hexdigest()!=sha:raise ValueError('Candidate input changed: '+relative)
     module=(args.build_dir/manifest['target']).resolve();raw=module.read_bytes()
@@ -35,10 +95,22 @@ def main():
     original=REF_KO.read_bytes()
     if hashlib.sha256(original).hexdigest()!=REF_SHA:raise ValueError('Original reference identity mismatch')
     elf=ELFFile(io.BytesIO(raw));orig=ELFFile(io.BytesIO(original));sym=elf.get_section_by_name('.symtab')
-    checks=[]
+    checks=[];skipped=[]
+    _FAILURE_REPORT.update(out=out,mode=audit_mode,checks=checks,skipped=skipped,
+                           module_sha256=hashlib.sha256(raw).hexdigest(),module_bytes=len(raw))
     def check(name,value):
         if not value:raise AssertionError(name)
         checks.append(name)
+    def skip(name,reason):
+        if any(item['check']==name for item in skipped):raise AssertionError('duplicate skip '+name)
+        skipped.append({'check':name,'reason':reason})
+    ENUM_ONLY_REASON=('Enumeration-only contract: a transport build forwards this command to the '
+        'original UVC core (uvc_ptp_module_shim.c A6400_COMPOSITE_TRANSPORT branch), so -EOPNOTSUPP '
+        'rejection is not part of its contract; transport-relevant forwarding is checked separately.')
+    SOURCE_ALIAS_REASON=('Enumeration-only contract: the owned-DMA source-alias rejection in UPDATE is '
+        'compiled out for transport builds (uvc_composite_shim.c #ifndef A6400_COMPOSITE_TRANSPORT) so a '
+        'sensor/PTP frame source inside the owned window can be submitted; the transport allow-path is '
+        'checked separately.')
     rels={r['r_offset']:sym.get_symbol(r['r_info_sym']).name for r in elf.get_section_by_name('.rel.data').iter_relocations()}
     check('file-operations-owner-this-module',rels.get(0x44)=='__this_module')
     check('file-operations-ioctl-guard',rels.get(0x64)=='a6400_uvc_shared_ioctl')
@@ -75,10 +147,27 @@ def main():
         (out/'prepare.json').write_text(json.dumps({'gcc':gcc,'ld':ld,'fixture':rel(fixture),'obj':rel(obj),'linked':rel(linked)},indent=2)+'\n')
         print(json.dumps({'prepare':str(out/'prepare.json')}))
         return
+    def blocked(reason,missing,**extra):
+        report=dict(status='blocked',audit_mode=audit_mode,missing_dependency=missing,blocked_reason=reason,
+                    count=len(checks),checks=checks,skipped_count=len(skipped),skipped_checks=skipped,
+                    module_sha256=hashlib.sha256(raw).hexdigest(),module_bytes=len(raw),
+                    camera_access=False,loaded=False)
+        report.update(extra)
+        report['limitations']=['No guard fixture was executed, so no pass is claimed.']
+        (out/'manifest.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
+        print(json.dumps(report,indent=2));raise SystemExit(2)
     if args.linked_elf:
         linked=args.linked_elf.resolve()
     else:
-        run(gcc);run(ld)
+        try:
+            run(gcc);run(ld)
+        except FileNotFoundError as error:
+            blocked('required build dependency unavailable: WSL/ARM toolchain (%s)'%error,
+                    'wsl.exe + arm-linux-gnueabi-gcc/ld')
+        except subprocess.CalledProcessError as error:
+            command=' '.join(map(str,error.cmd)) if isinstance(error.cmd,(list,tuple)) else str(error.cmd)
+            blocked('required build dependency failed: %s'%command,'arm-linux-gnueabi-gcc/ld',
+                    returncode=error.returncode)
     image=ELFFile(io.BytesIO(linked.read_bytes()));symbols={s.name:s['st_value'] for s in image.get_section_by_name('.symtab').iter_symbols() if s['st_shndx']!='SHN_UNDEF'}
     cpu=Uc(UC_ARCH_ARM,UC_MODE_ARM);cpu.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_A9);pages=set();writable=[];executable=[]
     for segment in image.iter_segments():
@@ -222,9 +311,42 @@ def main():
     check('linked-file-owner',word(data+0x44)==symbols['__this_module'])
     check('linked-ioctl-target',word(data+0x64)==symbols['a6400_uvc_shared_ioctl'])
     check('linked-release-target',word(data+0x78)==symbols['a6400_uvc_shared_release'])
-    for cmd in (0x4008f003,0xf006,0xf002,0x4008f000,0xf001,0x12345678):
+    if audit_mode=='enumeration':
+        for cmd in (0x4008f003,0xf006,0xf002,0x4008f000,0xf001,UNKNOWN_IOCTL):
+            before=len(events)
+            check('enum-reject-'+hex(cmd),call('a6400_uvc_shared_ioctl',0,cmd,0)==0xffffffa1 and len(events)==before)
+    else:
+        for cmd in ENUMERATION_ONLY_IOCTLS:skip('enum-reject-'+hex(cmd),ENUM_ONLY_REASON)
         before=len(events)
-        check('enum-reject-'+hex(cmd),call('a6400_uvc_shared_ioctl',0,cmd,0)==0xffffffa1 and len(events)==before)
+        check('transport-unknown-ioctl-rejected',
+              call('a6400_uvc_shared_ioctl',0,UNKNOWN_IOCTL,0)==0xffffffa1 and len(events)==before)
+        # Transport contract: REG_BUF/UPDATE/ENABLE/WAIT/unregister reach the
+        # original UVC core, while the owned-window and capacity guards stay.
+        put(symbols['g_dma_phys'],0x05280000)
+        cpu.mem_write(0x205000,struct.pack('<II',256*1024,0x05280000))
+        before=len(events)
+        check('transport-reg-buf-owned-window-forwarded',
+              call('a6400_uvc_shared_ioctl',0,0x4008f000,0x205000)==0 and
+              events[-1]=='original-ioctl' and len(events)==before+1)
+        cpu.mem_write(0x205000,struct.pack('<II',256*1024,0x052c0000))
+        before=len(events)
+        check('transport-reg-buf-foreign-window-rejected',
+              call('a6400_uvc_shared_ioctl',0,0x4008f000,0x205000)==0xffffffea and len(events)==before)
+        for cmd,label in ((0xf006,'enable'),(0xf002,'wait'),(0xf001,'buffer-unregister')):
+            before=len(events)
+            check('transport-'+label+'-forwarded',
+                  call('a6400_uvc_shared_ioctl',0,cmd,0)==0 and
+                  events[-1]=='original-ioctl' and len(events)==before+1)
+        cpu.mem_write(0x205000,struct.pack('<II',0xffffffff,0))
+        before=len(events)
+        check('transport-update-over-capacity-rejected',
+              call('a6400_uvc_shared_ioctl',0,0x4008f003,0x205000)==0xffffffea and len(events)==before)
+        cpu.mem_write(0x205000,struct.pack('<II',128,0x052a0000))
+        before=len(events)
+        check('transport-update-owned-window-source-forwarded',
+              call('a6400_uvc_shared_ioctl',0,0x4008f003,0x205000)==0 and
+              events[-1]=='original-ioctl' and len(events)==before+1)
+        put(symbols['g_dma_phys'],0)
     check('status-default',call('a6400_uvc_shared_ioctl',0,0x8010f022,0x205000)==0 and bytes(cpu.mem_read(0x205000,16))==bytes(16))
     check('status-null-output',call('a6400_uvc_shared_ioctl',0,0x8010f022,0)==0xfffffff2)
     check('runtime-rejects-idle-backend',call('a6400_uvc_shared_ioctl',0,0x8010f029,0x205000)==0xffffffed)
@@ -332,9 +454,14 @@ def main():
     cpu.mem_write(0x205000,struct.pack('<II',131060,0x14000000));before=len(events)
     check('legacy-dma-boundary-forwarded',call('a6400_uvc_legacy_dma_ioctl',0,0x4008f003,0x205000)==0 and len(events)==before+1)
     put(symbols['g_dma_phys'],0x05280000)
-    for label,size,address in [('zero-size',0,0x14000000),('null-source',128,0),('wrapped-source',128,0xfffffff0),
-                               ('owned-slot-zero',128,0x05280000),('owned-slot-one',128,0x052a0000),
-                               ('overlap-from-before',128,0x0527ffc0)]:
+    source_reject_cases=[('zero-size',0,0x14000000),('null-source',128,0),('wrapped-source',128,0xfffffff0),
+                         ('owned-slot-zero',128,0x05280000),('owned-slot-one',128,0x052a0000),
+                         ('overlap-from-before',128,0x0527ffc0)]
+    if audit_mode=='transport':
+        transport_allowed={'owned-slot-zero','owned-slot-one','overlap-from-before'}
+        for label in sorted(transport_allowed):skip('legacy-dma-source-reject-'+label,SOURCE_ALIAS_REASON)
+        source_reject_cases=[case for case in source_reject_cases if case[0] not in transport_allowed]
+    for label,size,address in source_reject_cases:
         cpu.mem_write(0x205000,struct.pack('<II',size,address));before=len(events)
         check('legacy-dma-source-reject-'+label,call('a6400_uvc_legacy_dma_ioctl',0,0x4008f003,0x205000)==0xffffffea and len(events)==before)
     cpu.mem_write(0x205000,struct.pack('<II',128,0x052c0000));before=len(events)
@@ -384,7 +511,14 @@ def main():
     check('entry-hook-published-phase',word(symbols['entry_lease'])==1)
     check('entry-hook-retire-step',entry_hook_ret()==0 and word(0x602b8844)==0xe1a0c00d and self_ref['count']==0)
     check('entry-hook-retired-phase',word(symbols['entry_lease'])==0)
-    report=dict(status='offline_module_audit_passed',count=len(checks),checks=checks,
+    transport_limits=[]
+    if audit_mode=='transport':
+        transport_limits=['TRANSPORT audit: %d enumeration-only check(s) are recorded as skipped (not executed); every other check ran.'%len(skipped),
+            'Transport forwarding is verified against explicit recorders for the original UVC core; no ioctl, frame, USB transfer or kernel object is real.',
+            'The live START endpoint selector of this build is a6400_uvc_ptp_select_endpoint (uvc_ptp_adapter.c, composite video endpoint 0x84); this audit does not execute it.',
+            'The fix under audit validates the legacy/composite bridge endpoint (uvc_composite_shim.c a6400_uvc_bulk_endpoint) against the active descriptor, but START itself is not executed here.']
+    report=dict(status='offline_module_audit_passed',audit_mode=audit_mode,count=len(checks),checks=checks,
+        skipped_count=len(skipped),skipped_checks=skipped,failures=[],
         module_sha256=hashlib.sha256(raw).hexdigest(),module_bytes=len(raw),camera_access=False,loaded=False,
         limitations=['This guard audit checks file-owner/native-reference linkage structurally; dedicated self-ref controls execute the native module_put body separately.',
             'Copy services and original core ioctl/release entries are EXPLICIT RECORDERS for compiled MOD guard tests.',
@@ -393,9 +527,22 @@ def main():
             'Stop attestation calls original sys_ptrace via an explicit recorder; not real tracer/owner authentication in this audit.',
             'Shadow route mutates only a module-owned word; module self-pin is a recorder here, not live native refcount execution.',
             'Cache helper and on_each_cpu dispatch are recorders; compiled per-core callback executes separately. Not physical cache or ingress-drain proof.',
-            'No native USB serialization, physical enumeration, PTP controls or sensor frames are proven.'])
+            'No native USB serialization, physical enumeration, PTP controls or sensor frames are proven.',*transport_limits])
     (out/'manifest.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
     print(json.dumps(report,indent=2))
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':
+    try:main()
+    except AssertionError as error:
+        context=dict(_FAILURE_REPORT);out=context.get('out')
+        report=dict(status='failed',audit_mode=context.get('mode'),failed_check=str(error),
+                    count=len(context.get('checks') or []),checks=context.get('checks') or [],
+                    skipped_count=len(context.get('skipped') or []),
+                    skipped_checks=context.get('skipped') or [],
+                    module_sha256=context.get('module_sha256'),module_bytes=context.get('module_bytes'),
+                    camera_access=False,loaded=False,
+                    limitations=['Audit stopped at the first failed check; no pass is claimed for this build.'])
+        if out is not None:
+            (out/'manifest.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
+        print(json.dumps(report,indent=2));raise SystemExit(2)

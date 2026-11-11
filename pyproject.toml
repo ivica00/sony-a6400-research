@@ -1,0 +1,34 @@
+[project]
+name = "sony-a6400-research"
+version = "0.1.0"
+description = "Evidence-backed clean-room execution environment, hardware contract reference and multi-device Sony BIONZ X (CXD90045) research platform."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "ivica00" }]
+keywords = ["sony", "a6400", "ilce-6400", "bionz-x", "cxd90045", "unicorn", "firmware", "uvc", "ptp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Reverse Engineering",
+]
+
+# This repository is a research workspace, not a distributable package: the
+# modules are imported from the checkout (``src.a6400.*``, ``tools.research.*``)
+# and there is no installable wheel. ``requirements.txt`` is the supported,
+# deterministic setup recipe and is the authoritative dependency list; the
+# optional-dependency groups below restate the same pins for tooling that reads
+# PEP 621 metadata. Camera-facing helpers need extra packages that the offline
+# suite does not: pyusb (USB diagnostics), comtypes (Windows USB monitoring),
+# opencv-python/numpy (video evaluation helpers).
+[project.optional-dependencies]
+# Kept in sync with requirements.txt.
+test = [
+    "capstone==5.0.9",
+    "pillow==13.0.0",
+    "pyelftools==0.33",
+    "unicorn==2.1.4",
+]
+camera = ["pyusb==1.3.1", "comtypes==1.4.17"]

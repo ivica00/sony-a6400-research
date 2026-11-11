@@ -1,29 +1,77 @@
-# Repository organization and migration
+# Repository layout and migration
 
-Organized on 2026-10-18. No Git initialization, commits, upstream moves, firmware modifications, or camera operations were performed.
+The tree was reorganized in two steps. On 2026-10-18 implementations moved out of the
+repository root; on 2026-11-11 the remaining root compatibility shims were removed and the
+whole tree was reorganized as a multi-device **Sony BIONZ X (`CXD90045`) research platform**.
+No Git history was rewritten, no firmware was modified and no camera operation was performed.
 
-| Original location | Implementation / data location |
+## Root directory
+
+The root now holds only standard project files and core directories:
+
+| Entry | Purpose |
 | --- | --- |
-| `cxd90045_hle_emulator.py` | `legacy/cxd90045_hle_emulator.py` |
-| `cxd90045_gui_runner.py` | `legacy/cxd90045_gui_runner.py` |
-| `sony_gui_simulator.py` | `legacy/sony_gui_simulator.py` |
-| `test_authentic_screens.py` | `legacy/test_authentic_screens.py` |
-| `analyze_hardware_drivers.py` | `tools/research/analyze_hardware_drivers.py` |
-| `firmware_analyzer.py` | `tools/research/firmware_analyzer.py` |
-| `unpack_firmware.py` | `tools/research/unpack_firmware.py` |
-| `check_camera.py` | `tools/research/check_camera.py` |
-| `backup_camera.py` | `tools/research/backup_camera.py` |
-| Root PNG files and `temp_crops/` | `artifacts/legacy/` with original names |
-| `20261015-_DSC0799 copy.jpg` | `assets/reference/20261015-_DSC0799 copy.jpg` |
+| `README.md`, `LICENSE`, `CONTRIBUTING.MD`, `AGENTS.MD` | Project, licence, contributor and agent instructions |
+| `pyproject.toml`, `requirements.txt` | Project metadata and the deterministic offline test/emulation dependency set |
+| `project_paths.py` | Single root path-resolution module (see below) |
+| `.github/`, `docs/`, `src/`, `tools/`, `tests/`, `scripts/`, `legacy/`, `probes/` | Source, tooling and documentation |
+| `android/`, `android-client-ref/`, `camera-daemon/` | Track A / Track B client and camera-side work |
+| `firmware/`, `backups/`, `artifacts/`, `reports/`, `scratch/` | Local preserved inputs and generated results; excluded from publication |
 
-The nine root Python files are compatibility entry points supporting existing root commands and imports. Run scripts through these entry points or as modules from the project root; direct execution of nested implementation files is not the supported launch path.
+## Where things live
 
-`project_paths.py` centralizes root, reference, and artifact locations. Firmware and upstream tool paths remain unchanged. Backup output is resolved from the project root. New icon exports use `artifacts/legacy/exported_icons/`.
+| Original location | Implementation location | Launch path |
+| --- | --- | --- |
+| `cxd90045_hle_emulator.py` | `legacy/cxd90045_hle_emulator.py` | `python -m legacy.cxd90045_hle_emulator` |
+| `cxd90045_gui_runner.py` | `legacy/cxd90045_gui_runner.py` | `python -m legacy.cxd90045_gui_runner` |
+| `sony_gui_simulator.py` | `legacy/sony_gui_simulator.py` | `python -m legacy.sony_gui_simulator` |
+| `test_authentic_screens.py` | `legacy/test_authentic_screens.py` | `python -m legacy.test_authentic_screens` |
+| `analyze_hardware_drivers.py` | `tools/research/analyze_hardware_drivers.py` | `python -m tools.research.analyze_hardware_drivers` |
+| `firmware_analyzer.py` | `tools/research/firmware_analyzer.py` | `python -m tools.research.firmware_analyzer` |
+| `unpack_firmware.py` | `tools/research/unpack_firmware.py` | `python -m tools.research.unpack_firmware` |
+| `check_camera.py` | `tools/research/check_camera.py` | `python -m tools.research.check_camera` |
+| `backup_camera.py` | `tools/research/backup_camera.py` | `python -m tools.research.backup_camera` |
+| `launch_cinema_mpv.bat` | `scripts/launch_cinema_mpv.bat` | run the script; it resolves `%~dp0..` |
+| `launch_cinemahud_android.ps1` | `scripts/launch_cinemahud_android.ps1` | run the script; it resolves the repo root from its own path |
+| `launch_cinemahud_ptp.bat` | `scripts/launch_cinemahud_ptp.bat` | run the script; it changes to `%~dp0..` |
+| `start_camera_shell.bat` | `scripts/start_camera_shell.bat` | run the script; it targets `%~dp0..\tools\cam_live_terminal.py` |
+| `status.png`, `status_a6400.png` | `docs/images/` | written by `tools/research/generate_status_image.py` |
+| `UVC_HANDOVER_PLAN.md` | `docs/UVC_HANDOVER_PLAN.md` | documentation |
+| `ARCHITECTURE_UVC_MONITOR.md` | `docs/ARCHITECTURE_UVC_MONITOR.md` | documentation (hash-pinned by E0348) |
+| Root PNG files and `temp_crops/` | `artifacts/legacy/` with original names | generated output |
+| `20261015-_DSC0799 copy.jpg` | `assets/reference/20261015-_DSC0799 copy.jpg` | reference input |
 
-At initial organization, `src/a6400/` contained only a responsibility guide and placeholder directories. It now contains a separate bounded original-interpreter probe; see [E0003](evidence/0003-original-interpreter-boundary.md). Machine/device components remain planned. Keep execution work separate from the existing behavioral simulator.
+The nine former root Python shims were deleted: their implementations had already been moved,
+they were only forwarding stubs, and their documented launch paths are the module paths above.
+`docs/archives/` and the dated `docs/evidence/` records keep their original root-command text as
+history; they are not current instructions.
+
+## `project_paths.py`
+
+`project_paths.py` stays at the repository root because it is the single path-resolution module
+for the codebase: `PROJECT_ROOT`, `REFERENCE_ASSETS` and `legacy_output()` are imported by more
+than a hundred first-party modules under `src/`, `tools/`, `tests/` and `legacy/`. All of them
+are run as modules from the repository root, so the root stays on `sys.path` and the module has
+no relocated mirror.
 
 ## Verification scope
 
-Organization checks parse all 19 first-party Python files, import seven software-only root entry points, instantiate the legacy harness, load its relocated photo, and render a menu. The root screenshot-generator command is also exercised. These checks confirm path/import compatibility, not firmware or physical-camera fidelity. USB diagnostics and service-mode backup tools are not executed as part of verification.
+`tests/test_repository_layout.py` enforces this layout: no forwarding shims or launchers return
+to the root, the moved assets live under `docs/`, and the launchers keep their `%~dp0..` /
+`$PSScriptRoot`-parent resolution. `tests/test_target_profiles.py` and
+`tests/test_research_status_sync.py` cover the multi-device registry and the documentation
+sync. The offline suite is the primary check (`tests/README.md`); the earlier "seven
+software-only root entry points" organization check no longer exists because the entry points
+themselves are gone.
 
-Before first source-control import, review ignored inputs and record upstream revisions and dependency provenance as specified in Phase 0. The existing virtual environment and proprietary/local artifacts remain on disk.
+Two offline module audits remain available from `tools/research/`:
+`python -m tools.research.probe_interpreter` writes its bounded probe report to
+`artifacts/execution/`, and `python -m tools.research.audit_execution --mode research` runs the
+preserved harness, records unsupported behavior (including a screen factory that returns no
+instance) and exits `0`; `--mode strict` stops at the first boundary and exits `2`. Both are
+optional checks: a boundary exit is not a regression and neither proves camera fidelity.
+
+Before first source-control import, review ignored inputs and record upstream revisions and
+dependency provenance as specified in Phase 0. The existing virtual environment and
+proprietary/local artifacts remain on disk. USB diagnostics and service-mode backup tools are
+never executed by repository validation.

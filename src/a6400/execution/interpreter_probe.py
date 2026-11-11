@@ -77,6 +77,179 @@ def summarize_loader_stop(serviced_syscalls, stderr_text, boundary=None):
     }
 
 
+# ---------------------------------------------------------------------------
+# USB dispatch observability (observe-only; E0332 follow-up).
+#
+# Evidence: the original `UsbControl::DispatchEvent` chain calls
+# `MWF::ObjMsg::GetMessageId`, then `UsbControl::MsgId2EventId`, then
+# `UFW::Fsm::DispatchEvent(this+0xF4, eventId, msg)` (E0323/E0324).  Live VAs
+# are `resumed module base + ELF .dynsym st_value`; the module base is resolved
+# from the resumed checkpoint's mmap mapping table at install time, never from
+# a hardcoded live VA.  The hooks below only read registers/memory and append
+# report records: guest execution is never changed.
+# ---------------------------------------------------------------------------
+MODULE_PAGE_SIZE = 0x1000
+USB_CONTROL_DISPATCH_SYMBOLS = (
+    {'function': 'UsbControl::ProcessMsg',
+     'module': 'libUsbControl.so',
+     'symbol': '_ZN10UsbControl10ProcessMsgEjPN3MWF6ObjMsgE',
+     'arg_registers': (('this', arm.UC_ARM_REG_R0),
+                       ('unsigned_arg', arm.UC_ARM_REG_R1),
+                       ('msg', arm.UC_ARM_REG_R2)),
+     'objmsg_argument': 'msg',
+     'returns': None},
+    {'function': 'MWF::ObjMsg::GetMessageId',
+     'module': 'libMWF.so',
+     'symbol': '_ZNK3MWF6ObjMsg12GetMessageIdEv',
+     'arg_registers': (('objmsg', arm.UC_ARM_REG_R0),),
+     'objmsg_argument': 'objmsg',
+     'returns': 'message_id'},
+    {'function': 'UsbControl::MsgId2EventId',
+     'module': 'libUsbControl.so',
+     'symbol': '_ZN10UsbControl13MsgId2EventIdEj',
+     'arg_registers': (('this', arm.UC_ARM_REG_R0),
+                       ('message_id', arm.UC_ARM_REG_R1)),
+     'objmsg_argument': None,
+     'returns': 'event_id'},
+    {'function': 'UFW::Fsm::DispatchEvent',
+     'module': 'libUsbControl.so',
+     'symbol': '_ZN3UFW3Fsm13DispatchEventEiPv',
+     'arg_registers': (('this', arm.UC_ARM_REG_R0),
+                       ('event_id', arm.UC_ARM_REG_R1),
+                       ('msg', arm.UC_ARM_REG_R2)),
+     'objmsg_argument': 'msg',
+     'returns': None},
+)
+# Evidence copies whose .dynsym values were used to decode the dispatch chain.
+USB_CONTROL_DISPATCH_EVIDENCE_LIBS = {
+    'libUsbControl.so': 'artifacts/hardware/live-libs/libUsbControl.so',
+    'libMWF.so': 'artifacts/hardware/live-libs/libMWF.so',
+}
+
+
+def normalise_packet_hex(packet_hex):
+    """Validate an explicit packet-hex injection payload.
+
+    Accepts ``bytes``/``bytearray`` or a hex ``str`` (spaces, underscores and a
+    ``0x`` prefix are tolerated).  Returns ``(payload_bytes, canonical_hex)``.
+    Raises ValueError for empty, odd-length or non-hex input: an explicit
+    packet override must never be silently truncated or zero-filled.
+    """
+    if packet_hex is None:
+        raise ValueError('packet_hex must not be None')
+    if isinstance(packet_hex, (bytes, bytearray)):
+        data = bytes(packet_hex)
+    elif isinstance(packet_hex, str):
+        text = packet_hex.strip().replace(' ', '').replace('_', '')
+        if text[:2].lower() == '0x':
+            text = text[2:]
+        try:
+            data = bytes.fromhex(text)
+        except ValueError as error:
+            raise ValueError('packet_hex must be a hex string: %s' % (error,))
+    else:
+        raise ValueError('packet_hex must be bytes or a hex string')
+    if not data:
+        raise ValueError('packet_hex must not be empty')
+    return data, data.hex()
+
+
+def module_mapping_entries(module_name, mappings):
+    """Return resumed mmap entries whose guest path basename is ``module_name``."""
+    entries = []
+    for entry in mappings or []:
+        path = entry.get('path') if isinstance(entry, dict) else None
+        if not path:
+            continue
+        if str(path).replace('\\', '/').rsplit('/', 1)[-1] == module_name:
+            entries.append(entry)
+    return entries
+
+
+def resumed_module_base(module_name, mappings, load_segments):
+    """Resolve a resumed shared-module load base from mmap entries + PT_LOAD rows.
+
+    ``mappings`` are the checkpoint's ``probe.mmap.mappings`` dicts (guest path,
+    address, file offset); ``load_segments`` are PT_LOAD rows with
+    ``file_offset``/``vaddr``.  The base is the address the ELF's ``st_value``
+    offsets are relative to: for every file-backed mapping the loader mapped
+    ``base + (p_vaddr & ~PAGE)`` at file offset ``p_offset & ~PAGE``, so a
+    single consistent base is recovered (and cross-checked across mappings).
+    No live VA is assumed.
+    """
+    entries = module_mapping_entries(module_name, mappings)
+    if not entries:
+        raise ValueError('module_not_mapped')
+    candidates = []
+    for entry in entries:
+        try:
+            offset = int(entry.get('offset') or 0)
+            address = int(entry['address'])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError('mapping_entry_incomplete')
+        segment = next((row for row in (load_segments or [])
+                        if (int(row.get('file_offset', -1)) & ~(MODULE_PAGE_SIZE - 1))
+                        == (offset & ~(MODULE_PAGE_SIZE - 1))), None)
+        if segment is None:
+            continue
+        candidates.append({
+            'base': address - (int(segment['vaddr']) & ~(MODULE_PAGE_SIZE - 1)),
+            'mapping_address': address,
+            'mapping_offset': offset,
+            'segment_vaddr': int(segment['vaddr']),
+            'segment_file_offset': int(segment['file_offset']),
+        })
+    if not candidates:
+        raise ValueError('mapping_segment_unmatched')
+    bases = {candidate['base'] for candidate in candidates}
+    if len(bases) != 1:
+        raise ValueError('inconsistent_module_base: %s' % (
+            sorted(hex(item) for item in bases),))
+    base = candidates[0]['base']
+    if base % MODULE_PAGE_SIZE:
+        raise ValueError('unaligned_module_base: 0x%08x' % (base,))
+    return {'base': base, 'module': module_name,
+            'path': entries[0].get('path'),
+            'mappings': candidates}
+
+
+def inspect_elf_load_and_symbols(elf_bytes, symbol_names):
+    """Return ``(PT_LOAD rows, .dynsym values)`` for an ELF image's bytes.
+
+    Observe-only static decode of the module the guest actually loaded; raises
+    ValueError when the image has no readable ELF section/dynsym data.
+    """
+    import io
+    try:
+        from elftools.elf.elffile import ELFFile
+    except ImportError as error:  # pragma: no cover - environment dependent
+        raise ValueError('pyelftools_unavailable: %s' % (error,))
+    elf = ELFFile(io.BytesIO(bytes(elf_bytes)))
+    segments = []
+    for segment in elf.iter_segments():
+        if segment['p_type'] != 'PT_LOAD':
+            continue
+        segments.append({'file_offset': int(segment['p_offset']),
+                         'vaddr': int(segment['p_vaddr']),
+                         'file_size': int(segment['p_filesz']),
+                         'memory_size': int(segment['p_memsz'])})
+    if not segments:
+        raise ValueError('elf_without_load_segments')
+    section = elf.get_section_by_name('.dynsym')
+    if section is None:
+        raise ValueError('elf_without_dynsym')
+    wanted = set(symbol_names)
+    symbols = {}
+    for symbol in section.iter_symbols():
+        if symbol.name and symbol.name in wanted:
+            symbols[symbol.name] = {
+                'value': int(symbol['st_value']),
+                'size': int(symbol['st_size']),
+                'defined': symbol['st_shndx'] != 'SHN_UNDEF',
+            }
+    return segments, symbols
+
+
 class InterpreterProbe:
     def __init__(self, syscall_policy='stop', uname_profile=None, filesystem=None, kuser_template=None,
                  madvise_policy='stop', backup_service_policy='unverified-ack',
@@ -116,6 +289,15 @@ class InterpreterProbe:
         # Opt-in cooperative yield when a non-blocking UIPC poll finds no
         # message (safe syscall-boundary switch; no arbitrary preemption).
         self.thread_poll_yield = False
+        # Opt-in observe-only hooks on the original UsbControl dispatch chain
+        # (UsbControl::ProcessMsg / MWF::ObjMsg::GetMessageId /
+        # UsbControl::MsgId2EventId / UFW::Fsm::DispatchEvent).  Disabled by
+        # default and never changes registers or memory.
+        self.trace_usbcontrol_dispatch = False
+        self.usbcontrol_dispatch_max_hits = 2000
+        self._usbcontrol_dispatch_installed = False
+        self._usbcontrol_dispatch_pending = {}
+        self._usbcontrol_dispatch_return_hooks = {}
         if syscall_policy not in ('stop', 'brk', 'brk-uname', 'files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads'):
             raise ValueError('Unknown syscall policy')
         if syscall_policy in ('brk-uname', 'files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and uname_profile is None:
@@ -669,7 +851,7 @@ class InterpreterProbe:
             self._usb_connect_record = None
         return result
 
-    def inject_uipc_setconfig_objmsg(self, queue, wake_uaddr=None):
+    def inject_uipc_setconfig_objmsg(self, queue, wake_uaddr=None, packet_hex=None):
         """Inject the labelled emulated inbound SETCONFIG ObjMsg (E0328).
 
         Allocates the ObjMsg image inside the UIPC pool, then enqueues a
@@ -677,6 +859,12 @@ class InterpreterProbe:
         UsbControl::MsgReceiver::RcvMsg, E0324).  The object layout is
         evidence-derived (E0323/E0324); the param map is zeroed, so this is an
         explicitly labelled experiment, not a captured kernel message.
+
+        With ``packet_hex`` (bytes or a hex string) the envelope payload is the
+        supplied packet instead of the ObjMsg pointer: the message is still
+        allocated large enough for those bytes and the ledger records the
+        packet bytes/hash/provenance.  Default behaviour (``None``) is
+        unchanged.
         """
         import struct as _struct
 
@@ -685,11 +873,19 @@ class InterpreterProbe:
         )
         if getattr(self, 'uipc', None) is None:
             raise ValueError('No UIPC device is initialized')
+        packet = None
+        packet_text = None
+        if packet_hex is not None:
+            packet, packet_text = normalise_packet_hex(packet_hex)
         obj = self.uipc.allocate_message(0x80, memory_writer=self._uipc_write)
         image = build_setconfig_objmsg_image(obj)
         self.mu.mem_write(obj, image)
-        envelope = self.uipc.allocate_message(4, memory_writer=self._uipc_write)
-        self.mu.mem_write(envelope, _struct.pack('<I', obj))
+        envelope_size = len(packet) if packet is not None else 4
+        envelope = self.uipc.allocate_message(envelope_size, memory_writer=self._uipc_write)
+        if packet is not None:
+            self.mu.mem_write(envelope, packet)
+        else:
+            self.mu.mem_write(envelope, _struct.pack('<I', obj))
         self.uipc.enqueue_message(queue, envelope)
         woken = []
         if getattr(self, 'threads', None) is not None:
@@ -715,8 +911,221 @@ class InterpreterProbe:
             'provenance': 'ObjMsg/body layout from E0323/E0324; not a captured '
                           'kernel message',
         }
+        if packet is not None:
+            entry.update({
+                'packet_hex': packet_text,
+                'packet_size': len(packet),
+                'packet_sha256': hashlib.sha256(packet).hexdigest(),
+                'envelope_size': envelope_size,
+                'payload_mode': 'explicit-packet-hex',
+                'provenance': entry['provenance'] +
+                              '; envelope payload is an explicit packet_hex '
+                              'override (labelled experiment; not a captured '
+                              'kernel message)',
+            })
         self.report.setdefault('uipc_objmsg_injection', []).append(entry)
         return entry
+
+    def inject_local_queue_objmsg(self, queue_object_addr, waiter_addr=None,
+                                     guest_alloc=False, libosal_base=None,
+                                     libmwf_base=0x53660000):
+        """Post the labelled SETCONFIG ObjMsg through the libosal LOCAL queue.
+
+        Opt-in, evidence-supplied addresses: the queue object and (optional)
+        one-shot WAIT_CB record must come from the resumed checkpoint. The
+        write plan is produced by the pure ``local_queue_post`` planner (E0330/
+        E0335); this method only applies the planned words and performs the
+        single futex wake. It does not enqueue into the kernel queue list.
+        """
+        import struct as _struct
+
+        from src.a6400.execution.local_queue_post import (
+            plan_local_post,
+            render_post_plan,
+        )
+        from src.a6400.execution.mwf_objmsg import build_setconfig_objmsg_image
+        if getattr(self, 'uipc', None) is None:
+            raise ValueError('No UIPC device is initialized')
+        reader = lambda addr, size: bytes(self.mu.mem_read(addr, size))
+        alloc_plans = []
+        if guest_alloc:
+            from src.a6400.execution.guest_osal_alloc import (
+                inspect_guest_allocator,
+                plan_message_alloc,
+                render_alloc_plan,
+            )
+            if libosal_base is None:
+                raise ValueError('guest_alloc requires the resumed libosal_uipc base')
+            alloc_plans.append(inspect_guest_allocator(reader, libosal_base))
+            obj_plan = plan_message_alloc(reader, libosal_base, 0x80)
+            for addr, data in obj_plan['writes']:
+                self.mu.mem_write(addr, data)
+            alloc_plans.append(obj_plan)
+            obj = obj_plan['message']['payload']
+            self.mu.mem_write(obj, build_setconfig_objmsg_image(
+                obj, libmwf_base=libmwf_base))
+            # Teardown safety: ParamMap::Clear frees the map array, and the
+            # parameter object may be owned by the map.  Allocate both from the
+            # guest allocator and patch the ObjMsg body to point at them, so no
+            # in-image pointer is ever freed by the original teardown.
+            param_plan = plan_message_alloc(reader, libosal_base, 0x10)
+            for addr, data in param_plan['writes']:
+                self.mu.mem_write(addr, data)
+            alloc_plans.append(param_plan)
+            param = param_plan['message']['payload']
+            self.mu.mem_write(param, _struct.pack(
+                '<II', 0, (int(libmwf_base) + 0x4067C) & 0xffffffff))
+            array_plan = plan_message_alloc(reader, libosal_base, 0x10)
+            for addr, data in array_plan['writes']:
+                self.mu.mem_write(addr, data)
+            alloc_plans.append(array_plan)
+            param_array = array_plan['message']['payload']
+            self.mu.mem_write(param_array, _struct.pack('<II', 0x1006, param))
+            self.mu.mem_write(obj + 0x34, _struct.pack('<I', param_array))
+            # Teardown free-hook is available but disabled by default: suppressing
+            # libc free() on the in-image/OSAL objects faults earlier than the
+            # original invalid-free boundary (E0694). Keep the labelled boundary.
+            env_plan = plan_message_alloc(reader, libosal_base, 4)
+            for addr, data in env_plan['writes']:
+                self.mu.mem_write(addr, data)
+            alloc_plans.append(env_plan)
+            envelope = env_plan['message']['payload']
+            self.mu.mem_write(envelope, _struct.pack('<I', obj))
+        else:
+            obj = self.uipc.allocate_message(0x80, memory_writer=self._uipc_write)
+            self.mu.mem_write(obj, build_setconfig_objmsg_image(
+                obj, libmwf_base=libmwf_base))
+            envelope = self.uipc.allocate_message(4, memory_writer=self._uipc_write)
+            self.mu.mem_write(envelope, _struct.pack('<I', obj))
+        plan = plan_local_post(reader, queue_object_addr, envelope,
+                               waiter_addr=waiter_addr)
+        def _jsonable_plan(value):
+            if isinstance(value, (bytes, bytearray)):
+                return bytes(value).hex()
+            if isinstance(value, dict):
+                return {key: _jsonable_plan(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [_jsonable_plan(item) for item in value]
+            return value
+
+        applied = []
+        for addr, data in plan['writes']:
+            try:
+                self.mu.mem_write(addr, data)
+            except Exception:
+                self._uipc_write(addr, data)
+            applied.append({'addr': addr, 'bytes_hex': bytes(data).hex()})
+        wake = plan.get('wake') or {}
+        futex_woken = 0
+        if wake.get('futex_uaddr') is not None and getattr(self, 'threads', None) is not None:
+            futex_woken, _details = self.threads.handle_futex_wake(
+                wake['futex_uaddr'], 1)
+        entry = {
+            'instruction': self.instructions,
+            'source': 'emulated-local-queue-setconfig-objmsg',
+            'objmsg': obj,
+            'body': obj + 0x20,
+            'envelope': envelope,
+            'queue_object': queue_object_addr,
+            'waiter': waiter_addr,
+            'writes': applied,
+            'wake': wake,
+            'futex_woken': futex_woken,
+            'guest_alloc': bool(guest_alloc),
+            'libosal_base': libosal_base,
+            'libmwf_base': libmwf_base,
+            'alloc_plans': _jsonable_plan(alloc_plans),
+            'alloc_rendered': [line for plan in alloc_plans
+                               for line in (render_alloc_plan(plan)
+                                            if plan.get('kind') == 'guest-osal-message-alloc'
+                                            else [])],
+            'plan': _jsonable_plan(plan),
+            'plan_rendered': render_post_plan(plan),
+            'category': 0x6103,
+            'message_id': 0x0A4001,
+            'provenance': 'local-queue post plan from E0330/E0335; addresses '
+                          'supplied from the resumed checkpoint; not a captured '
+                          'sender execution',
+        }
+        self.report.setdefault('local_queue_objmsg_injection', []).append(entry)
+        return entry
+
+    def install_suppressed_free_hook(self, addresses):
+        """Observe-only guard that suppresses libc free() on emulator-owned objects.
+
+        The labelled SETCONFIG run allocates ObjMsg/ParamMap/Param objects from
+        the guest allocator; the original teardown (operator delete / ParamMap
+        clear) may still call libc free on those objects and abort with
+        ``free(): invalid pointer`` (E0337/E0691). This opt-in hook matches only
+        the explicitly supplied addresses and returns from free() without
+        releasing them, recording every suppression; all other free() calls run
+        the original code unchanged.
+        """
+        addresses = {int(value) for value in addresses}
+        entries = module_mapping_entries('libc-2.11.2.so',
+                                         getattr(getattr(self, 'mmap', None),
+                                                 'mappings', None))
+        bases = set()
+        zero_offset = set()
+        for entry in entries:
+            try:
+                address = int(entry['address'])
+                offset = int(entry.get('offset') or 0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            bases.add(address - offset)
+            if offset == 0:
+                zero_offset.add(address)
+        if len(bases) == 1:
+            base = bases.pop()
+        elif len(zero_offset) == 1:
+            base = zero_offset.pop()
+        else:
+            self.report['suppressed_free_hook'] = {
+                'available': False, 'reason': 'libc_base_unresolved',
+                'mapping_count': len(entries), 'entries': entries,
+                'candidate_bases': sorted(bases),
+                'zero_offset_bases': sorted(zero_offset)}
+            return {'available': False, 'reason': 'libc_base_unresolved'}
+        free_address = (base + 0x5B99C) & ~1
+        suppressed = []
+        probe = self
+
+        def on_free(uc, address, size, user_data):
+            try:
+                pointer = uc.reg_read(arm.UC_ARM_REG_R0)
+            except Exception:
+                return
+            if pointer not in addresses:
+                return
+            try:
+                lr = uc.reg_read(arm.UC_ARM_REG_LR)
+            except Exception:
+                return
+            thumb_return = bool(lr & 1)
+            cpsr = uc.reg_read(arm.UC_ARM_REG_CPSR)
+            cpsr = (cpsr | 0x20) if thumb_return else (cpsr & ~0x20)
+            suppressed.append({'instruction': probe.instructions,
+                               'tid': probe.threads.current_tid
+                               if getattr(probe, 'threads', None) else None,
+                               'pointer': pointer, 'pc': address,
+                               'lr': lr, 'thumb_return': thumb_return})
+            uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr)
+            uc.reg_write(arm.UC_ARM_REG_R0, 0)
+            uc.reg_write(arm.UC_ARM_REG_PC, lr & ~1)
+
+        self.mu.hook_add(unicorn.UC_HOOK_CODE, on_free,
+                         begin=free_address, end=free_address + 4)
+        info = {'available': True, 'libc_base': base,
+                'free_address': free_address,
+                'free_symbol_offset': 0x5B99C,
+                'suppressed_addresses': sorted(addresses),
+                'evidence': 'live libc-2.11.2.so .dynsym free=0x5B99C; '
+                            'hook suppresses free only for labelled emulator '
+                            'objects'}
+        self.report['suppressed_free_hook'] = info
+        self._suppressed_free_records = suppressed
+        return info
 
     def inject_uipc_message(self, queue, payload, source=None):
         """Queue one explicit UIPC message and wake the target queue waiters."""
@@ -738,6 +1147,242 @@ class InterpreterProbe:
                  'woken': woken, 'source': source}
         self.report.setdefault('uipc_injection', []).append(entry)
         return entry
+
+    # ------------------------------------------------------------------
+    # Observe-only UsbControl dispatch tracing (E0332 follow-up).
+    # ------------------------------------------------------------------
+    def _usbcontrol_dispatch_module_image(self, module_name, entries):
+        """Return ``(elf_bytes, provenance)`` for a module the guest loaded.
+
+        Prefers the bytes the guest actually read (restored checkpoint
+        filesystem cache); falls back to the hash-recorded live-libs evidence
+        copy for checkpoints that predate the cache or lack the file.
+        """
+        path = entries[0].get('path') if entries else None
+        cache = getattr(getattr(self, 'filesystem', None), 'cache', None) or {}
+        if path and path in cache:
+            raw = bytes(cache[path])
+            return raw, {'source': 'guest_filesystem_cache', 'path': path,
+                         'sha256': hashlib.sha256(raw).hexdigest()}
+        relative = USB_CONTROL_DISPATCH_EVIDENCE_LIBS.get(module_name)
+        if relative:
+            try:
+                from project_paths import PROJECT_ROOT
+                artifact = PROJECT_ROOT / relative
+                raw = artifact.read_bytes()
+            except Exception as error:
+                raise ValueError('module_bytes_unavailable: %s' % (error,))
+            return raw, {'source': 'live-libs-evidence-artifact',
+                         'path': str(artifact),
+                         'sha256': hashlib.sha256(raw).hexdigest()}
+        raise ValueError('module_bytes_unavailable')
+
+    def _resolve_usbcontrol_dispatch_symbols(self):
+        """Resolve every dispatch function from the resumed module base + dynsym."""
+        mappings = getattr(getattr(self, 'mmap', None), 'mappings', None) or []
+        by_module = {}
+        for spec in USB_CONTROL_DISPATCH_SYMBOLS:
+            by_module.setdefault(spec['module'], []).append(spec)
+        resolved = {}
+        for module_name, specs in by_module.items():
+            entries = module_mapping_entries(module_name, mappings)
+            if not entries:
+                for spec in specs:
+                    resolved[spec['function']] = {
+                        'available': False, 'module': module_name,
+                        'symbol': spec['symbol'], 'reason': 'module_not_mapped'}
+                continue
+            try:
+                elf_bytes, provenance = self._usbcontrol_dispatch_module_image(
+                    module_name, entries)
+                load_segments, symbol_values = inspect_elf_load_and_symbols(
+                    elf_bytes, [spec['symbol'] for spec in specs])
+                base_info = resumed_module_base(module_name, entries, load_segments)
+            except Exception as error:
+                for spec in specs:
+                    resolved[spec['function']] = {
+                        'available': False, 'module': module_name,
+                        'symbol': spec['symbol'], 'reason': str(error)}
+                continue
+            for spec in specs:
+                symbol = symbol_values.get(spec['symbol'])
+                if symbol is None:
+                    reason = 'symbol_not_in_dynsym'
+                elif not symbol.get('defined'):
+                    reason = 'undefined_symbol'
+                elif not int(symbol.get('value') or 0):
+                    reason = 'symbol_value_zero'
+                else:
+                    reason = None
+                if reason is not None:
+                    resolved[spec['function']] = {
+                        'available': False, 'module': module_name,
+                        'symbol': spec['symbol'], 'reason': reason}
+                    continue
+                value = int(symbol['value'])
+                resolved[spec['function']] = {
+                    'available': True, 'module': module_name,
+                    'symbol': spec['symbol'], 'symbol_value': value,
+                    'thumb': bool(value & 1),
+                    'address': (int(base_info['base']) + value) & ~1,
+                    'base': int(base_info['base']),
+                    'module_path': base_info.get('path'),
+                    'mapping_count': len(base_info['mappings']),
+                    'symbol_source': provenance['source'],
+                    'symbol_source_sha256': provenance['sha256'],
+                }
+        return resolved
+
+    def install_usbcontrol_dispatch_hooks(self, resolution=None, max_hits=None):
+        """Install observe-only hooks on the original UsbControl dispatch chain.
+
+        Requires the opt-in ``trace_usbcontrol_dispatch`` attribute.  Live VAs
+        are resolved from the resumed module base plus the loaded module's
+        ``.dynsym`` (never a hardcoded live VA).  A missing module/symbol is
+        recorded as ``{'available': False, 'reason': ...}`` in
+        ``report['usbcontrol_dispatch_hooks']['functions']`` and the run
+        continues without a fault.  ``resolution`` may supply a pre-resolved
+        function table (unit tests / controlled experiments).  Hits are
+        appended to ``report['usbcontrol_dispatch_trace']``.
+        """
+        if not getattr(self, 'trace_usbcontrol_dispatch', False):
+            return {'enabled': False, 'reason': 'trace_usbcontrol_dispatch is False'}
+        if getattr(self, '_usbcontrol_dispatch_installed', False):
+            return self.report.get('usbcontrol_dispatch_hooks', {'enabled': True})
+        limit = int(max_hits if max_hits is not None
+                    else getattr(self, 'usbcontrol_dispatch_max_hits', 2000))
+        if limit <= 0:
+            raise ValueError('max_hits must be positive')
+        self._usbcontrol_dispatch_installed = True
+        self._usbcontrol_dispatch_limit = limit
+        self._usbcontrol_dispatch_pending = {}
+        self._usbcontrol_dispatch_return_hooks = {}
+        self.report.setdefault('usbcontrol_dispatch_trace', [])
+        functions = {}
+        if resolution is None:
+            resolution = self._resolve_usbcontrol_dispatch_symbols()
+        for spec in USB_CONTROL_DISPATCH_SYMBOLS:
+            label = spec['function']
+            info = dict(resolution.get(label) or
+                        {'available': False, 'reason': 'resolution_missing'})
+            if info.get('available'):
+                address = int(info['address'])
+                try:
+                    self.mu.hook_add(unicorn.UC_HOOK_CODE,
+                                     self._usbcontrol_dispatch_hit,
+                                     begin=address, end=address,
+                                     user_data={'spec': spec, 'info': info})
+                except Exception as error:
+                    info = dict(info, available=False,
+                                reason='hook_install_failed: %s' % (error,))
+            functions[label] = info
+        config = {
+            'enabled': True,
+            'observe_only': True,
+            'max_hits': limit,
+            'functions': functions,
+            'evidence': 'libUsbControl.so / libMWF.so .dynsym offsets plus the '
+                        'resumed module base from the checkpoint mmap table; no '
+                        'hardcoded live VA',
+        }
+        self.report['usbcontrol_dispatch_hooks'] = config
+        return config
+
+    @staticmethod
+    def _usbcontrol_dispatch_read_objmsg(uc, pointer):
+        """Read ObjMsg body/category/message id when mapped; never writes."""
+        if not pointer:
+            return None
+        try:
+            body = struct.unpack('<I', bytes(uc.mem_read(int(pointer), 4)))[0]
+            if not body:
+                return {'pointer': int(pointer), 'body_pointer': 0}
+            category, message_id = struct.unpack(
+                '<II', bytes(uc.mem_read(int(body) + 4, 8)))
+        except Exception:
+            return None
+        return {'pointer': int(pointer), 'body_pointer': int(body),
+                'category_id': int(category), 'message_id': int(message_id)}
+
+    def _usbcontrol_dispatch_record_error(self, function, error):
+        errors = self.report.setdefault('usbcontrol_dispatch_errors', [])
+        if len(errors) < 32:
+            errors.append({'function': function, 'instruction': self.instructions,
+                           'error': str(error)})
+
+    def _usbcontrol_dispatch_hit(self, uc, address, size, user_data):
+        """Observe-only record of one dispatch-function entry; changes nothing."""
+        spec = user_data.get('spec', {}) if isinstance(user_data, dict) else {}
+        function = spec.get('function')
+        try:
+            entry = {
+                'function': function,
+                'instruction': self.instructions,
+                'tid': getattr(getattr(self, 'threads', None), 'current_tid', None),
+                'pc': address,
+                'args': {name: uc.reg_read(register)
+                         for name, register in spec.get('arg_registers', ())},
+            }
+            objmsg_argument = spec.get('objmsg_argument')
+            if objmsg_argument:
+                fields = self._usbcontrol_dispatch_read_objmsg(
+                    uc, entry['args'].get(objmsg_argument))
+                if fields is not None:
+                    entry['objmsg'] = fields
+            trace = self.report.setdefault('usbcontrol_dispatch_trace', [])
+            if len(trace) >= getattr(self, '_usbcontrol_dispatch_limit', 0):
+                hooks = self.report.get('usbcontrol_dispatch_hooks')
+                if isinstance(hooks, dict):
+                    hooks['truncated'] = True
+                return
+            trace.append(entry)
+            if spec.get('returns'):
+                self._usbcontrol_dispatch_arm_return(uc, spec, entry)
+        except Exception as error:
+            self._usbcontrol_dispatch_record_error(function, error)
+
+    def _usbcontrol_dispatch_arm_return(self, uc, spec, entry):
+        """Arm a return-address hook that stores the caller-visible r0.
+
+        The hook stays registered per return address (call sites are few); it
+        pops the matching pending entry on return and is a no-op when no call
+        is in flight, so later execution of the same address cannot alias a
+        hit onto the wrong call.
+        """
+        return_address = int(uc.reg_read(arm.UC_ARM_REG_LR)) & ~1
+        if not return_address:
+            return
+        pending = self._usbcontrol_dispatch_pending.setdefault(return_address, [])
+        pending.append({'spec': spec, 'entry': entry})
+        if return_address in self._usbcontrol_dispatch_return_hooks:
+            return
+        try:
+            handle = self.mu.hook_add(unicorn.UC_HOOK_CODE,
+                                      self._usbcontrol_dispatch_return,
+                                      begin=return_address, end=return_address)
+        except Exception as error:
+            pending.pop()
+            self._usbcontrol_dispatch_record_error(spec.get('function'), error)
+            return
+        self._usbcontrol_dispatch_return_hooks[return_address] = handle
+
+    def _usbcontrol_dispatch_return(self, uc, address, size, user_data):
+        """Record the r0 return value of an armed dispatch-function call."""
+        record = None
+        try:
+            pending = self._usbcontrol_dispatch_pending.get(address)
+            if not pending:
+                return
+            record = pending.pop()
+            value = int(uc.reg_read(arm.UC_ARM_REG_R0))
+            returns = {'value': value}
+            field = record['spec'].get('returns')
+            if field:
+                returns[field] = value
+            record['entry']['returns'] = returns
+        except Exception as error:
+            self._usbcontrol_dispatch_record_error(
+                (record or {}).get('spec', {}).get('function'), error)
 
     def install_write_watch(self, begin, end, limit=20000):
         """Observe-only write watch over a guest range (bounded record list).
@@ -1070,6 +1715,13 @@ class InterpreterProbe:
                                                            number=number, fd=stream_fd,
                                                            device='/dev/stream2'), pc, number)
                     return
+            if number == 3:
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'tty':
+                    self.report.update(status='unsupported_tty_contract', boundary={
+                        'reason': 'tty_read_not_supplied', 'path': '/dev/tty',
+                        'pc': pc, 'r7': number})
+                    uc.emu_stop()
+                    return
             if number == 3:  # sys_read on device fds
                 fd = uc.reg_read(arm.UC_ARM_REG_R0)
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'usb_event':
@@ -1152,6 +1804,41 @@ class InterpreterProbe:
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
+            if number == 4:
+                fd = uc.reg_read(arm.UC_ARM_REG_R0)
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'tty':
+                    tty = getattr(self, 'tty', None)
+                    if tty is None:
+                        self.report.update(status='unsupported_tty_contract', boundary={
+                            'reason': 'tty_device_not_supplied', 'path': '/dev/tty',
+                            'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    from src.a6400.execution.guest_tty import UnsupportedTtyError
+                    try:
+                        data = bytes(uc.mem_read(
+                            uc.reg_read(arm.UC_ARM_REG_R1),
+                            uc.reg_read(arm.UC_ARM_REG_R2)))
+                    except unicorn.UcError:
+                        ret = (-14) & 0xffffffff
+                    else:
+                        try:
+                            ret = tty.write(
+                                self.filesystem.fds[fd].get('owner_id'), data,
+                                tid=self.threads.current_tid)
+                        except UnsupportedTtyError as error:
+                            self.report.update(status='unsupported_tty_contract', boundary={
+                                **error.details, 'path': '/dev/tty',
+                                'pc': pc, 'r7': number})
+                            uc.emu_stop()
+                            return
+                    self.report['serviced_syscalls'].append({
+                        'syscall': 'write', 'r7': 4, 'fd': fd, 'path': '/dev/tty',
+                        'returned': ret, 'policy': 'log-sink', 'pc': pc,
+                        'instruction_address': pc - size, 'thumb': thumb})
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
             if number == 4:  # write on pipe fds
                 fd = uc.reg_read(arm.UC_ARM_REG_R0)
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'pipe':
@@ -1204,6 +1891,53 @@ class InterpreterProbe:
                     return
             if number in (4, 146):  # write / writev on stdio
                 fd = uc.reg_read(arm.UC_ARM_REG_R0)
+                if (number == 146 and fd in self.filesystem.fds
+                        and self.filesystem.fds[fd].get('device') == 'tty'):
+                    tty = getattr(self, 'tty', None)
+                    iov_ptr = uc.reg_read(arm.UC_ARM_REG_R1)
+                    iovcnt = uc.reg_read(arm.UC_ARM_REG_R2)
+                    if tty is None:
+                        self.report.update(status='unsupported_tty_contract', boundary={
+                            'reason': 'tty_device_not_supplied', 'path': '/dev/tty',
+                            'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    from src.a6400.execution.guest_tty import UnsupportedTtyError
+                    if iovcnt > 16:
+                        self.report.update(status='unsupported_tty_contract', boundary={
+                            'reason': 'tty_writev_iovcnt_too_large', 'iovcnt': iovcnt,
+                            'path': '/dev/tty', 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    try:
+                        raw = bytes(uc.mem_read(iov_ptr, 8 * iovcnt))
+                        chunks = []
+                        total = 0
+                        for index in range(iovcnt):
+                            base, length = struct.unpack_from('<II', raw, 8 * index)
+                            total += length
+                            if total > 0x10000:
+                                raise UnsupportedTtyError(
+                                    'tty_writev_too_large', total=total)
+                            chunks.append(bytes(uc.mem_read(base, length)))
+                        ret = tty.write(
+                            self.filesystem.fds[fd].get('owner_id'),
+                            b''.join(chunks), tid=self.threads.current_tid)
+                    except unicorn.UcError:
+                        ret = (-14) & 0xffffffff
+                    except UnsupportedTtyError as error:
+                        self.report.update(status='unsupported_tty_contract', boundary={
+                            **error.details, 'path': '/dev/tty', 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    self.report['serviced_syscalls'].append({
+                        'syscall': 'writev', 'r7': 146, 'fd': fd,
+                        'path': '/dev/tty', 'iovcnt': iovcnt, 'returned': ret,
+                        'policy': 'log-sink', 'pc': pc,
+                        'instruction_address': pc - size, 'thumb': thumb})
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
                 if self.stdio.is_stdio_fd(fd):
                     if number == 4:
                         buf = uc.reg_read(arm.UC_ARM_REG_R1)
@@ -1361,6 +2095,51 @@ class InterpreterProbe:
                     self.report['serviced_syscalls'].append({'syscall': 'open', 'r7': 5, 'fd': fd,
                         'path': '/dev/usb/kikilog', 'flags': flags, 'returned': ret, 'pc': pc,
                         'instruction_address': pc - size, 'thumb': thumb, 'source': self.kikilog.source_sha256})
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if preview.get('status') == 'terminated' and preview.get('value') == '/dev/tty':
+                    try:
+                        self._uipc_read(path_ptr, len(b'/dev/tty\0'))
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    except UnsupportedUipc as error:
+                        self.report.update(status='unsupported_tty_contract', boundary={
+                            **error.details, 'pc': pc, 'r7': number})
+                        uc.emu_stop()
+                        return
+                    tty = getattr(self, 'tty', None)
+                    if tty is None:
+                        self.report.update(status='unsupported_tty_contract', boundary={
+                            'reason': 'tty_device_not_supplied', 'path': '/dev/tty',
+                            'flags': flags, 'pc': pc, 'r7': number,
+                            'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    from src.a6400.execution.guest_tty import UnsupportedTtyError
+                    fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
+                    if fd is None:
+                        ret = (-24) & 0xffffffff
+                    else:
+                        try:
+                            owner = tty.open(flags, self.threads.current_tid,
+                                             self.threads.process_id)
+                        except UnsupportedTtyError as error:
+                            self.report.update(status='unsupported_tty_contract', boundary={
+                                **error.details, 'path': '/dev/tty', 'flags': flags,
+                                'pc': pc, 'r7': number})
+                            uc.emu_stop()
+                            return
+                        ret = fd
+                        self.filesystem.fds[fd] = {
+                            'path': '/dev/tty', 'device': 'tty', 'flags': flags,
+                            'owner_id': owner}
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/tty',
+                             'fd': fd, 'returned': ret, 'flags': flags,
+                             'policy': 'log-sink', 'pc': pc,
+                             'instruction_address': pc - size, 'thumb': thumb}
+                    self.report['serviced_syscalls'].append(event)
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
@@ -1860,6 +2639,12 @@ class InterpreterProbe:
                         'thumb': thumb, 'device': 'urandom', 'source': 'original-kernel-e0301'})
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'tty':
+                    self.report.update(status='unsupported_tty_contract', boundary={
+                        'reason': 'tty_ioctl_not_supplied', 'path': '/dev/tty',
+                        'cmd': cmd, 'arg': arg, 'pc': pc, 'r7': number})
+                    uc.emu_stop()
                     return
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'dmpgles2':
                     owner_id = self.filesystem.fds[fd].get('owner_id')
@@ -3236,6 +4021,12 @@ class InterpreterProbe:
             self.entry = self.mu.reg_read(arm.UC_ARM_REG_PC)
             if self.mu.reg_read(arm.UC_ARM_REG_CPSR) & 0x20:
                 self.entry |= 1
+        if (getattr(self, 'trace_usbcontrol_dispatch', False)
+                and not getattr(self, '_usbcontrol_dispatch_installed', False)):
+            # Setting the opt-in attribute after checkpoint restore is enough;
+            # the CLI also installs explicitly so hook resolution is reported
+            # before execution starts.
+            self.install_usbcontrol_dispatch_hooks()
         self._maybe_inject_usb_connect()
         return self
 

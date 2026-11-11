@@ -110,4 +110,4 @@ if __name__ == '__main__':
             print_header("BENCHMARK TEST NA POSTOJEĆEM CXD90014 FIRMWARE DAT-u")
             run_analysis(sample_dat)
         else:
-            print("Upotreba: python firmware_analyzer.py <putanja_do_exe_ili_dat>")
+            print("Upotreba: python -m tools.research.firmware_analyzer <putanja_do_exe_ili_dat>")

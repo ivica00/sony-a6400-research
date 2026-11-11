@@ -85,7 +85,7 @@ if __name__ == '__main__':
             target = candidates[0]
             print(f"[*] Automatski detektovan firmware fajl: {target}")
         else:
-            print("Upotreba: python unpack_firmware.py <putanja_do_Update_ILCE6400V200.exe>")
+            print("Upotreba: python -m tools.research.unpack_firmware <putanja_do_Update_ILCE6400V200.exe>")
             sys.exit(0)
 
     unpack(target)

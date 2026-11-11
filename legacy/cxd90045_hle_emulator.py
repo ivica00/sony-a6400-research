@@ -795,6 +795,12 @@ class CXD90045_HLE_Emulator:
             if factory_name in self.symbols:
                 addr_fac = self.symbols[factory_name]
                 inst = self.call_function(addr_fac, 0, 0, is_thumb=True)
+                if inst is None or inst is False or inst == 0:
+                    # A factory that returns no instance is a capability boundary, not a
+                    # value to format: record it (research) or stop (strict) instead.
+                    self.unsupported("screen_factory_returned_none", screen=screen_key,
+                                     factory=factory_name)
+                    continue
                 self.screen_instances[screen_key] = inst
                 print(f"  [+] Ekran '{screen_key}' instanciran na 0x{inst:08x}")
                 if addr_onload and screen_key == "LIVE_VIEW":

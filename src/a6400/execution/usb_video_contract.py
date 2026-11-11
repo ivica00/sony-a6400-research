@@ -5,7 +5,15 @@ decoded offline from `usbg_video.ko` (SHA-256 d385a051...).  It does not model
 the driver's runtime behaviour and returns no fabricated success: the command
 decoder is a pure ``_IOC``/legacy-command description and the context offsets
 are the fields observed in `usbg_video_core_ioctl`.
+
+The E0319 gap decoders below (context+0x2D count writer, 0xD0 request object,
+0x24 DMA-info object, buffer table/blob semantics, JPEG/DMM frame source) are
+also structural: every field whose meaning is not directly observed is labelled
+``unresolved`` and every parser rejects short/mismatched input instead of
+inventing defaults.
 """
+
+import struct
 
 ZVE10_USBG_VIDEO_SHA256 = (
     'd385a051bf01b0e5ea37412623ae85cfe3cda76ab0d11e61d111994ca9fbf4fb')
@@ -382,4 +390,326 @@ def describe_usbg_video_phys_buffer_rpc():
                       '&length, &physical, &virtual)',
         'evidence': 'usbg_video.ko local copies + usbg_cmn.ko exports; '
                     'reply field offsets are instruction-level observations',
+    }
+
+
+# ---------------------------------------------------------------------------
+# E0319 gap decoders (task-186).
+#
+# Gaps left open by E0319 §10/§11 and §9:
+#   * context+0x2D buffer-table count writer (external)
+#   * 0xD0 request object (context+0xAC)
+#   * 0x24 DMA-info object (context+0xB0)
+#   * buffer-table/blob contents (probe info +0x24/+0x30/+0x34)
+#   * JPEG/DMM frame source
+#
+# Nothing below claims driver behaviour: structures are described field by
+# field, unknown fields are labelled ``unresolved``, and builders/parsers are
+# fail-closed (ValueError on short/mismatched/out-of-range input).
+# ---------------------------------------------------------------------------
+USB_VIDEO_CONTEXT_COUNT_WRITER = {
+    'context_offset': USB_VIDEO_CONTEXT_COUNT_OFFSET,
+    'writer': 'unresolved_external',
+    'stores_in_module_text': 0,
+    'checked_sources': ('usbg_video.ko .text', 'usbg_cmn.ko .text'),
+    'context_zeroed_bytes': 0xC0,  # usbg_video_create_this zeroes the 0xC0 context
+    'note': 'usbg_cmn_copy_probe_info reads count from context+0x2D; no store '
+            '(or covering 32-bit store) exists in usbg_video/usbg_cmn text, so '
+            'the writer is another module (kernel gadgetcore) or a copied user '
+            'structure that was not located (E0319 §10/§11)',
+}
+
+
+def describe_usb_video_count_writer():
+    """Return the context+0x2D count-writer boundary (no writer modelled)."""
+    return dict(USB_VIDEO_CONTEXT_COUNT_WRITER)
+
+
+# 0xD0 request object allocated by usbg_video_core_open; context+0xAC points at
+# it.  No field semantics were decoded from the module text in E0319.
+USB_VIDEO_REQUEST_OBJECT = {
+    'context_offset': 0xAC,
+    'size': 0xD0,
+    'known_fields': {},
+    'unknown_field_label': 'unresolved_word',
+    'evidence': 'usbg_video_core_open (0x1AC8) allocates a 0xD0-byte request '
+                'object and stores it at context+0xAC; contents undecoded',
+}
+# 0x24 DMA-info object allocated by usbg_video_core_open; context+0xB0 points at
+# it.  E0319 §9 records field values [0]=1, [4]=1, [8]=adjusted physical,
+# [0xC]/[0x10] literals; the literal values themselves stay unresolved.
+USB_VIDEO_DMA_INFO_OBJECT = {
+    'context_offset': 0xB0,
+    'size': 0x24,
+    'fields': {
+        0x00: 'constant_1_observed',
+        0x04: 'constant_1_observed',
+        0x08: 'adjusted_physical_address',
+        0x0C: 'unresolved_literal_word',
+        0x10: 'unresolved_literal_word',
+        0x14: 'unresolved_word',
+        0x18: 'unresolved_word',
+        0x1C: 'unresolved_word',
+        0x20: 'unresolved_word',
+    },
+    'evidence': 'usbg_video_core_open (0x1AC8) object stores; literal values of '
+                '+0xC/+0x10 are not present in the decoded notes',
+}
+# usbg_cmn_copy_probe_info copies count*2 bytes from user+0x24 into a kernel
+# buffer; the per-entry meaning is not decoded (entry width is a hypothesis
+# derived from the count*2 copy size).
+USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE = 2
+USB_VIDEO_BUFFER_TABLE_MAX_ENTRIES = 0x100  # caller-supplied sanity cap
+USB_VIDEO_BLOB_MAX_BYTES = 0x4000  # caller-supplied sanity cap
+
+USB_VIDEO_FRAME_SOURCE = {
+    'status': 'unresolved',
+    'kinds': {
+        'jpeg': 'hypothesis: JPEG payload source; no producer decoded',
+        'dmm': 'hypothesis: DMM media frame source; no producer decoded',
+    },
+    'evidence': 'no frame-source instruction or data structure was decoded in '
+                'usbg_video.ko/usbg_cmn.ko; frame data flow is not modelled',
+}
+
+
+def _require_bytes(data, label):
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError(f'{label} must be bytes')
+    return bytes(data)
+
+
+def parse_usb_video_request_object(data):
+    """Parse the 0xD0-byte request object (all words labelled unresolved).
+
+    ``usbg_video_core_open`` allocates it and stores the pointer at
+    context+0xAC; E0319 did not decode any field, so every word is returned
+    with the ``unresolved_word`` label and ``known_fields`` stays empty.
+    """
+    data = _require_bytes(data, 'usb_video request object')
+    size = USB_VIDEO_REQUEST_OBJECT['size']
+    if len(data) < size:
+        raise ValueError('usb_video request object must be at least 0xD0 bytes')
+    words = struct.unpack_from(f'<{size // 4}I', data, 0)
+    return {
+        'size': size,
+        'context_offset': USB_VIDEO_REQUEST_OBJECT['context_offset'],
+        'known_fields': {},
+        'words': list(words),
+        'labels': {offset: USB_VIDEO_REQUEST_OBJECT['unknown_field_label']
+                   for offset in range(0, size, 4)},
+        'semantics': 'unresolved',
+    }
+
+
+def parse_usb_video_dma_info_object(data):
+    """Parse the 0x24-byte DMA-info object with the E0319 §9 labels."""
+    data = _require_bytes(data, 'usb_video dma-info object')
+    size = USB_VIDEO_DMA_INFO_OBJECT['size']
+    if len(data) < size:
+        raise ValueError('usb_video dma-info object must be at least 0x24 bytes')
+    fields = {}
+    for offset, label in USB_VIDEO_DMA_INFO_OBJECT['fields'].items():
+        (value,) = struct.unpack_from('<I', data, offset)
+        entry = {'label': label, 'value': value}
+        if offset in (0x00, 0x04):
+            entry['expectation'] = 1
+        fields[offset] = entry
+    return {
+        'size': size,
+        'context_offset': USB_VIDEO_DMA_INFO_OBJECT['context_offset'],
+        'fields': fields,
+        'raw': data[:size].hex(),
+        'semantics': 'field labels observed in usbg_video_core_open; '
+                     'literal values at +0xC/+0x10 unresolved',
+    }
+
+
+def parse_usb_video_buffer_table(data, expected_count,
+                                 max_entries=USB_VIDEO_BUFFER_TABLE_MAX_ENTRIES):
+    """Parse the count*2-byte buffer table copied from user+0x24.
+
+    ``usbg_cmn_copy_probe_info`` allocates ``count*2`` bytes (count from
+    context+0x2D) and copies the user table; the per-entry meaning is not
+    decoded, so entries are exposed as 16-bit little-endian hypotheses.
+    """
+    data = _require_bytes(data, 'usb_video buffer table')
+    if not isinstance(expected_count, int) or expected_count < 0:
+        raise ValueError('expected_count must be a non-negative int')
+    if expected_count > max_entries:
+        raise ValueError('expected_count exceeds the caller-supplied max_entries')
+    expected_bytes = expected_count * USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE
+    if len(data) != expected_bytes:
+        raise ValueError(
+            f'usb_video buffer table must be exactly {expected_bytes} bytes '
+            f'for count {expected_count}, got {len(data)}')
+    entries = [int.from_bytes(data[i:i + USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE],
+                              'little')
+               for i in range(0, expected_bytes,
+                              USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE)]
+    return {
+        'count': expected_count,
+        'entry_size': USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE,
+        'entries': entries,
+        'entry_semantics': 'unresolved (u16 little-endian hypothesis from the '
+                           'count*2 copy size)',
+        'count_source': 'context+0x2D (external writer unresolved)',
+    }
+
+
+def parse_usb_video_blob(data, max_bytes=USB_VIDEO_BLOB_MAX_BYTES):
+    """Validate the probe-info blob bytes; content semantics stay unresolved.
+
+    ``usbg_cmn_copy_probe_info`` allocates user+0x34 bytes and copies from
+    user+0x30; a NULL user+0x30 clears the blob.  The content meaning is not
+    decoded, so only a bounded length check plus the raw bytes are returned.
+    """
+    data = _require_bytes(data, 'usb_video blob')
+    if not isinstance(max_bytes, int) or max_bytes < 0:
+        raise ValueError('max_bytes must be a non-negative int')
+    if len(data) > max_bytes:
+        raise ValueError('usb_video blob exceeds max_bytes')
+    return {
+        'length': len(data),
+        'data_hex': data.hex(),
+        'semantics': 'unresolved (contents not decoded)',
+        'max_bytes': max_bytes,
+    }
+
+
+def validate_usb_video_probe_info(data, buffer_count=None,
+                                  max_blob_bytes=USB_VIDEO_BLOB_MAX_BYTES,
+                                  max_entries=USB_VIDEO_BUFFER_TABLE_MAX_ENTRIES):
+    """Parse the 56-byte register block and validate its cross-field bounds.
+
+    This is a decoder, not a kernel-behaviour model: it returns the parsed
+    fields plus explicit validation flags and never fabricates a successful
+    register/commit.  ``buffer_count`` is the context+0x2D value when known
+    (the writer is external/unresolved); a mismatch is reported, not corrected.
+    """
+    parsed = parse_usb_video_probe_info(data)
+    if buffer_count is not None:
+        if not isinstance(buffer_count, int) or buffer_count < 0:
+            raise ValueError('buffer_count must be a non-negative int')
+        if buffer_count > max_entries:
+            raise ValueError('buffer_count exceeds the caller-supplied max_entries')
+    blob_pointer = parsed['blob_pointer']
+    blob_length = parsed['blob_length']
+    if blob_pointer == 0 and blob_length != 0:
+        raise ValueError('blob_pointer 0 with non-zero blob_length is inconsistent')
+    if blob_pointer != 0 and blob_length > max_blob_bytes:
+        raise ValueError('blob_length exceeds max_blob_bytes')
+    expected_table_bytes = (buffer_count * USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE
+                            if buffer_count is not None else None)
+    return {
+        'probe_info': parsed,
+        'buffer_count': buffer_count,
+        'expected_buffer_table_bytes': expected_table_bytes,
+        'blob_present': blob_pointer != 0,
+        'blob_length': blob_length,
+        'flags': {
+            'buffer_table_size_checked': buffer_count is not None,
+            'count_source': 'context+0x2D (external writer unresolved)',
+        },
+        'semantics': 'decoded register block only; no register/commit success '
+                     'is modelled',
+    }
+
+
+def build_usb_video_phys_buffer_alloc_message(size):
+    """Build the 0x18-byte alloc RPC message (E0319 §12 field layout)."""
+    if not isinstance(size, int) or size < 0 or size > 0xFFFFFFFF:
+        raise ValueError('size must fit u32')
+    message = bytearray(0x18)
+    struct.pack_into('<H', message, 0x00, USB_VIDEO_PHYS_BUFFER_RPC['alloc_opcode'])
+    struct.pack_into('<H', message, 0x02, 0)
+    struct.pack_into('<I', message, 0x04, size)
+    struct.pack_into('<I', message, 0x08, 0)
+    struct.pack_into('<I', message, 0x0C, 0xFFFFFFFF)
+    struct.pack_into('<H', message, 0x14, 0)
+    struct.pack_into('<H', message, 0x16, 1)
+    return bytes(message)
+
+
+def build_usb_video_phys_buffer_free_message(handle):
+    """Build the 0x18-byte free RPC message (E0319 §12 field layout)."""
+    if not isinstance(handle, int) or not 0 <= handle <= 0xFFFF:
+        raise ValueError('handle must fit u16')
+    message = bytearray(0x18)
+    struct.pack_into('<H', message, 0x00, USB_VIDEO_PHYS_BUFFER_RPC['free_opcode'])
+    struct.pack_into('<H', message, 0x02, handle)
+    struct.pack_into('<H', message, 0x14, 0)
+    struct.pack_into('<H', message, 0x16, 2)
+    return bytes(message)
+
+
+def parse_usb_video_phys_buffer_reply(data):
+    """Parse a 0x18-byte alloc/free reply (status/length/physical/virtual)."""
+    data = _require_bytes(data, 'usb_video phys-buffer reply')
+    size = USB_VIDEO_PHYS_BUFFER_RPC['message_size']
+    if len(data) < size:
+        raise ValueError('usb_video phys-buffer reply must be at least 0x18 bytes')
+    rpc = USB_VIDEO_PHYS_BUFFER_RPC
+    (status,) = struct.unpack_from('<H', data, rpc['reply_status_offset'])
+    (length,) = struct.unpack_from('<H', data, rpc['reply_length_offset'])
+    (physical,) = struct.unpack_from('<I', data, rpc['reply_physical_offset'])
+    (virtual,) = struct.unpack_from('<I', data, rpc['reply_virtual_offset'])
+    return {
+        'size': size,
+        'status_u16': status,
+        'length_u16': length,
+        'physical': physical,
+        'virtual': virtual,
+        'raw': data[:size].hex(),
+        'semantics': 'reply field offsets are E0319 §12 instruction-level '
+                     'observations; no kernel call is modelled',
+    }
+
+
+def usb_video_frame_source(kind):
+    """Return the declared frame-source row for ``kind`` (never modelled).
+
+    Both known kinds are hypotheses; an unknown kind raises ValueError so a
+    caller cannot silently treat an arbitrary source as supported.
+    """
+    if kind not in USB_VIDEO_FRAME_SOURCE['kinds']:
+        raise ValueError(f'unknown usb_video frame-source kind: {kind!r}')
+    return {
+        'kind': kind,
+        'status': USB_VIDEO_FRAME_SOURCE['status'],
+        'modelled': False,
+        'note': USB_VIDEO_FRAME_SOURCE['kinds'][kind],
+        'evidence': USB_VIDEO_FRAME_SOURCE['evidence'],
+    }
+
+
+def describe_usbg_video_gap_contract():
+    """Aggregate the remaining E0319 gaps as an explicit, fail-closed report."""
+    return {
+        'context_count_writer': describe_usb_video_count_writer(),
+        'request_object': {key: (dict(value) if isinstance(value, dict) else value)
+                           for key, value in USB_VIDEO_REQUEST_OBJECT.items()},
+        'dma_info_object': {
+            'context_offset': USB_VIDEO_DMA_INFO_OBJECT['context_offset'],
+            'size': USB_VIDEO_DMA_INFO_OBJECT['size'],
+            'fields': dict(USB_VIDEO_DMA_INFO_OBJECT['fields']),
+        },
+        'buffer_table': {
+            'entry_size': USB_VIDEO_BUFFER_TABLE_ENTRY_SIZE,
+            'max_entries': USB_VIDEO_BUFFER_TABLE_MAX_ENTRIES,
+            'semantics': 'unresolved (count*2 copy; per-entry meaning not '
+                         'decoded)',
+        },
+        'blob': {
+            'max_bytes': USB_VIDEO_BLOB_MAX_BYTES,
+            'semantics': 'unresolved (user+0x30/+0x34 copy; contents not '
+                         'decoded)',
+        },
+        'frame_source': {
+            'status': USB_VIDEO_FRAME_SOURCE['status'],
+            'kinds': dict(USB_VIDEO_FRAME_SOURCE['kinds']),
+        },
+        'evidence': 'E0319 §9-§12 instruction-level observations; fields that '
+                    'were not decoded are labelled unresolved and parsers/'
+                    'builders fail closed',
     }

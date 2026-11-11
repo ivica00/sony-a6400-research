@@ -1,15 +1,35 @@
 #include "uvc_ptp_session.h"
 #include "uvc_ptp_adapter.h"
+#include "uvc_ptp_soft_disconnect.h"
+
+/* E0360 Run B pre-flight instrumentation: the shared ENDPOINT selector was
+ * silent; log why it returns 0 so a single physical run can distinguish the
+ * five live preconditions. Reporting only: no control flow changes. */
+extern int printk(const char *fmt, ...);
+
 static struct a6400_uvc_ptp_session *owner;
 
 static unsigned int shared_endpoint(unsigned int count,unsigned int array)
 {
     void *gadget;
     unsigned int endpoint;
-    if (!owner || !owner->gc) return 0;
+    unsigned int speed;
+    if (!owner || !owner->gc) {
+        printk("[a6400_sel] shared reject owner/gc NULL\n");
+        return 0;
+    }
     gadget=*(void **)owner->gc;
-    if (!gadget || *(unsigned int *)((unsigned char *)gadget+0x20)!=3) return 0;
+    if (!gadget) {
+        printk("[a6400_sel] shared reject gadget=NULL\n");
+        return 0;
+    }
+    speed=*(unsigned int *)((unsigned char *)gadget+0x20);
+    if (speed!=3) {
+        printk("[a6400_sel] shared reject speed=%u (need 3)\n",speed);
+        return 0;
+    }
     endpoint=a6400_uvc_ptp_select_endpoint((unsigned char *)gadget-0x150,count,(void *const *)array);
+    printk("[a6400_sel] shared selector=%08x count=%u\n",endpoint,count&0xffu);
 #ifdef A6400_UVC_START_PROBE_ONLY
     (void)endpoint;
     return 0; /* enumeration candidate: never enter native video START */
@@ -56,49 +76,16 @@ int a6400_uvc_ptp_session_releasable(const struct a6400_uvc_ptp_session *s)
 int a6400_uvc_ptp_session_end(struct a6400_uvc_ptp_session *s)
 {
     unsigned int i;
-    unsigned char *gc;
     int ret;
     if (!s) return -22;
     if (a6400_uvc_ptp_session_releasable(s)) return 0;
     if (s!=owner || !s->gc) return -22;
-    if (!s->stopped) {
-#ifdef A6400_UVC_TEARDOWN_UNCONFIGURE_FIRST
-        if (s->ops.unconfigure) {
-            ret=s->ops.unconfigure(s->gc);
-            if (ret) return hold(s,ret);
-        }
-#endif
-        ret=s->ops.quiesce(s->gc);
-        if (ret) return hold(s,ret);
-        s->stopped=1;
-    }
-    /* A hardware acknowledgement alone cannot retire a live bridge user. */
-    if (s->bridge.in_flight || s->bridge.started) return hold(s,-16);
-    if (s->ops.check_error && (ret=s->ops.check_error(s->gc))) return hold(s,ret);
-    if (s->hook_attempted) {
-        ret=s->ops.unbind_ep0(s->gc);
-        if (ret) return hold(s,ret);
-        s->hook_attempted=0;
-    }
-    if (s->registered) {
-        ret=a6400_uvc_bridge_unregister(&s->bridge,s->ops.unreg);
-        if (ret) return hold(s,ret);
-        if (s->ops.check_error && (ret=s->ops.check_error(s->gc))) return hold(s,ret);
-        s->registered=0;s->prepared=0;
-    } else if (s->prepared) {
-        ret=a6400_uvc_bridge_retire(&s->bridge,0);
-        if (ret) return hold(s,ret);
-        s->prepared=0;
-    }
-    ret=a6400_descriptor_restore(&s->lease,&s->ops.descriptor);
-    if (ret) return hold(s,ret);
-    if (s->ops.check_error && (ret=s->ops.check_error(s->gc))) return hold(s,ret);
-    gc=s->gc;
-    if (*(void **)(gc+0x6c)!=s->original_root) return hold(s,-116);
-    *(unsigned int *)(gc+0x68)=s->original_flags;
-    gc[0x84]=s->original_mode;gc[0x85]=s->original_speed;
-    s->stopped=0; /* resume may partially enable hardware even on failure */
-    ret=s->ops.resume(s->gc);
+    /* The whole end path is one ordered sequence: original clear-configuration
+     * and the reference STOP first, then the UDC stop, then hook/record/table
+     * release, then an explicit reconnect. A failure still holds the session
+     * (no release, no unload receipt) but the sequence is ordered so a late
+     * failure cannot leave the host with a bound EP0 hook over a freed table. */
+    ret=a6400_uvc_soft_disconnect(s,&s->teardown);
     if (ret) return hold(s,ret);
     owner=0;
     for (i=0;i<sizeof(*s);++i) ((unsigned char *)s)[i]=0;

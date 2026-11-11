@@ -81,3 +81,8 @@ tools/native_camera/zve10_uvc_tree.h
 
 # User-owned LUT pack: bundled only in local APKs
 /android/cinemahud/assets/user_luts/
+# Local build outputs (reproducible from sources; never publish binaries)
+camera-daemon/build/
+probes/build/
+android-client-ref/**/build/
+android-client-ref/.gradle/

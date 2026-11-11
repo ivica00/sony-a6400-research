@@ -22,6 +22,27 @@ from src.a6400.execution.mwf_objmsg import (
     OBJMSG_WIRE_HEADER_FIELDS,
     build_objmsg_wire,
     describe_mwf_wire_format,
+    LIVE_LIBMWF_BASE,
+    LIVE_LIBMWF_DATA_BASE,
+    OBJMSG_FUNCTABLE_VA,
+    PARAMSTD_INT32_FUNCTABLE_VA,
+    PARAM_TYPE_INT32,
+    FUNCTABLE_FIELDS,
+    PARAM_VALUE_OFFSET,
+    PARAM_FUNCTABLE_OFFSET,
+    PARAMMAP_COUNT_OFFSET,
+    PARAMMAP_ARRAY_OFFSET,
+    PARAMMAP_ENTRY_SIZE,
+    PARAMMAP_ENTRY_ID_OFFSET,
+    PARAMMAP_ENTRY_PARAM_OFFSET,
+    OBJMSG_PARAM_IMAGE_ARRAY_OFFSET_IN_BODY,
+    OBJMSG_PARAM_IMAGE_PARAM_OFFSET_IN_BODY,
+    build_setconfig_objmsg_image,
+    describe_setconfig_objmsg_param_layout,
+    describe_mwf_param_object_binding,
+    SETCONFIG_CATEGORY,
+    SETCONFIG_MESSAGE_ID,
+    SETCONFIG_PARAM_ID,
 )
 
 
@@ -132,3 +153,143 @@ class TestMwfWireFormat(unittest.TestCase):
                          ['MessageSerializer::decObjMsg'], 0x1FB8C)
         self.assertEqual(report['param_header_size'], 8)
         self.assertIn('no kernel', report['boundary'])
+
+
+class TestMwfParamObjectBinding(unittest.TestCase):
+    """E0336: Param object funcTable binding required by MsgUtil::GetInt32."""
+
+    def test_func_table_constants(self):
+        self.assertEqual(LIVE_LIBMWF_BASE, 0x53660000)
+        self.assertEqual(LIVE_LIBMWF_DATA_BASE, 0x536A0000)
+        self.assertEqual(PARAMSTD_INT32_FUNCTABLE_VA, 0x536A067C)
+        self.assertEqual(OBJMSG_FUNCTABLE_VA, 0x536A0598)
+        self.assertEqual(PARAM_TYPE_INT32, 7)
+        self.assertEqual(FUNCTABLE_FIELDS,
+                         {0x00: 'param_type',
+                          0x04: 'virtual_Clear',
+                          0x08: 'virtual_Clone'})
+
+    def test_vtable_required_finding(self):
+        report = describe_mwf_param_object_binding()
+        self.assertTrue(report['vtable_required'])
+        self.assertEqual(report['param_value_offset'], 0)
+        self.assertEqual(report['param_functable_offset'], 4)
+        self.assertEqual(report['function_addresses']
+                         ['UFW::MsgUtil::GetInt32'], 0xA3F4)
+        self.assertEqual(report['function_addresses']
+                         ['Param::GetType'], 0x1F140)
+        self.assertIn('funcTable+0', report['instruction_evidence'])
+        self.assertIn('teardown', report['boundary'])
+
+    def test_layout_offsets(self):
+        self.assertEqual(PARAMMAP_COUNT_OFFSET, 0)
+        self.assertEqual(PARAMMAP_ARRAY_OFFSET, 8)
+        self.assertEqual(PARAMMAP_ENTRY_SIZE, 8)
+        self.assertEqual(PARAMMAP_ENTRY_ID_OFFSET, 0)
+        self.assertEqual(PARAMMAP_ENTRY_PARAM_OFFSET, 4)
+        layout = describe_setconfig_objmsg_param_layout()
+        self.assertEqual(layout['parammap_offset'], 0x20 + 0x0C)
+        self.assertEqual(layout['array_offset'],
+                         0x20 + OBJMSG_PARAM_IMAGE_ARRAY_OFFSET_IN_BODY)
+        self.assertEqual(layout['param_offset'],
+                         0x20 + OBJMSG_PARAM_IMAGE_PARAM_OFFSET_IN_BODY)
+        self.assertEqual(layout['param_id'], SETCONFIG_PARAM_ID)
+        self.assertEqual(layout['param_type'], 7)
+        self.assertTrue(layout['vtable_required'])
+        self.assertEqual(len(layout['evidence']) > 0, True)
+
+
+class TestSetconfigObjMsgImageWithParam(unittest.TestCase):
+    """E0336: SETCONFIG ObjMsg image carrying Param 0x1006 = int32 0."""
+
+    def _read_u32(self, image, offset):
+        return int.from_bytes(image[offset:offset + 4], 'little')
+
+    def test_image_contains_decoded_param(self):
+        obj = 0x579CE000
+        image = build_setconfig_objmsg_image(obj)
+        self.assertEqual(len(image), 0x80)
+        body = 0x20
+        parammap = body + OBJMSG_PARAM_CONTAINER_OFFSET
+        array = body + OBJMSG_PARAM_IMAGE_ARRAY_OFFSET_IN_BODY
+        param = body + OBJMSG_PARAM_IMAGE_PARAM_OFFSET_IN_BODY
+        # ObjMsg: body pointer at +0, real ObjMsg funcTable at +4.
+        self.assertEqual(self._read_u32(image, 0), obj + body)
+        self.assertEqual(self._read_u32(image, 4), OBJMSG_FUNCTABLE_VA)
+        # body category/message id unchanged.
+        self.assertEqual(self._read_u32(image, body + 4), SETCONFIG_CATEGORY)
+        self.assertEqual(self._read_u32(image, body + 8),
+                         SETCONFIG_MESSAGE_ID)
+        # ParamMap: one decoded entry with absolute array/Param addresses.
+        self.assertEqual(self._read_u32(image, parammap + 0), 1)
+        self.assertEqual(self._read_u32(image, parammap + 8), obj + array)
+        self.assertEqual(self._read_u32(image, array), SETCONFIG_PARAM_ID)
+        self.assertEqual(self._read_u32(image, array + 4), obj + param)
+        # ParamStd<int,7>: value 0 and the live libMWF funcTable VA.
+        self.assertEqual(self._read_u32(image, param), 0)
+        self.assertEqual(self._read_u32(image, param + 4),
+                         PARAMSTD_INT32_FUNCTABLE_VA)
+
+    def test_param_entry_values(self):
+        obj = 0x579CE000
+        image = build_setconfig_objmsg_image(obj, param_value=0)
+        layout = describe_setconfig_objmsg_param_layout(obj)
+        param = layout['param_offset']
+        self.assertEqual(self._read_u32(image, param + PARAM_VALUE_OFFSET), 0)
+        self.assertEqual(self._read_u32(image, param + PARAM_FUNCTABLE_OFFSET),
+                         PARAMSTD_INT32_FUNCTABLE_VA)
+
+    def test_include_param_false_keeps_zeroed_map(self):
+        obj = 0x579CE000
+        image = build_setconfig_objmsg_image(obj, include_param=False)
+        body = 0x20
+        parammap = body + OBJMSG_PARAM_CONTAINER_OFFSET
+        self.assertEqual(self._read_u32(image, parammap), 0)
+        self.assertEqual(self._read_u32(image, 4), 0)
+
+    def test_custom_libmwf_base(self):
+        base = 0x60000000
+        image = build_setconfig_objmsg_image(0x579CE000, libmwf_base=base)
+        layout = describe_setconfig_objmsg_param_layout(0x579CE000,
+                                                        libmwf_base=base)
+        self.assertEqual(self._read_u32(image, layout['param_offset'] + 4),
+                         base + PARAMSTD_INT32_FUNCTABLE_VA - LIVE_LIBMWF_BASE)
+        self.assertEqual(self._read_u32(image, 4),
+                         base + OBJMSG_FUNCTABLE_VA - LIVE_LIBMWF_BASE)
+
+    def test_unknown_param_type_refused(self):
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, param_type=8)
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, param_type='int32')
+
+    def test_layout_refusals(self):
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, allocation_size=0x6F)
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, body_offset=0x11)
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, body_offset=0x30,
+                                         allocation_size=0x7F)
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, libmwf_base=0)
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, libmwf_base=-4)
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, param_type=7,
+                                         param_value=1 << 31)
+        with self.assertRaises(ValueError):
+            build_setconfig_objmsg_image(0x579CE000, param_id=-1)
+
+    def test_backward_compatible_layout(self):
+        obj = 0x579CE000
+        image = build_setconfig_objmsg_image(obj)
+        self.assertEqual(len(image), 0x80)
+        self.assertEqual(int.from_bytes(image[0:4], 'little'), obj + 0x20)
+        self.assertEqual(SETCONFIG_CATEGORY, 0x6103)
+        self.assertEqual(SETCONFIG_MESSAGE_ID, 0x0A4001)
+        self.assertEqual(SETCONFIG_PARAM_ID, 0x1006)
+
+
+if __name__ == '__main__':
+    unittest.main()

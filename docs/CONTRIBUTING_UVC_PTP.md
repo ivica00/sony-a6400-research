@@ -63,23 +63,26 @@ and documentation in a plain Python environment for most items.
 
 ### 1. Model kernel to user sync callback delivery (highest impact)
 
-- Boundary: **transport done** — `sync_callback_packet_format_unmodelled`
-  (the h4109/h4110 packet format and downstream post path are still unknown).
-- Context: [E0332](evidence/0332-sync-callback-delivery-first-invocation.md),
-  [E0331](evidence/0331-usb-lane-local-queue-vs-sync-callback.md),
-  [E0330](evidence/0330-libosal-queue-object-layout.md),
-  [E0329](evidence/0329-libosal-receive-queue-protocol.md).
-- Done: `--uipc-sync-callback-delivery kernel-origin` delivers pending messages to
-  `flags=1` registrations on the original WAIT_CB proxy path; experiment e0684
-  shows the original callback h4109 executing and completing without fault.
-- Do: decode callback pointers 1447342303 (h4109) and 1447373447 (h4110) in live
-  `libUsbControl`, learn the expected packet fields and the downstream post path
-  into local queue `0x00CA8192`; then re-deliver with the decoded fields and
-  instrument `UsbControl::ProcessMsg` / `MsgId2EventId` / FSM dispatch.
+- Boundary: **new target — libosal local-queue post** for `0x00CA8192`
+  (`libosal_local_queue_post_unmodelled`). The adjustment lane is decoded and does
+  not carry SETCONFIG.
+- Context: [E0334](evidence/0334-sync-callback-lane-is-usb-adjustment.md),
+  [E0333](evidence/0333-sync-callback-packet-format.md),
+  [E0332](evidence/0332-sync-callback-delivery-first-invocation.md),
+  [E0331](evidence/0331-usb-lane-local-queue-vs-sync-callback.md).
+- Done: `0x00CA0288` is the USB adjustment channel
+  (`UFW::AdjBase::funcOsalSyncCb`, 0x140-byte `OsalRequestPacket`, id 0x0701;
+  `usb_sync_callback.py`); `0x00CA01A4` is `UsbControl::funcInputGetCb`.
+  `--uipc-inject-objmsg-packet-hex` + `--trace-usbcontrol-dispatch` exist, and
+  e0685 exercised the ADJ packet ABI.
+- Do: model the original in-process post to local queue `0x00CA8192` (queue object
+  update + futex wake, per E0329/E0330) as an opt-in contract, deliver the decoded
+  ObjMsg envelope through it, and observe
+  `preProcess -> PostMsg -> RcvMsg -> ProcessMsg -> DispatchEvent` (event 0x13).
 - Acceptance: the original code posts and consumes a message and FSM event `0x13`
   is observed without host-side fabrication, or a precise new boundary is
   recorded. Keep default baselines unchanged.
-- Files: `guest_uipc.py`, `interpreter_probe.py`,
+- Files: `guest_uipc.py`, `interpreter_probe.py`, `usb_sync_callback.py`,
   `tools/research/experiment_ui_boot.py`, `tests/test_sync_callback_delivery.py`.
 - Difficulty: medium.
 

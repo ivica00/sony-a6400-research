@@ -7,7 +7,7 @@ test is arranged. No camera writes or mode switches were performed for this chan
 ## Launch
 
 After selecting USB Connection -> PC Remote on the camera, run
-`launch_cinemahud_ptp.bat`, then open http://127.0.0.1:8080/ .
+`scripts/launch_cinemahud_ptp.bat`, then open http://127.0.0.1:8080/ .
 The launcher selects PTP explicitly and never launches the UVC module/feeder.
 MSC debugger access is unavailable while using PC Remote.
 

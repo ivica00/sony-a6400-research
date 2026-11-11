@@ -37,6 +37,8 @@ def main():
                         help='Explicit historical test policy; uses an unowned fixed RAM window')
     parser.add_argument('--shared-ptp-enumeration-candidate',action='store_true',
                         help='Build OFFLINE shared PTP/UVC enumeration candidate; video START/submission disabled')
+    parser.add_argument('--composite-transport',action='store_true',
+                        help='Shared candidate with real UVC transport (no ENUMERATION_ONLY, real START/UPDATE/ENABLE/WAIT)')
     parser.add_argument('--trace-control',action='store_true',help='Bounded descriptor/native-ioctl logging; no extra kernel hooks')
     parser.add_argument('--producer-admission',action='store_true',
                         help='Opt-in producer admission ioctl (0x4008f004); Update/ENABLE/WAIT stay rejected')
@@ -51,10 +53,14 @@ def main():
         parser.error('--teardown-unconfigure-first requires --shared-ptp-enumeration-candidate')
     if args.liveview_consistency and not args.shared_ptp_enumeration_candidate:
         parser.error('--liveview-consistency requires --shared-ptp-enumeration-candidate')
+    if args.composite_transport and not args.shared_ptp_enumeration_candidate:
+        parser.error('--composite-transport requires --shared-ptp-enumeration-candidate')
     if args.shared_ptp_enumeration_candidate:
         if args.experimental_fixed_buffer or args.native_buffer_allocation:
             parser.error('Shared enumeration candidate requires owned coherent allocation')
-        args.coherent_buffer_allocation=True;args.start_probe_only=True
+        args.coherent_buffer_allocation=True
+        if not args.composite_transport:
+            args.start_probe_only=True
     if sum([args.native_buffer_allocation,args.coherent_buffer_allocation,
             args.experimental_fixed_buffer])>1:
         parser.error('Choose one native allocator policy')
@@ -189,6 +195,8 @@ def main():
     ]
     if args.start_probe_only:
         cflags.append('-DA6400_UVC_START_PROBE_ONLY=1')
+    if args.composite_transport:
+        cflags.append('-DA6400_COMPOSITE_TRANSPORT=1')
     if args.trace_control:
         if not args.shared_ptp_enumeration_candidate:parser.error('--trace-control requires shared candidate')
         cflags.append('-DA6400_UVC_TRACE_CONTROL=1')
@@ -196,10 +204,16 @@ def main():
         cflags.append('-DA6400_UVC_COHERENT_ALLOC=1')
     legacy_flags=[]
     if args.shared_ptp_enumeration_candidate:
-        cflags.append('-DA6400_UVC_ENUMERATION_ONLY=1')
-        legacy_flags=['-Da6400_uvc_gadgetcore_register_hook=a6400_legacy_register_hook',
-                      '-Da6400_uvc_gadgetcore_unregister_hook=a6400_legacy_unregister_hook',
-                      '-Da6400_uvc_video_core_ioctl=a6400_uvc_legacy_dma_ioctl']
+        if not args.composite_transport:
+            cflags.append('-DA6400_UVC_ENUMERATION_ONLY=1')
+            legacy_flags=['-Da6400_uvc_gadgetcore_register_hook=a6400_legacy_register_hook',
+                          '-Da6400_uvc_gadgetcore_unregister_hook=a6400_legacy_unregister_hook',
+                          '-Da6400_uvc_video_core_ioctl=a6400_uvc_legacy_dma_ioctl']
+        else:
+            # Transport build keeps the shared register hooks and only needs the
+            # legacy DMA ioctl alias that the shared ioctl forwards transport
+            # commands to.
+            legacy_flags=['-Da6400_uvc_video_core_ioctl=a6400_uvc_legacy_dma_ioctl']
     if args.producer_admission:
         cflags.append('-DA6400_UVC_PRODUCER_ADMISSION=1')
     if args.teardown_unconfigure_first:
@@ -210,7 +224,7 @@ def main():
     run('arm-linux-gnueabi-gcc', [*cflags, '-c', rel(bridge_src), '-o', rel(compiled_bridge)])
     extra_objects=[];extra_sources=[]
     if args.shared_ptp_enumeration_candidate:
-        names=['uvc_ptp_mode_gate','uvc_ptp_ioctl_guard','uvc_ptp_stop_attest','uvc_ptp_route_lease','uvc_ptp_code_sync','uvc_ptp_route_dryrun','uvc_ptp_entry_hook','uvc_ptp_descriptors','uvc_ptp_descriptor_lease','uvc_ptp_adapter','uvc_ptp_session','uvc_ptp_native_backend','uvc_module_self_ref','uvc_ptp_module_shim']
+        names=['uvc_ptp_mode_gate','uvc_ptp_ioctl_guard','uvc_ptp_stop_attest','uvc_ptp_route_lease','uvc_ptp_code_sync','uvc_ptp_route_dryrun','uvc_ptp_entry_hook','uvc_ptp_descriptors','uvc_ptp_descriptor_lease','uvc_ptp_adapter','uvc_ptp_soft_disconnect','uvc_ptp_session','uvc_ptp_native_backend','uvc_module_self_ref','uvc_ptp_module_shim']
         if args.producer_admission:
             names += ['uvc_frame_validate','uvc_producer_admission','uvc_producer_submit']
         for name in names:

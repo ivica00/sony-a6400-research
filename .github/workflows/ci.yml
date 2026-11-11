@@ -16,7 +16,21 @@ jobs:
           python-version: '3.11'
 
       - name: Byte-compile Python sources
-        run: python -m compileall -q src tools tests
+        run: python -m compileall -q src tools tests legacy
+
+      - name: Install offline test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Repository structure, target profiles and status synchronization
+        run: >-
+          python -m unittest
+          tests.test_repository_layout
+          tests.test_target_profiles
+          tests.test_research_status_sync
+          -v
+
+      - name: Verify the status card matches its snapshot
+        run: python -m tools.research.render_research_status --check
 
       - name: Reject accidental large tracked files
         run: |
@@ -30,10 +44,30 @@ jobs:
             exit 1
           fi
 
-      - name: Verify UVC/PTP contributor docs exist
+      - name: Verify contributor docs and layout exist
         run: |
           test -f docs/CONTRIBUTING_UVC_PTP.md
           test -f docs/UVC_PTP_STATUS.md
+          test -f docs/ADDING_A_BIONZX_CAMERA.md
+          test -f docs/REPOSITORY.md
+          test -f docs/images/research-status.svg
+          test -f scripts/launch_cinemahud_ptp.bat
+          test -f scripts/launch_cinemahud_android.ps1
+          test -f scripts/launch_cinema_mpv.bat
+          test -f scripts/start_camera_shell.bat
           test -f .github/ISSUE_TEMPLATE/uvc-ptp-task.yml
           grep -q 'CONTRIBUTING_UVC_PTP' README.md
           grep -q 'CONTRIBUTING_UVC_PTP' CONTRIBUTING.MD
+          grep -q 'ADDING_A_BIONZX_CAMERA' README.md
+          grep -q 'ADDING_A_BIONZX_CAMERA' CONTRIBUTING.MD
+
+      - name: Verify no forwarding shims returned to the root
+        run: |
+          for name in analyze_hardware_drivers.py backup_camera.py check_camera.py \
+                      cxd90045_gui_runner.py cxd90045_hle_emulator.py firmware_analyzer.py \
+                      sony_gui_simulator.py test_authentic_screens.py unpack_firmware.py; do
+            if [ -e "$name" ]; then
+              echo "removed forwarding shim is back in the repository root: $name" >&2
+              exit 1
+            fi
+          done
