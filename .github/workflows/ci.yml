@@ -1,0 +1,39 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  repository-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Byte-compile Python sources
+        run: python -m compileall -q src tools tests
+
+      - name: Reject accidental large tracked files
+        run: |
+          git ls-files -z | xargs -0 -n1 --no-run-if-empty stat -c '%s %n' \
+            | awk '$1 > 2097152 { print "tracked file larger than 2 MiB: " $2; exit 1 }'
+
+      - name: Reject tracked proprietary binaries
+        run: |
+          if git ls-files | grep -Ei '\.(so|ko|elf|bin|img|raw|dat|tar)$'; then
+            echo "proprietary binary extension tracked; see .gitignore" >&2
+            exit 1
+          fi
+
+      - name: Verify UVC/PTP contributor docs exist
+        run: |
+          test -f docs/CONTRIBUTING_UVC_PTP.md
+          test -f docs/UVC_PTP_STATUS.md
+          test -f .github/ISSUE_TEMPLATE/uvc-ptp-task.yml
+          grep -q 'CONTRIBUTING_UVC_PTP' README.md
+          grep -q 'CONTRIBUTING_UVC_PTP' CONTRIBUTING.MD
