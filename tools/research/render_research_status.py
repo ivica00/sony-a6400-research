@@ -20,6 +20,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
+import re
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -414,6 +416,65 @@ def _normalize(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+# --- README cache buster -----------------------------------------------------
+#
+# GitHub serves repository images from its /raw/ CDN with a five-minute max-age and
+# the README image URL stays identical across commits, so a refreshed dashboard can
+# keep showing a stale copy. The README link therefore carries a content-hash query
+# (``?v=<sha256 prefix>``) that this generator rewrites; every dashboard change gets a
+# new URL and both browsers and the CDN must fetch the new file. tests/
+# test_research_status_sync.py fails when the two disagree.
+README_PATH = ROOT / "README.md"
+IMAGE_LINK_RE = re.compile(
+    r"(!\[[^\]]*\]\()(docs/images/research-status\.svg)(\?v=[0-9a-f]+)?(\))"
+)
+
+
+def svg_cache_buster(svg_text: str) -> str:
+    """Deterministic content hash prefix for a rendered dashboard."""
+    payload = _normalize(svg_text).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+def readme_image_url(svg_text: str) -> str:
+    """The README image URL, including the current content hash."""
+    return f"docs/images/research-status.svg?v={svg_cache_buster(svg_text)}"
+
+
+def _single_image_match(readme_text: str):
+    matches = list(IMAGE_LINK_RE.finditer(_normalize(readme_text)))
+    if len(matches) != 1:
+        raise ValueError(
+            "README.md must embed docs/images/research-status.svg exactly once, "
+            f"found {len(matches)} occurrence(s)"
+        )
+    return matches[0]
+
+
+def readme_image_url_in(readme_text: str) -> str:
+    """The image URL the README currently embeds (raises if missing/ambiguous)."""
+    match = _single_image_match(readme_text)
+    return match.group(2) + (match.group(3) or "")
+
+
+def sync_readme_cache_buster(
+    svg_text: str, readme_path: Path = README_PATH, *, write: bool = True
+) -> tuple[str, str]:
+    """Rewrite the README image URL to the current hash; return ``(old, new)`` URLs."""
+    raw = readme_path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    text = _normalize(raw.decode("utf-8"))
+    match = _single_image_match(text)
+    old_url = match.group(2) + (match.group(3) or "")
+    new_url = readme_image_url(svg_text)
+    if write and old_url != new_url:
+        updated = IMAGE_LINK_RE.sub(
+            lambda found: f"{found.group(1)}{new_url}{found.group(4)}", text, count=1
+        )
+        readme_path.write_text(updated, encoding="utf-8", newline=newline)
+    return old_url, new_url
+
+
 def first_difference(expected: str, actual: str) -> str:
     """Human-readable first differing line for the drift report."""
     expected_lines = _normalize(expected).splitlines()
@@ -444,7 +505,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.write:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8", newline="\n")
+        old_url, new_url = sync_readme_cache_buster(rendered)
         print(f"wrote {args.output.relative_to(ROOT).as_posix()}")
+        if old_url != new_url:
+            print(f"pinned README image cache buster: {old_url} -> {new_url}")
         return 0
 
     if not args.output.is_file():
@@ -459,9 +523,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("run: python -m tools.research.render_research_status --write", file=sys.stderr)
         return 1
+    readme_url = readme_image_url_in(README_PATH.read_text(encoding="utf-8"))
+    expected_url = readme_image_url(rendered)
+    if readme_url != expected_url:
+        print(
+            f"README.md image cache buster is stale: {readme_url} (expected {expected_url})",
+            file=sys.stderr,
+        )
+        print("run: python -m tools.research.render_research_status --write", file=sys.stderr)
+        return 1
     print(
         f"{args.output.relative_to(ROOT).as_posix()} is current "
-        f"({TELEMETRY.latest_evidence}, {TELEMETRY.test_count} tests, {TELEMETRY.receipt_count} receipts)"
+        f"({TELEMETRY.latest_evidence}, {TELEMETRY.test_count} tests, "
+        f"{TELEMETRY.receipt_count} receipts, v={svg_cache_buster(rendered)})"
     )
     return 0
 

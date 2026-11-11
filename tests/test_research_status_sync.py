@@ -10,7 +10,14 @@ import unittest
 from pathlib import Path
 
 from tools.research.a6400_status_data import STATUS_SNAPSHOT, TELEMETRY
-from tools.research.render_research_status import first_difference, render_svg
+from tools.research.render_research_status import (
+    first_difference,
+    readme_image_url,
+    readme_image_url_in,
+    render_svg,
+    svg_cache_buster,
+    sync_readme_cache_buster,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
@@ -129,6 +136,19 @@ class TestResearchStatusSync(unittest.TestCase):
             self.assertRegex(card.date, r"^\d{4}-\d{2}-\d{2}$")
             self.assertTrue(card.tier, "every card must state its evidence tier")
             self.assertTrue(card.demonstrated and card.boundary)
+
+    def test_readme_image_url_pins_the_svg_cache_buster(self):
+        readme = _normalized_text(README)
+        embedded = readme_image_url_in(readme)
+        committed = _normalized_text(STATUS_SVG)
+        self.assertEqual(embedded, readme_image_url(committed))
+        self.assertEqual(embedded, readme_image_url(render_svg(TELEMETRY)))
+        self.assertRegex(embedded, r"^docs/images/research-status\.svg\?v=[0-9a-f]{12}$")
+        self.assertIn(f"?v={svg_cache_buster(committed)}", readme)
+
+    def test_cache_buster_sync_is_idempotent(self):
+        old_url, new_url = sync_readme_cache_buster(render_svg(TELEMETRY), write=False)
+        self.assertEqual(old_url, new_url, "README cache buster is stale; run --write")
 
     def test_readme_evidence_links_resolve(self):
         readme = _normalized_text(README)

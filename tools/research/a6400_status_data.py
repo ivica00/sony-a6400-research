@@ -235,7 +235,7 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
         tier="PHYSICAL, RAM-ONLY",
     ),
-    headline="1310 tests recorded passing | No verified emulator GUI frame",
+    headline="1312 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0332",
@@ -299,7 +299,7 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1310,
+        test_count=1312,
         recorded_at="2026-11-11",
         evidence_id="E0354",
         command="python -m unittest discover -s tests -q",

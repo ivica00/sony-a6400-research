@@ -39,10 +39,10 @@ and the architecture decision plus safe read-only DMA probe are recorded in
 [E0348](docs/evidence/0348-uvc-monitor-architecture-probe-and-reference-client.md) /
 [ARCHITECTURE_UVC_MONITOR.md](docs/ARCHITECTURE_UVC_MONITOR.md).
 
-Recorded suite: 1310 tests. Each result above is bounded by its own record; no UVC frame,
+Recorded suite: 1312 tests. Each result above is bounded by its own record; no UVC frame,
 no control write and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=3e6f2a8643af)
 
 ### Subsystem status matrix
 
@@ -59,7 +59,7 @@ no control write and no full firmware boot is claimed.
 | Native monitor / storage — physical | Original help and a fixed `IFSYS getdriveinfo A` reply verified; A: identified as SD | General command behaviour and competing-consumer ownership remain open; the diagnostic SD journal is unwritten | [E0234](docs/evidence/0234-ordinary-pcremote-ifsys-query-answered.md), [E0222](docs/evidence/0222-physical-sd-volume-device-association.md) |
 | Custom menu — authored demonstration | Our interface drawn on the camera display | Does not establish original Sony menu behaviour, navigation or settings — [photo](docs/images/framebuffer-camera-menu.png) | [authored demo](docs/images/framebuffer-camera-menu.png) |
 | Multi-device targets | Typed a6400 profile with sourced kernel symbols, UIPC queues and USB identity; ZV-E10 reference chain; stubs carry no claims | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [ADDING_A_BIONZX_CAMERA](docs/ADDING_A_BIONZX_CAMERA.md) |
-| Validation — local suite | 1310 tests pass offline, including structure, target-profile and documentation-sync contracts | Bounded contracts, not compatibility or deployment safety | [tests/](tests/README.md) |
+| Validation — local suite | 1312 tests pass offline, including structure, target-profile and documentation-sync contracts | Bounded contracts, not compatibility or deployment safety | [tests/](tests/README.md) |
 
 ## How to contribute (no camera required!)
 

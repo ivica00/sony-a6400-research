@@ -44,7 +44,7 @@ Run focused checks during implementation and the full suite after substantive co
 
 ## Documentation sync
 
-`README.md` and the generated `docs/images/research-status.svg` dashboard are checked against `STATUS_SNAPSHOT` / `TELEMETRY` in `tools/research/a6400_status_data.py`. When a milestone changes the latest evidence record, the evidence count or the recorded suite count, update the data module, regenerate the dashboard with `python -m tools.research.render_research_status --write`, and let `tests/test_research_status_sync.py` + `tests/test_research_status_dashboard.py` prove that the README, the dashboard and the inventory agree.
+`README.md` and the generated `docs/images/research-status.svg` dashboard are checked against `STATUS_SNAPSHOT` / `TELEMETRY` in `tools/research/a6400_status_data.py`. When a milestone changes the latest evidence record, the evidence count or the recorded suite count, update the data module, regenerate the dashboard with `python -m tools.research.render_research_status --write`, and let `tests/test_research_status_sync.py` + `tests/test_research_status_dashboard.py` prove that the README, the dashboard and the inventory agree. The generator also pins a content-hash query (`?v=...`) on the README image link, so a refreshed dashboard gets a new URL instead of a stale cached render.
 
 ## Physical experiments
 
