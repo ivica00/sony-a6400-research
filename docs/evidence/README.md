@@ -4,12 +4,13 @@ One record per hardware or software claim. Records are dated and are **not** rew
 when a later result supersedes them: the newer record says what changed.
 
 Current consolidated state: [README research status](../../README.md) and
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0353**, 2026-11-11).
+[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0354**, 2026-11-11).
 
 ## Latest records
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0354](0354-run-b-selector-accepts-084-renderstream-fails.md) | 2026-11-11 | Physical Run B/B2: the 0x84 selector accepts; RenderStream still fails; WPD cannot bind composite MI_00 |
 | [E0353](0353-run-a-teardown-success.md) | 2026-11-11 | Physical Run A: unconfigure-first soft disconnect returns the camera to Mass Storage without a battery pull |
 | [E0352](0352-offline-teardown-soft-disconnect-fix.md) | 2026-11-11 | Teardown root cause and clean unconfigure-first soft-disconnect sequencer (offline, Unicorn 12/12) |
 | [E0351](0351-offline-renderstream-verdict-and-crash-safe-logging.md) | 2026-11-11 | RenderStream failure ranked to START endpoint selection; crash-safe SD logging and host ETW ready |

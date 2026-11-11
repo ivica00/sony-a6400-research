@@ -2,7 +2,7 @@
 #include "uvc_ptp_adapter.h"
 #include "uvc_ptp_soft_disconnect.h"
 
-/* E0360 Run B pre-flight instrumentation: the shared ENDPOINT selector was
+/* E0354 Run B pre-flight instrumentation: the shared ENDPOINT selector was
  * silent; log why it returns 0 so a single physical run can distinguish the
  * five live preconditions. Reporting only: no control flow changes. */
 extern int printk(const char *fmt, ...);

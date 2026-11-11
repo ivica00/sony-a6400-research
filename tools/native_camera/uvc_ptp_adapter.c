@@ -1,7 +1,7 @@
 #include "uvc_ptp_adapter.h"
 _Static_assert(sizeof(void *)==4, "ARM32 endpoint ABI");
 
-/* E0360 Run B pre-flight instrumentation: make the live START selector audible.
+/* E0354 Run B pre-flight instrumentation: make the live START selector audible.
  * The selector fails closed and, before this change, silently returned 0 for any
  * of the five live preconditions, which the bridge turns into "skip reference
  * START". These printks only report values; no control flow, return value or
