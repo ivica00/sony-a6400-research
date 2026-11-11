@@ -1,38 +1,403 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="810" viewBox="0 0 1000 810" role="img" aria-labelledby="title desc">
-<title id="title">Sony a6400 research status through E0353</title>
-<desc id="desc">1283 tests recorded passing. Offline original-code execution, read-only physical observation and authored demonstrations are reported separately. No emulator GUI frame and no UVC frame are claimed.</desc>
-<rect width="1000" height="810" rx="16" fill="#0d1117" />
-<g font-family="Segoe UI,Arial,sans-serif">
-<text x="28" y="42" fill="#f0f6fc" font-size="26" font-weight="700">Research status</text>
-<text x="740" y="40" fill="#c9d1d9" font-size="17" font-weight="400">2026-11-11 | E0353</text>
-<text x="28" y="78" fill="#36c88a" font-size="18" font-weight="400">1283 tests recorded passing | No verified emulator GUI frame</text>
-<rect x="28" y="103" width="944" height="152" rx="8" fill="#161b22" />
-<text x="44" y="125" fill="#9da7b3" font-size="12" font-weight="400">OFFLINE ORIGINAL CODE</text>
-<text x="44" y="151" fill="#f0f6fc" font-size="19" font-weight="700">UIPC / USB</text>
-<text x="44" y="175" fill="#c9d1d9" font-size="14" font-weight="400">Kernel-to-user sync callback delivery runs the original h4109 callback and completes it without</text>
-<text x="44" y="195" fill="#c9d1d9" font-size="14" font-weight="400">fault.</text>
-<text x="44" y="219" fill="#f0bd55" font-size="14" font-weight="400">Open: ADJ packet format, the 0x0A4000 producer and the USB FSM transition</text>
-<text x="44" y="239" fill="#f0bd55" font-size="14" font-weight="400">(sync_callback_packet_format_unmodelled).</text>
-<rect x="28" y="267" width="944" height="152" rx="8" fill="#161b22" />
-<text x="44" y="289" fill="#9da7b3" font-size="12" font-weight="400">READ-ONLY PHYSICAL + OPT-IN MODEL</text>
-<text x="44" y="315" fill="#f0f6fc" font-size="19" font-weight="700">GPES engine / display</text>
-<text x="44" y="339" fill="#c9d1d9" font-size="14" font-weight="400">GPES BAR and IRQ contracts decoded from read-only observations; the opt-in engine model reaches a</text>
-<text x="44" y="359" fill="#c9d1d9" font-size="14" font-weight="400">second original guest signal.</text>
-<text x="44" y="383" fill="#f0bd55" font-size="14" font-weight="400">Open: keyed 0x820E completion, guest condition release, OSD mapping and the rasterizer.</text>
-<rect x="28" y="431" width="944" height="152" rx="8" fill="#161b22" />
-<text x="44" y="453" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL OBSERVATION</text>
-<text x="44" y="479" fill="#f0f6fc" font-size="19" font-weight="700">PTP / composite USB</text>
-<text x="44" y="503" fill="#c9d1d9" font-size="14" font-weight="400">Pipelined PTP liveview: a foreign GET_JPEG sees real frames from the DMM unit at 29.8 FPS while the</text>
-<text x="44" y="523" fill="#c9d1d9" font-size="14" font-weight="400">host stream runs.</text>
-<text x="44" y="547" fill="#f0bd55" font-size="14" font-weight="400">Open: the composite enumerates (E0350) but DirectShow cannot connect the UVC pins, so no UVC frame</text>
-<text x="44" y="567" fill="#f0bd55" font-size="14" font-weight="400">is claimed.</text>
-<rect x="28" y="595" width="944" height="152" rx="8" fill="#161b22" />
-<text x="44" y="617" fill="#9da7b3" font-size="12" font-weight="400">PHYSICAL, RAM-ONLY</text>
-<text x="44" y="643" fill="#f0f6fc" font-size="19" font-weight="700">Track B teardown (physical)</text>
-<text x="44" y="667" fill="#c9d1d9" font-size="14" font-weight="400">Run A: fresh-boot DMA window, INIT, composite enumeration, clean unconfigure-first soft disconnect</text>
-<text x="44" y="687" fill="#c9d1d9" font-size="14" font-weight="400">and reconnect; MSC returned without a battery pull.</text>
-<text x="44" y="711" fill="#f0bd55" font-size="14" font-weight="400">Open: UVC frames and DirectShow RenderStream; next is Run B with a host stream, ETW capture and the</text>
-<text x="44" y="731" fill="#f0bd55" font-size="14" font-weight="400">receipt-fixed daemon.</text>
-<text x="28" y="786" fill="#9da7b3" font-size="15" font-weight="400">Independent results, not a compatibility percentage. Evidence and limits are linked from README.md.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="966" viewBox="0 0 920 966" role="img" aria-labelledby="title desc">
+<title id="title">Status &amp; Bounded Telemetry — 2026-11-11 | E0354</title>
+<desc id="desc">Status &amp; Bounded Telemetry: 1,310 tests recorded passing, 353 evidence receipts through E0354. Bounded telemetry, not a firmware compatibility percentage.</desc>
+<rect width="920" height="966" rx="16" fill="#0d1117" />
+<g>
+<text x="24" y="38" fill="#f0f6fc" font-size="21" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Status &amp; Bounded Telemetry</text>
+<text x="24" y="54" fill="#9da7b3" font-size="9" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Sony a6400 · BIONZ X CXD90045 · bounded contract inventories — not a compatibility score</text>
+<rect x="760.82" y="22" width="135.18" height="22" rx="11" fill="#161b22" stroke="#30363d" stroke-width="1" />
+<text x="887" y="38" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">2026-11-11 | E0354</text>
+<rect x="24" y="68" width="197.818" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="124.32" y="68" width="97.4976" height="26" rx="5" fill="#2ea043" />
+<text x="33" y="85" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">contract tests</text>
+<text x="133.32" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">1,310 passing</text>
+<rect x="229.818" y="68" width="209.342" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="347.778" y="68" width="91.3824" height="26" rx="5" fill="#1f6feb" />
+<text x="238.818" y="85" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">evidence receipts</text>
+<text x="356.778" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">353 recorded</text>
+<rect x="447.16" y="68" width="251.914" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="571" y="68" width="128.074" height="26" rx="5" fill="#2ea043" />
+<text x="456.16" y="85" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">teardown sequencer</text>
+<text x="580" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">9/9 phases (0x1ff)</text>
+<rect x="24" y="100" width="174.062" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="106.68" y="100" width="91.3824" height="26" rx="5" fill="#d29922" />
+<text x="33" y="117" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">task phases</text>
+<text x="115.68" y="117" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">1/8 observed</text>
+<rect x="206.062" y="100" width="234.274" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312.262" y="100" width="128.074" height="26" rx="5" fill="#8957e5" />
+<text x="215.062" y="117" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">BIONZ X targets</text>
+<text x="321.262" y="117" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">ILCE-6400 + ZV-E10</text>
+<rect x="24" y="144" width="426" height="488" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1" />
+<rect x="470" y="144" width="426" height="488" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1" />
+<text x="40" y="166" fill="#f0f6fc" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Firmware &amp; Subsystem Contract Map</text>
+<text x="40" y="182" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">bounded inventory · cell = tracked item</text>
+<text x="486" y="166" fill="#f0f6fc" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">UVC / PTP / Teardown Pipeline Cells</text>
+<text x="486" y="182" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">bounded pipeline inventory</text>
+<text x="40" y="201" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">UIPC / OSAL</text>
+<text x="434" y="201" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">13/14 verified · 1 boundary</text>
+<text x="40" y="211" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0310 · E0331</text>
+<rect x="40" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="56" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="72" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="88" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="104" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="120" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="136" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="152" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="168" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="184" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="200" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="216" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="232" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="248" y="214" width="13" height="13" rx="2" fill="#d29922" />
+<text x="40" y="251" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">USB / Gadgetcore</text>
+<text x="434" y="251" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1/9 verified · 3 boundary</text>
+<text x="40" y="261" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0320 · E0323 · E0337 · E0353</text>
+<rect x="40" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="56" y="264" width="13" height="13" rx="2" fill="#1f6feb" />
+<rect x="72" y="264" width="13" height="13" rx="2" fill="#1f6feb" />
+<rect x="88" y="264" width="13" height="13" rx="2" fill="#1f6feb" />
+<rect x="104" y="264" width="13" height="13" rx="2" fill="#1f6feb" />
+<rect x="120" y="264" width="13" height="13" rx="2" fill="#1f6feb" />
+<rect x="136" y="264" width="13" height="13" rx="2" fill="#d29922" />
+<rect x="152" y="264" width="13" height="13" rx="2" fill="#d29922" />
+<rect x="168" y="264" width="13" height="13" rx="2" fill="#d29922" />
+<text x="40" y="301" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">DMM / JPEG</text>
+<text x="434" y="301" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">2/5 verified · 1 boundary</text>
+<text x="40" y="311" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0340 · E0349</text>
+<rect x="40" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="56" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="72" y="314" width="13" height="13" rx="2" fill="#1f6feb" />
+<rect x="88" y="314" width="13" height="13" rx="2" fill="#1f6feb" />
+<rect x="104" y="314" width="13" height="13" rx="2" fill="#d29922" />
+<text x="40" y="351" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">GPES / Display</text>
+<text x="434" y="351" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1/6 verified · 2 boundary</text>
+<text x="40" y="361" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0298 · E0313 · E0314</text>
+<rect x="40" y="364" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="56" y="364" width="13" height="13" rx="2" fill="#1f6feb" />
+<rect x="72" y="364" width="13" height="13" rx="2" fill="#d29922" />
+<rect x="88" y="364" width="13" height="13" rx="2" fill="#d29922" />
+<rect x="104" y="364" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="364" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<text x="40" y="401" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Boot Task Phases (8)</text>
+<text x="434" y="401" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1/8 verified</text>
+<text x="40" y="411" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: task94_phases</text>
+<rect x="40" y="414" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="56" y="414" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="414" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="414" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="414" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="414" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="414" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="414" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<text x="40" y="451" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Static Plugins (198)</text>
+<text x="434" y="451" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">0/198 verified</text>
+<text x="40" y="461" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: imdb_plugins</text>
+<rect x="40" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="168" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="184" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="200" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="216" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="232" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="248" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="264" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="296" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="328" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="344" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="360" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="376" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="392" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="408" y="464" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="40" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="168" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="184" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="200" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="216" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="232" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="248" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="264" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="296" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="328" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="344" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="360" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="376" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="392" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="408" y="480" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="40" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="168" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="184" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="200" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="216" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="232" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="248" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="264" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="296" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="328" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="344" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="360" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="376" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="392" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="408" y="496" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="40" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="168" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="184" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="200" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="216" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="232" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="248" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="264" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="296" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="328" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="344" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="360" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="376" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="392" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="408" y="512" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="40" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="168" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="184" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="200" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="216" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="232" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="248" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="264" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="296" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="328" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="344" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="360" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="376" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="392" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="408" y="528" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="40" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="168" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="184" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="200" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="216" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="232" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="248" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="264" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="296" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="328" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="344" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="360" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="376" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="392" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="408" y="544" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="40" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="168" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="184" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="200" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="216" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="232" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="248" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="264" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="296" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="328" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="344" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="360" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="376" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="392" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="408" y="560" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="40" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="136" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="152" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="168" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="184" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="200" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="216" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="232" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="248" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="264" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="296" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="328" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="344" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="360" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="376" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="392" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="408" y="576" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="40" y="592" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="56" y="592" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="72" y="592" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="88" y="592" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="104" y="592" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="120" y="592" width="13" height="13" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<text x="486" y="201" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Track A: PTP LiveView &amp; 0x9207 Controls</text>
+<text x="880" y="201" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">6/6 verified</text>
+<text x="486" y="211" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0151 · E0343 · E0349</text>
+<rect x="486" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="502" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="518" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="534" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="550" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="566" y="214" width="13" height="13" rx="2" fill="#2ea043" />
+<text x="486" y="251" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Teardown 9-Phase Sequencer (0x1ff)</text>
+<text x="880" y="251" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">9/9 verified</text>
+<text x="486" y="261" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0353</text>
+<rect x="486" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="502" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="518" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="534" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="550" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="566" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="582" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="598" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="614" y="264" width="13" height="13" rx="2" fill="#2ea043" />
+<text x="486" y="301" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">EP0 Class / Probe / Commit</text>
+<text x="880" y="301" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">12/12 verified</text>
+<text x="486" y="311" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0351</text>
+<rect x="486" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="502" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="518" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="534" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="550" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="566" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="582" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="598" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="614" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="630" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="646" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="662" y="314" width="13" height="13" rx="2" fill="#2ea043" />
+<text x="486" y="351" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">DMM 0x0167046a Frame Source</text>
+<text x="880" y="351" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">4/4 verified</text>
+<text x="486" y="361" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0349</text>
+<rect x="486" y="364" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="502" y="364" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="518" y="364" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="534" y="364" width="13" height="13" rx="2" fill="#2ea043" />
+<text x="486" y="401" fill="#f0f6fc" font-size="10" font-weight="600" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Track B: DirectShow Pin / 0x84 Start</text>
+<text x="880" y="401" fill="#8b949e" font-size="9" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1/3 verified · 2 boundary</text>
+<text x="486" y="411" fill="#9da7b3" font-size="8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">source: E0350 · E0354</text>
+<rect x="486" y="414" width="13" height="13" rx="2" fill="#2ea043" />
+<rect x="502" y="414" width="13" height="13" rx="2" fill="#d29922" />
+<rect x="518" y="414" width="13" height="13" rx="2" fill="#d29922" />
+<text x="486" y="620" fill="#8b949e" font-size="9" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">34 pipeline cells · 32 verified · 2 active boundaries</text>
+<rect x="24" y="650" width="426" height="246" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1" />
+<rect x="470" y="650" width="426" height="246" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1" />
+<text x="40" y="672" fill="#f0f6fc" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Verified Contracts by Subsystem</text>
+<text x="40" y="688" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">bounded ratios · green = verified, amber = active</text>
+<text x="486" y="672" fill="#f0f6fc" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Open Boundaries by Area</text>
+<text x="486" y="688" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">tracked gates · sorted by count</text>
+<text x="40" y="706" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">USB Soft-Disconnect Teardown</text>
+<text x="434" y="706" fill="#8b949e" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">9/9 phases (0x1ff)</text>
+<rect x="40" y="712" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="40" y="712" width="394" height="7" rx="3.5" fill="#2ea043" />
+<text x="40" y="736" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">PTP LiveView + 0x9207 Controls</text>
+<text x="434" y="736" fill="#8b949e" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">verified · 29.8 FPS</text>
+<rect x="40" y="742" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="40" y="742" width="394" height="7" rx="3.5" fill="#2ea043" />
+<text x="40" y="766" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">EP0 UVC Class &amp; Descriptor Audit</text>
+<text x="434" y="766" fill="#8b949e" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">117/117 checks</text>
+<rect x="40" y="772" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="40" y="772" width="394" height="7" rx="3.5" fill="#2ea043" />
+<text x="40" y="796" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">UIPC / MWF Sync Callback Path</text>
+<text x="434" y="796" fill="#8b949e" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">h4109 reached</text>
+<rect x="40" y="802" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="40" y="802" width="197" height="7" rx="3.5" fill="#2ea043" />
+<rect x="237" y="802" width="197" height="7" rx="3.5" fill="#d29922" />
+<text x="40" y="826" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">GPES / SMAPH-S30 Display Model</text>
+<text x="434" y="826" fill="#8b949e" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">OSD A/B + BAR/IRQ</text>
+<rect x="40" y="832" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="40" y="832" width="197" height="7" rx="3.5" fill="#2ea043" />
+<rect x="237" y="832" width="98.5" height="7" rx="3.5" fill="#d29922" />
+<text x="40" y="856" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">im.elf Boot Task Phases</text>
+<text x="434" y="856" fill="#8b949e" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1/8 phases</text>
+<rect x="40" y="862" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="40" y="862" width="49.25" height="7" rx="3.5" fill="#2ea043" />
+<text x="486" y="706" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">GPES / Display (condvar, 0x820E, OSD map)</text>
+<text x="880" y="706" fill="#d29922" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">4 open</text>
+<rect x="486" y="712" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="486" y="712" width="394" height="7" rx="3.5" fill="#d29922" />
+<text x="486" y="736" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Boot / Runtime (tzset, THREAD_APP, plugins)</text>
+<text x="880" y="736" fill="#d29922" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">3 open</text>
+<rect x="486" y="742" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="486" y="742" width="295.5" height="7" rx="3.5" fill="#d29922" />
+<text x="486" y="766" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Track B UVC (DirectShow pins, WPD MI_00)</text>
+<text x="880" y="766" fill="#d29922" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">3 open</text>
+<rect x="486" y="772" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="486" y="772" width="295.5" height="7" rx="3.5" fill="#d29922" />
+<text x="486" y="796" fill="#c9d1d9" font-size="10" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">UIPC / USB FSM (h4109 packet, 0x0A4000)</text>
+<text x="880" y="796" fill="#d29922" font-size="9.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">3 open</text>
+<rect x="486" y="802" width="394" height="7" rx="3.5" fill="#21262d" />
+<rect x="486" y="802" width="295.5" height="7" rx="3.5" fill="#d29922" />
+<text x="486" y="884" fill="#8b949e" font-size="9" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">13 tracked open boundaries across 4 areas</text>
+<rect x="24" y="911" width="10" height="10" rx="2" fill="#2ea043" />
+<text x="40" y="920" fill="#c9d1d9" font-size="9.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Verified</text>
+<rect x="104.56" y="911" width="10" height="10" rx="2" fill="#1f6feb" />
+<text x="120.56" y="920" fill="#c9d1d9" font-size="9.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Decoded / Read-Only</text>
+<rect x="243.64" y="911" width="10" height="10" rx="2" fill="#d29922" />
+<text x="259.64" y="920" fill="#c9d1d9" font-size="9.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Active Boundary</text>
+<rect x="361.44" y="911" width="10" height="10" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<text x="377.44" y="920" fill="#c9d1d9" font-size="9.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Unmapped Inventory</text>
+<text x="24" y="944" fill="#9da7b3" font-size="9.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">* Counts reflect bounded contract inventories in a6400_status_data.py, not an overall firmware compatibility percentage.</text>
 </g>
 </svg>

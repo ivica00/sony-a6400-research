@@ -44,7 +44,7 @@ Run focused checks during implementation and the full suite after substantive co
 
 ## Documentation sync
 
-`README.md` and `docs/images/research-status.svg` are generated/checked against `STATUS_SNAPSHOT` in `tools/research/a6400_status_data.py`. When a milestone changes the latest evidence record or the recorded suite count, update the snapshot, regenerate the card with `python -m tools.research.render_research_status --write`, and let `tests/test_research_status_sync.py` prove the three agree.
+`README.md` and the generated `docs/images/research-status.svg` dashboard are checked against `STATUS_SNAPSHOT` / `TELEMETRY` in `tools/research/a6400_status_data.py`. When a milestone changes the latest evidence record, the evidence count or the recorded suite count, update the data module, regenerate the dashboard with `python -m tools.research.render_research_status --write`, and let `tests/test_research_status_sync.py` + `tests/test_research_status_dashboard.py` prove that the README, the dashboard and the inventory agree.
 
 ## Physical experiments
 

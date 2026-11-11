@@ -1,4 +1,4 @@
-﻿import struct
+import struct
 import unittest
 import sys
 from pathlib import Path

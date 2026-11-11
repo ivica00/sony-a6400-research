@@ -1,4 +1,4 @@
-﻿import struct
+import struct
 import unittest
 
 from src.a6400.execution.zve10_uvc_enablement import (

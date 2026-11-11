@@ -9,7 +9,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tools.research.a6400_status_data import STATUS_SNAPSHOT
+from tools.research.a6400_status_data import STATUS_SNAPSHOT, TELEMETRY
 from tools.research.render_research_status import first_difference, render_svg
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +18,7 @@ STATUS_SVG = ROOT / "docs" / "images" / "research-status.svg"
 EVIDENCE_DIR = ROOT / "docs" / "evidence"
 
 EVIDENCE_ID_RE = re.compile(r"\bE(\d{4})\b")
-TEST_COUNT_RE = re.compile(r"(\d+)\s+tests?\b")
+TEST_COUNT_RE = re.compile(r"([\d][\d,]*)\s+tests?\b")
 EVIDENCE_FILE_RE = re.compile(r"^(\d{4})-[a-z0-9-]+\.md$")
 
 
@@ -31,7 +31,7 @@ def _evidence_ids(text):
 
 
 def _test_counts(text):
-    return sorted({int(match) for match in TEST_COUNT_RE.findall(text)})
+    return sorted({int(match.replace(",", "")) for match in TEST_COUNT_RE.findall(text)})
 
 
 class TestResearchStatusSync(unittest.TestCase):
@@ -73,7 +73,7 @@ class TestResearchStatusSync(unittest.TestCase):
 
     def test_svg_is_the_generated_output(self):
         committed = _normalized_text(STATUS_SVG)
-        expected = render_svg(STATUS_SNAPSHOT)
+        expected = render_svg(TELEMETRY)
         if committed != expected:
             self.fail(
                 "docs/images/research-status.svg was not generated from STATUS_SNAPSHOT: "
@@ -82,8 +82,8 @@ class TestResearchStatusSync(unittest.TestCase):
             )
 
     def test_generator_is_deterministic(self):
-        first = render_svg(STATUS_SNAPSHOT)
-        self.assertEqual(first, render_svg(STATUS_SNAPSHOT))
+        first = render_svg(TELEMETRY)
+        self.assertEqual(first, render_svg(TELEMETRY))
         self.assertNotIn("\r", first)
         self.assertTrue(first.startswith("<svg "))
         self.assertTrue(first.endswith("\n"))

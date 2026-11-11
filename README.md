@@ -32,14 +32,14 @@ forward result is the **P1 probe**: a foreign `GET_JPEG` sees real DMM frames at
 while the host PTP stream keeps running
 ([E0349](docs/evidence/0349-p1-foreign-get-jpeg-succeeds-in-pc-remote.md)), and the
 composite itself enumerates as parent + PTP + Camera with DirectShow visible
-([E0350](docs/evidence/0350-trackb-transport-enumerates-but-renderstream-fails.md)). Run A then ran the unconfigure-first soft disconnect **on hardware**: the composite enumerated, the daemon exited clean, and Mass Storage returned without a battery pull ([E0353](docs/evidence/0353-run-a-teardown-success.md)).
+([E0350](docs/evidence/0350-trackb-transport-enumerates-but-renderstream-fails.md)). Run A then ran the unconfigure-first soft disconnect **on hardware**: the composite enumerated, the daemon exited clean, and Mass Storage returned without a battery pull ([E0353](docs/evidence/0353-run-a-teardown-success.md)). Run B then instrumented the live START selector: it **accepts** the composite endpoint (`ep=0x84`, dep flag set), so the strict-check relaxation is unnecessary; Run B2 with a real RenderStream attempt and USB ETW reproduced the DirectShow `RenderStream` failure, could not bind the composite MI_00 through WPD, and lost MSC again ([E0354](docs/evidence/0354-run-b-selector-accepts-084-renderstream-fails.md)).
 Earlier in the same window, kernel-to-user **sync callback delivery** ran the original
 h4109 callback to completion ([E0332](docs/evidence/0332-sync-callback-delivery-first-invocation.md)),
 and the architecture decision plus safe read-only DMA probe are recorded in
 [E0348](docs/evidence/0348-uvc-monitor-architecture-probe-and-reference-client.md) /
 [ARCHITECTURE_UVC_MONITOR.md](docs/ARCHITECTURE_UVC_MONITOR.md).
 
-Recorded suite: 1283 tests. Each result above is bounded by its own record; no UVC frame,
+Recorded suite: 1310 tests. Each result above is bounded by its own record; no UVC frame,
 no control write and no full firmware boot is claimed.
 
 ![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg)
@@ -54,12 +54,12 @@ no control write and no full firmware boot is claimed.
 | Display / GPU — physical capture + offline model | Camera OSD A/B confirmed as 640×480 RGBA4444; GPES BAR/IRQ contracts decoded; the opt-in engine model reaches a second original guest signal | Keyed `0x820E` completion, guest condition release, OSD mapping and the rasterizer remain open; no verified GUI frame | [E0298](docs/evidence/0298-safe-osd-capture-and-sugilite-correction.md), [E0313](docs/evidence/0313-readonly-physical-gpes-bar-and-grm-state.md), [E0314](docs/evidence/0314-gpes-bar-irq-contract-engine-model.md) |
 | PTP liveview — physical | Original PC Remote mode delivers real 1024×680 sensor JPEGs; a foreign `GET_JPEG` sees the same DMM frames at 29.8 FPS under host load | Simultaneous UVC + PTP with reliable teardown is not demonstrated | [E0349](docs/evidence/0349-p1-foreign-get-jpeg-succeeds-in-pc-remote.md), [E0151](docs/evidence/0151-pc-remote-liveview-and-uvc-verified.md) |
 | Composite USB / UVC — physical | Authored composite enumerates as parent + `MI_00` PTP + `MI_01` Camera, with DirectShow seeing an ILCE-6400 video device | DirectShow cannot connect the UVC pins (`trackb_directshow_pin_connect_unproven`); post-session MSC needed a power cycle; no UVC frame | [E0348](docs/evidence/0348-uvc-monitor-architecture-probe-and-reference-client.md), [E0350](docs/evidence/0350-trackb-transport-enumerates-but-renderstream-fails.md) |
-| Track B teardown — physical (Run A) | Nine-phase unconfigure-first soft disconnect ran on hardware: `[a6400_td] phases=1ff failed=9 reconnect=1`, stop verified at 181 TIDs, clean daemon exit, and **Mass Storage returned without a battery pull** (window enumeration parent + MI_00 + MI_01) | UVC frames are still unproven (no host liveview consumer in Run A; DirectShow RenderStream not retested) — next is Run B with host stream + ETW capture | [E0353](docs/evidence/0353-run-a-teardown-success.md), [E0352](docs/evidence/0352-offline-teardown-soft-disconnect-fix.md), [E0351](docs/evidence/0351-offline-renderstream-verdict-and-crash-safe-logging.md) |
+| Track B teardown — physical (Run A clean, Run B2 host-attempt) | Run A: nine-phase unconfigure-first soft disconnect, `[a6400_td] phases=1ff`, MSC returned without a battery pull. Run B: instrumented selector **accepted 0x84** (`flags=00000001`), clean teardown. Run B2: RenderStream still fails and MSC recovery needed a battery pull | EP0/pin root cause open; WPD cannot bind composite MI_00; ETW retained for offline analysis | [E0354](docs/evidence/0354-run-b-selector-accepts-084-renderstream-fails.md), [E0353](docs/evidence/0353-run-a-teardown-success.md) |
 | UVC transport — authored pattern | Static MJPEG 1280×720 at 29.9592 FPS over 180 frames; the ZV-E10 UVC chain is hash-pinned as reference | Sensor feeder unwired; the ZV-E10 UVC stack is **not enabled** on the a6400 and physical load is outside the read-only scope | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md), [E0322](docs/evidence/0322-zve10-uvc-overlay-plan.md) |
 | Native monitor / storage — physical | Original help and a fixed `IFSYS getdriveinfo A` reply verified; A: identified as SD | General command behaviour and competing-consumer ownership remain open; the diagnostic SD journal is unwritten | [E0234](docs/evidence/0234-ordinary-pcremote-ifsys-query-answered.md), [E0222](docs/evidence/0222-physical-sd-volume-device-association.md) |
 | Custom menu — authored demonstration | Our interface drawn on the camera display | Does not establish original Sony menu behaviour, navigation or settings — [photo](docs/images/framebuffer-camera-menu.png) | [authored demo](docs/images/framebuffer-camera-menu.png) |
 | Multi-device targets | Typed a6400 profile with sourced kernel symbols, UIPC queues and USB identity; ZV-E10 reference chain; stubs carry no claims | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [ADDING_A_BIONZX_CAMERA](docs/ADDING_A_BIONZX_CAMERA.md) |
-| Validation — local suite | 1283 tests pass offline, including structure, target-profile and documentation-sync contracts | Bounded contracts, not compatibility or deployment safety | [tests/](tests/README.md) |
+| Validation — local suite | 1310 tests pass offline, including structure, target-profile and documentation-sync contracts | Bounded contracts, not compatibility or deployment safety | [tests/](tests/README.md) |
 
 ## How to contribute (no camera required!)
 
@@ -130,8 +130,8 @@ experiments.
 | --- | --- |
 | `src/a6400/execution/` | Bounded guest execution and verified OSAL/UIPC/USB/GPU contracts |
 | `src/a6400/targets/` | `TargetProfile` schema, fail-closed validation and the multi-device registry |
-| `src/a6400/visualization/` | Status renderers (treemap PNG and the SVG card's data source) |
-| `tools/research/` | Analysis, original-code probes, experiment runners and the status generator |
+| `src/a6400/visualization/` | Treemap status renderer (PNG) used by the inventory data module |
+| `tools/research/` | Analysis, original-code probes, experiment runners and the telemetry-dashboard generator |
 | `tools/native_camera/` | Authored native helpers, module sources and the UVC/PTP transport work |
 | `probes/` | Bounded read-only ARM probe for other BIONZ X bodies (+ build/receipt harness) |
 | `tests/` | Contract, regression and repository-structure checks |

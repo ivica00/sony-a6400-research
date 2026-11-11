@@ -27,6 +27,7 @@ jobs:
           tests.test_repository_layout
           tests.test_target_profiles
           tests.test_research_status_sync
+          tests.test_research_status_dashboard
           -v
 
       - name: Verify the status card matches its snapshot

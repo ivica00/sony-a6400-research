@@ -16,6 +16,7 @@ suite count; it never converts them into a compatibility percentage.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -219,22 +220,22 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-11",
     latest=EvidenceRef(
-        evidence_id="E0353",
-        path="docs/evidence/0353-run-a-teardown-success.md",
+        evidence_id="E0354",
+        path="docs/evidence/0354-run-b-selector-accepts-084-renderstream-fails.md",
         date="2026-11-11",
-        title="Track B Run A: clean soft-disconnect teardown on hardware",
+        title="Run B/B2: selector accepts 0x84; RenderStream still fails",
         demonstrated=(
-            "First physical daemon session with the unconfigure-first soft disconnect: INIT, "
-            "composite enumeration (MI_00 + MI_01), [a6400_td] phases=1ff failed=9 reconnect=1, "
-            "clean exit, and Mass Storage returned without a battery pull."
+            "Instrumented START selector accepts the composite endpoint 0x84 with the dep flag set "
+            "(so the dep+0x4C relaxation is unnecessary); Run B teardown was clean. Run B2 with a real "
+            "RenderStream attempt reproduced the DirectShow pin failure under USB ETW capture."
         ),
         boundary=(
-            "Open: no UVC frame yet (no host liveview consumer in Run A) and DirectShow "
-            "RenderStream has not been retested; SD receipt content not yet read back."
+            "Open: EP0/pin failure point unanalysed, WPD cannot bind composite MI_00, and the Run B2 "
+            "host attempt lost MSC again (battery pull); no UVC frame."
         ),
         tier="PHYSICAL, RAM-ONLY",
     ),
-    headline="1283 tests recorded passing | No verified emulator GUI frame",
+    headline="1310 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0332",
@@ -282,25 +283,25 @@ STATUS_SNAPSHOT = StatusSnapshot(
             tier="PHYSICAL OBSERVATION",
         ),
         EvidenceRef(
-            evidence_id="E0353",
-            path="docs/evidence/0353-run-a-teardown-success.md",
+            evidence_id="E0354",
+            path="docs/evidence/0354-run-b-selector-accepts-084-renderstream-fails.md",
             date="2026-11-11",
-            title="Track B teardown (physical)",
+            title="Track B Run B/B2",
             demonstrated=(
-                "Run A: fresh-boot DMA window, INIT, composite enumeration, clean "
-                "unconfigure-first soft disconnect and reconnect; MSC returned without a battery pull."
+                "Instrumented selector accepts 0x84 (dep flag set); RenderStream still fails with the "
+                "audited module; USB ETW retained for offline EP0 analysis."
             ),
             boundary=(
-                "Open: UVC frames and DirectShow RenderStream; next is Run B with a host "
-                "stream, ETW capture and the receipt-fixed daemon."
+                "Open: EP0/pin root cause, WPD binding of composite MI_00, and MSC recovery after a "
+                "host RenderStream attempt."
             ),
             tier="PHYSICAL, RAM-ONLY",
         ),
     ),
     suite=SuiteRecord(
-        test_count=1283,
+        test_count=1310,
         recorded_at="2026-11-11",
-        evidence_id="E0353",
+        evidence_id="E0354",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(
@@ -318,3 +319,388 @@ def latest_evidence_id() -> str:
 def recorded_test_count() -> int:
     """Full-suite test count recorded for this documentation refresh."""
     return STATUS_SNAPSHOT.suite.test_count
+
+
+# ===========================================================================
+# Telemetry dashboard data (single source of truth for docs/images/research-status.svg)
+# ===========================================================================
+#
+# Every grid cell, bar, KPI value and boundary count below is derived from a tracked
+# inventory: the STATUS_SNAPSHOT above, the treemap category counters, the evidence
+# directory, or the multi-device target registry. Nothing is a percentage of "firmware
+# compatibility", and every group carries the evidence record that backs it.
+#
+# Cell states:
+#   verified  -> hardware-verified AND/OR an offline contract that passes
+#   decoded   -> read-only physical observation or a decoded contract
+#   boundary  -> partially modelled; the named gate is still open
+#   unmapped  -> uninitialised / unmapped inventory item
+
+CELL_VERIFIED = "verified"
+CELL_DECODED = "decoded"
+CELL_BOUNDARY = "boundary"
+CELL_UNMAPPED = "unmapped"
+CELL_STATES = (CELL_VERIFIED, CELL_DECODED, CELL_BOUNDARY, CELL_UNMAPPED)
+
+CELL_LABELS = {
+    CELL_VERIFIED: "Verified",
+    CELL_DECODED: "Decoded / Read-Only",
+    CELL_BOUNDARY: "Active Boundary",
+    CELL_UNMAPPED: "Unmapped Inventory",
+}
+
+DASHBOARD_TITLE = "Status & Bounded Telemetry"
+DASHBOARD_SUBTITLE = (
+    "Sony a6400 · BIONZ X CXD90045 · bounded contract inventories — not a compatibility score"
+)
+DASHBOARD_FOOTNOTE = (
+    "* Counts reflect bounded contract inventories in a6400_status_data.py, "
+    "not an overall firmware compatibility percentage."
+)
+
+# Recorded constants: each one is a fact stated by the named evidence record.
+TEARDOWN_PHASES = 9          # E0353: [a6400_td] phases=0x1ff = all nine phases ran
+TEARDOWN_PHASE_MASK = "0x1ff"
+EP0_CLASS_CASES = 12         # E0351: 12/12 Unicorn CLASS-path cases
+TRANSPORT_AUDIT_CHECKS = 117  # E0350: encoded transport audit, 117 checks
+PIPELINE_CORES = "3.0.27_nl-rt106+"
+
+EVIDENCE_RECORD_RE = re.compile(r"^(\d{4})-[^/]+\.md$")
+
+
+@dataclass(frozen=True)
+class KpiPill:
+    """One two-tone shield badge: dark label segment + coloured value segment."""
+
+    label: str
+    value: str
+    tone: str
+    source: str
+
+
+@dataclass(frozen=True)
+class CellGroup:
+    """A labelled sub-region of a cellular grid."""
+
+    title: str
+    cells: tuple[str, ...]
+    source: str
+
+    def __post_init__(self) -> None:
+        if not self.cells:
+            raise ValueError(f"cell group {self.title!r} has no cells")
+        for cell in self.cells:
+            if cell not in CELL_STATES:
+                raise ValueError(f"cell group {self.title!r} has unknown state {cell!r}")
+
+    def counts(self) -> dict[str, int]:
+        counts = {state: 0 for state in CELL_STATES}
+        for cell in self.cells:
+            counts[cell] += 1
+        return counts
+
+    def done(self) -> int:
+        return self.counts()[CELL_VERIFIED]
+
+    def total(self) -> int:
+        return len(self.cells)
+
+    def summary(self) -> str:
+        counts = self.counts()
+        text = f"{counts[CELL_VERIFIED]}/{len(self.cells)} verified"
+        if counts[CELL_BOUNDARY]:
+            text += f" · {counts[CELL_BOUNDARY]} boundary"
+        return text
+
+
+@dataclass(frozen=True)
+class ContractBar:
+    """A horizontal 'verified contracts' bar; ratios are bounded inventory counts."""
+
+    label: str
+    done: int
+    total: int
+    detail: str
+    source: str
+    amber: int = 0
+
+    def __post_init__(self) -> None:
+        if self.total <= 0 or not 0 <= self.done <= self.total:
+            raise ValueError(f"bar {self.label!r} has an invalid ratio {self.done}/{self.total}")
+        if not 0 <= self.amber <= self.total - self.done:
+            raise ValueError(f"bar {self.label!r} has an invalid amber segment {self.amber}")
+
+    def ratio(self) -> float:
+        return self.done / self.total
+
+
+@dataclass(frozen=True)
+class BoundaryGroup:
+    """Tracked open boundaries for one area; the bar length is len(items)."""
+
+    label: str
+    items: tuple[str, ...]
+    source: str
+
+    def __post_init__(self) -> None:
+        if not self.items:
+            raise ValueError(f"boundary group {self.label!r} has no items")
+        if len(set(self.items)) != len(self.items):
+            raise ValueError(f"boundary group {self.label!r} repeats an item")
+
+    @property
+    def count(self) -> int:
+        return len(self.items)
+
+
+@dataclass(frozen=True)
+class TelemetryDashboard:
+    """Frozen dashboard payload; the renderer owns geometry, this owns facts."""
+
+    title: str
+    subtitle: str
+    as_of: str
+    latest_evidence: str
+    test_count: int
+    receipt_count: int
+    pills: tuple[KpiPill, ...]
+    firmware_groups: tuple[CellGroup, ...]
+    pipeline_groups: tuple[CellGroup, ...]
+    pipeline_summary: str
+    contract_bars: tuple[ContractBar, ...]
+    boundaries: tuple[BoundaryGroup, ...]
+    legend: tuple[tuple[str, str], ...]
+    footnote: str
+
+    def description(self) -> str:
+        return (
+            f"{DASHBOARD_TITLE}: {self.test_count:,} tests recorded passing, "
+            f"{self.receipt_count} evidence receipts through {self.latest_evidence}. "
+            "Bounded telemetry, not a firmware compatibility percentage."
+        )
+
+
+def status_categories() -> dict[str, "Category"]:
+    """Treemap category counters keyed by category name (bounded inventories)."""
+    categories: dict[str, Category] = {}
+    for panel in get_a6400_project_status_data():
+        for category in panel.categories:
+            categories[category.name] = category
+    return categories
+
+
+def evidence_record_ids(root: Path | None = None) -> tuple[int, ...]:
+    """Numeric IDs of the evidence record files that exist on disk (gaps preserved)."""
+    base = root if root is not None else ROOT / "docs" / "evidence"
+    ids = []
+    for entry in sorted(base.iterdir()):
+        match = EVIDENCE_RECORD_RE.match(entry.name)
+        if match:
+            ids.append(int(match.group(1)))
+    return tuple(ids)
+
+
+def evidence_receipt_count(root: Path | None = None) -> int:
+    """How many dated evidence records are actually stored (not the highest ID)."""
+    return len(evidence_record_ids(root))
+
+
+def registered_target_label() -> str:
+    """Every target with real evidence, short model names, in registry order."""
+    from src.a6400.targets import STATUS_REFERENCE, STATUS_VERIFIED, list_profiles
+
+    names = []
+    for profile in list_profiles():
+        if profile.status in (STATUS_VERIFIED, STATUS_REFERENCE):
+            short = profile.model_name.replace("Sony ", "").split(" (")[0]
+            names.append(short)
+    if not names:
+        raise ValueError("the target registry has no verified or reference profile")
+    return " + ".join(names)
+
+
+def _build_telemetry() -> TelemetryDashboard:
+    categories = status_categories()
+    phases = categories["task94_phases"]
+    plugins = categories["imdb_plugins"]
+    display = categories["display_subsys"]
+    if plugins.total != 198:
+        raise ValueError(f"static-plugin inventory changed ({plugins.total}); update the dashboard copy")
+    if phases.total != 8:
+        raise ValueError(f"boot task-phase inventory changed ({phases.total}); update the dashboard copy")
+
+    receipt_count = evidence_receipt_count()
+    test_count = STATUS_SNAPSHOT.suite.test_count
+
+    pills = (
+        KpiPill("contract tests", f"{test_count:,} passing", "green", "offline suite receipts"),
+        KpiPill("evidence receipts", f"{receipt_count} recorded", "blue", "docs/evidence/"),
+        KpiPill("teardown sequencer", f"{TEARDOWN_PHASES}/{TEARDOWN_PHASES} phases ({TEARDOWN_PHASE_MASK})", "green", "E0353"),
+        KpiPill("task phases", f"{phases.done}/{phases.total} observed", "amber", "task94_phases"),
+        KpiPill("BIONZ X targets", registered_target_label(), "violet", "src/a6400/targets/"),
+    )
+
+    firmware_groups = (
+        CellGroup(
+            "UIPC / OSAL",
+            (CELL_VERIFIED,) * 13 + (CELL_BOUNDARY,),
+            "E0310 · E0331",
+        ),
+        CellGroup(
+            "USB / Gadgetcore",
+            (
+                CELL_VERIFIED,   # MSC soft-disconnect teardown
+                CELL_DECODED,    # gadgetcore ioctl dispatch -> FSM map
+                CELL_DECODED,    # otgcore descriptor table
+                CELL_DECODED,    # /dev/usb/event ABI + bridge
+                CELL_DECODED,    # device-node namespace (248:32/33)
+                CELL_DECODED,    # module inventory (usbg_video absent)
+                CELL_BOUNDARY,   # host enumeration / inbound SET_CONFIG
+                CELL_BOUNDARY,   # usbg_video buffer contract (ctx+0x2D)
+                CELL_BOUNDARY,   # ZV-E10 overlay declared, non-executable
+            ),
+            "E0320 · E0323 · E0337 · E0353",
+        ),
+        CellGroup(
+            "DMM / JPEG",
+            (
+                CELL_VERIFIED,   # P1 foreign GET_JPEG at 29.8 FPS
+                CELL_VERIFIED,   # DMM Rule5 / SET_PATH
+                CELL_DECODED,    # OSAL queue 0x0167046a
+                CELL_DECODED,    # DMM UnitType 0x274
+                CELL_BOUNDARY,   # sensor feeder still unwired
+            ),
+            "E0340 · E0349",
+        ),
+        CellGroup(
+            "GPES / Display",
+            (
+                CELL_VERIFIED,   # OSD A/B ptrace capture
+                CELL_DECODED,    # BAR / IRQ contract map
+                CELL_BOUNDARY,   # opt-in engine model (labelled)
+                CELL_BOUNDARY,   # keyed 0x820E completion
+                CELL_UNMAPPED,   # GPU rasterizer semantics
+                CELL_UNMAPPED,   # THREAD_APP / view tier
+            ),
+            "E0298 · E0313 · E0314",
+        ),
+        CellGroup(
+            "Boot Task Phases (8)",
+            (CELL_VERIFIED,) * phases.done + (CELL_UNMAPPED,) * (phases.total - phases.done),
+            "task94_phases",
+        ),
+        CellGroup(
+            "Static Plugins (198)",
+            (CELL_UNMAPPED,) * plugins.total,
+            "imdb_plugins",
+        ),
+    )
+
+    pipeline_groups = (
+        CellGroup(
+            "Track A: PTP LiveView & 0x9207 Controls",
+            (CELL_VERIFIED,) * 6,
+            "E0151 · E0343 · E0349",
+        ),
+        CellGroup(
+            "Teardown 9-Phase Sequencer (0x1ff)",
+            (CELL_VERIFIED,) * TEARDOWN_PHASES,
+            "E0353",
+        ),
+        CellGroup(
+            "EP0 Class / Probe / Commit",
+            (CELL_VERIFIED,) * EP0_CLASS_CASES,
+            "E0351",
+        ),
+        CellGroup(
+            "DMM 0x0167046a Frame Source",
+            (CELL_VERIFIED,) * 4,
+            "E0349",
+        ),
+        CellGroup(
+            "Track B: DirectShow Pin / 0x84 Start",
+            (CELL_VERIFIED,) + (CELL_BOUNDARY,) * 2,
+            "E0350 · E0354",
+        ),
+    )
+
+    pipeline_cells = sum(len(group.cells) for group in pipeline_groups)
+    pipeline_verified = sum(group.done() for group in pipeline_groups)
+    pipeline_boundary = sum(group.counts()[CELL_BOUNDARY] for group in pipeline_groups)
+    pipeline_summary = (
+        f"{pipeline_cells} pipeline cells · {pipeline_verified} verified · "
+        f"{pipeline_boundary} active boundaries"
+    )
+
+    contract_bars = (
+        ContractBar("USB Soft-Disconnect Teardown", TEARDOWN_PHASES, TEARDOWN_PHASES,
+                    f"{TEARDOWN_PHASES}/{TEARDOWN_PHASES} phases ({TEARDOWN_PHASE_MASK})", "E0352 · E0353"),
+        ContractBar("PTP LiveView + 0x9207 Controls", 1, 1, "verified · 29.8 FPS", "E0151 · E0349"),
+        ContractBar("EP0 UVC Class & Descriptor Audit", TRANSPORT_AUDIT_CHECKS, TRANSPORT_AUDIT_CHECKS,
+                    f"{TRANSPORT_AUDIT_CHECKS}/{TRANSPORT_AUDIT_CHECKS} checks", "E0350 · E0351"),
+        ContractBar("UIPC / MWF Sync Callback Path", 1, 2, "h4109 reached", "E0332 · E0334", amber=1),
+        ContractBar("GPES / SMAPH-S30 Display Model", display.done, display.total,
+                    "OSD A/B + BAR/IRQ", "E0298 · E0313 · E0314", amber=1),
+        ContractBar("im.elf Boot Task Phases", phases.done, phases.total,
+                    f"{phases.done}/{phases.total} phases", "task94_phases"),
+    )
+
+    boundaries = tuple(sorted((
+        BoundaryGroup(
+            "GPES / Display (condvar, 0x820E, OSD map)",
+            (
+                "guest condvar release",
+                "keyed 0x820E completion",
+                "OSD A/B mapping",
+                "GPU rasterizer semantics",
+            ),
+            "E0312 · E0314",
+        ),
+        BoundaryGroup(
+            "UIPC / USB FSM (h4109 packet, 0x0A4000)",
+            (
+                "h4109/h4110 packet payload",
+                "0x0A4000 producer",
+                "USB FSM transition",
+            ),
+            "E0332 · E0334 · E0338",
+        ),
+        BoundaryGroup(
+            "Track B UVC (DirectShow pins, WPD MI_00)",
+            (
+                "DirectShow RenderStream pin connect",
+                "composite MI_00 WPD binding",
+                "MSC recovery after failed pin connect",
+            ),
+            "E0350 · E0354",
+        ),
+        BoundaryGroup(
+            "Boot / Runtime (tzset, THREAD_APP, plugins)",
+            (
+                "fresh-path tzset",
+                "THREAD_APP / view tier",
+                "198 static plugin inits",
+            ),
+            "E0302 · E0309 · status data",
+        ),
+    ), key=lambda group: (-group.count, group.label)))
+
+    return TelemetryDashboard(
+        title=DASHBOARD_TITLE,
+        subtitle=DASHBOARD_SUBTITLE,
+        as_of=STATUS_SNAPSHOT.as_of,
+        latest_evidence=STATUS_SNAPSHOT.latest.evidence_id,
+        test_count=test_count,
+        receipt_count=receipt_count,
+        pills=pills,
+        firmware_groups=firmware_groups,
+        pipeline_groups=pipeline_groups,
+        pipeline_summary=pipeline_summary,
+        contract_bars=contract_bars,
+        boundaries=boundaries,
+        legend=tuple((state, CELL_LABELS[state]) for state in CELL_STATES),
+        footnote=DASHBOARD_FOOTNOTE,
+    )
+
+
+TELEMETRY = _build_telemetry()

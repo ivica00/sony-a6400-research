@@ -138,6 +138,7 @@ class TestDocumentationEntryPoints(unittest.TestCase):
             "tests.test_repository_layout",
             "tests.test_target_profiles",
             "tests.test_research_status_sync",
+            "tests.test_research_status_dashboard",
         ):
             self.assertIn(test_module, workflow)
 
