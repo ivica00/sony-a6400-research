@@ -20,6 +20,12 @@ KUSER_VERSION_SLOT = 0xffff0ffc
 # Expected SHA256 of the 160-byte template extracted from vmlinux.bin
 EXPECTED_KUSER_SHA256 = 'f9e6a6128970c915c1b372dbeb16ebed77e032b9be042e21f1540c466d5f4297'
 VMLINUX_KUSER_OFFSET = 0x388fe0
+# Per-kernel template offsets, keyed by vmlinux.bin SHA-256. The template bytes are still
+# checked against EXPECTED_KUSER_SHA256 (byte-identical in the ILCE-6100A V1.01 kernel).
+VMLINUX_KUSER_OFFSETS = {
+    '12eeec829407595e28265f7d0db3b88c56f63a9f0fdd725c9c53c66a49643707': 0x388fe0,  # a6400 V2.00
+    '51c1289c9cd698aa570935aa824fe2ebe67230a79ae34c2b413aaef9b3649b87': 0x390fc0,  # ILCE-6100A V1.01
+}
 
 
 def extract_kuser_template(kernel_path_or_bytes, expected_kernel_hash=None):
@@ -34,7 +40,8 @@ def extract_kuser_template(kernel_path_or_bytes, expected_kernel_hash=None):
         if actual_kernel_hash != expected_kernel_hash:
             raise ValueError(f'Kernel hash mismatch: expected {expected_kernel_hash}, got {actual_kernel_hash}')
 
-    template = data[VMLINUX_KUSER_OFFSET:VMLINUX_KUSER_OFFSET + KUSER_TEMPLATE_SIZE]
+    offset = VMLINUX_KUSER_OFFSETS.get(hashlib.sha256(data).hexdigest(), VMLINUX_KUSER_OFFSET)
+    template = data[offset:offset + KUSER_TEMPLATE_SIZE]
     if len(template) != KUSER_TEMPLATE_SIZE:
         raise ValueError(f'Kernel image too small to extract kuser template at offset {hex(VMLINUX_KUSER_OFFSET)}')
 
