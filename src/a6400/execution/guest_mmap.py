@@ -40,7 +40,9 @@ class UnsupportedMmap(RuntimeError):
 
 class GuestMmap:
     def __init__(self, mu, filesystem, base_address=0x50000000, ceiling_address=0x5f000000,
-                 search_low_base=None, after_write=None):
+                 search_low_base=None, after_write=None, eof_policy='zero-fill'):
+        if eof_policy not in ('zero-fill', 'sigbus'):
+            raise ValueError('Unknown mmap EOF policy')
         self.mu = mu
         self.filesystem = filesystem
         self.base_address = base_address
@@ -53,7 +55,7 @@ class GuestMmap:
         self.mappings = []
         # 'zero-fill' (historical default) or 'sigbus': pages of a file mapping wholly past EOF stay
         # reserved but unmapped in Unicorn, so an access faults as Linux raises SIGBUS.
-        self.eof_policy = 'zero-fill'
+        self.eof_policy = eof_policy
         self.beyond_eof_pages = set()
 
     def register_range(self, start, size):
@@ -264,9 +266,12 @@ class GuestMmap:
         end_addr = addr + aligned_len
         pages_to_unmap = [p for p in range(addr, end_addr, PAGE_SIZE) if p in self.mapped_pages]
         reserved_only = [p for p in pages_to_unmap if p in self.beyond_eof_pages]
-        self.beyond_eof_pages.difference_update(reserved_only)
-        self.mapped_pages.difference_update(reserved_only)
-        pages_to_unmap = [p for p in pages_to_unmap if p not in reserved_only]
+        if reserved_only:
+            self.beyond_eof_pages.difference_update(reserved_only)
+            self.mapped_pages.difference_update(reserved_only)
+            for page in reserved_only:
+                self.page_backing.pop(page, None)
+            pages_to_unmap = [p for p in pages_to_unmap if p not in reserved_only]
         if pages_to_unmap:
             run_start = pages_to_unmap[0]
             run_len = PAGE_SIZE

@@ -257,7 +257,11 @@ class InterpreterProbe:
                  kmod_service_policy='stop',
                  media_service_policy='stop', hook_mode='instruction',
                  mmap_base=None, mmap_ceiling=None, mmap_search_low=None,
-                 display_profile=None, grm_pool_policy='gl-common-only'):
+                 display_profile=None, grm_pool_policy='gl-common-only',
+                 mmap_eof_policy='zero-fill'):
+        if mmap_eof_policy not in ('zero-fill', 'sigbus'):
+            raise ValueError('Unknown mmap EOF policy')
+        self.mmap_eof_policy = mmap_eof_policy
         if null_page_policy not in ('stop', 'read-zero'):
             raise ValueError('Unknown null page policy')
         self.null_page_policy = null_page_policy
@@ -391,7 +395,7 @@ class InterpreterProbe:
             else:
                 self.report['assumptions'].append('Optional urandom-open: static image node 1:9 and compiled driver registration assumed available; entropy reads stop without supplying bytes.')
         if syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
-            mmap_kwargs = {'after_write': self._after_host_write}
+            mmap_kwargs = {'after_write': self._after_host_write, 'eof_policy': self.mmap_eof_policy}
             if mmap_base is not None:
                 mmap_kwargs['base_address'] = mmap_base
             if mmap_ceiling is not None:
@@ -399,6 +403,7 @@ class InterpreterProbe:
             if mmap_search_low is not None:
                 mmap_kwargs['search_low_base'] = mmap_search_low
             self.mmap = GuestMmap(self.mu, self.filesystem, **mmap_kwargs)
+            self.report['mmap_eof_policy'] = self.mmap_eof_policy
             self.report['assumptions'].append('Optional mmap contract: ARM EABI mmap2/mprotect/munmap allocate page-aligned guest memory from verified files or anonymous pages.')
         if syscall_policy in ('kuser', 'uipc', 'threads'):
             if kuser_template is None:
