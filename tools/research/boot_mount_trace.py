@@ -19,6 +19,11 @@ import elftools.elf.elffile as elffile
 ROOT = Path(__file__).resolve().parents[2]
 DEVNO_KO = ROOT / "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/initrd.img_unpacked/kmod/devno.ko"
 INIT_BIN = ROOT / "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/initrd.img_unpacked/sbin/init"
+# (mnts, drivers1, drivers2) addresses keyed by init SHA-256 (a6100 ledger F-0007).
+INIT_TABLES = {
+    "0af5724ece7f60db2831b7a4e61829be369868027877cca0f921f981ae8dc7ad": (0x13308, 0x131EC, 0x13210),  # a6400 V2.00
+    "2258c8d964e6e3019c5c06fa90b0d01a9c60ad50ea2bbf4a1c35951d7a43d63a": (0x136B4, 0x1359C, 0x135BC),  # ILCE-6100A V1.01
+}
 MOUNT_CONF = ROOT / "firmware/extracted_a6400/firmware.tar_unpacked/0100_config/mount.conf"
 ROOTFS_ETC = ROOT / "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha7_unpacked/etc"
 OUTPUT_JSON = ROOT / "artifacts/inventory/boot-mount-trace.json"
@@ -60,6 +65,8 @@ def parse_devno_table() -> list[dict[str, Any]]:
 
 
 def parse_init_mounts() -> tuple[list[dict[str, Any]], list[dict[str, str]], list[dict[str, str]]]:
+    import hashlib
+    mnts_addr, drv1_addr, drv2_addr = INIT_TABLES[hashlib.sha256(INIT_BIN.read_bytes()).hexdigest()]
     with open(INIT_BIN, "rb") as f:
         elf = elffile.ELFFile(f)
         rodata_sec = elf.get_section_by_name(".rodata")
@@ -84,12 +91,12 @@ def parse_init_mounts() -> tuple[list[dict[str, Any]], list[dict[str, str]], lis
         # Parse mnts at 0x13308 (22 entries of 20 bytes each)
         mnts = []
         for i in range(22):
-            off = (0x13308 + i * 20) - d_addr
+            off = (mnts_addr + i * 20) - d_addr
             dev_ptr, tgt_ptr, fstype_ptr, flags, data_ptr = struct.unpack("<IIIII", d_bytes[off : off + 20])
             mnts.append(
                 {
                     "index": i,
-                    "address": hex(0x13308 + i * 20),
+                    "address": hex(mnts_addr + i * 20),
                     "device": get_str(dev_ptr),
                     "target": get_str(tgt_ptr),
                     "fstype": get_str(fstype_ptr),
@@ -102,14 +109,14 @@ def parse_init_mounts() -> tuple[list[dict[str, Any]], list[dict[str, str]], lis
         # Parse drivers1 at 0x131ec (4 entries of 8 bytes)
         drivers1 = []
         for i in range(4):
-            off = (0x131EC + i * 8) - d_addr
+            off = (drv1_addr + i * 8) - d_addr
             name_ptr, opt_ptr = struct.unpack("<II", d_bytes[off : off + 8])
             drivers1.append({"module": get_str(name_ptr), "options": get_str(opt_ptr)})
 
         # Parse drivers2 at 0x13210 (31 entries of 8 bytes)
         drivers2 = []
         for i in range(31):
-            off = (0x13210 + i * 8) - d_addr
+            off = (drv2_addr + i * 8) - d_addr
             name_ptr, opt_ptr = struct.unpack("<II", d_bytes[off : off + 8])
             drivers2.append({"module": get_str(name_ptr), "options": get_str(opt_ptr)})
 
