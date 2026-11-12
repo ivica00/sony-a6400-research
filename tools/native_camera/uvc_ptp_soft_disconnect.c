@@ -212,6 +212,18 @@ int a6400_uvc_soft_disconnect(struct a6400_uvc_ptp_session *s,
     }
     if (s->ops.check_error && (ret=s->ops.check_error(gc))) {
         error=td_fail(t,A6400_TD_UDC_DOWN,ret);
+        /* E0355 abort guard: if a CLASS request was accepted this session, a
+         * queued asynchronous EP0 completion may still reference the module's
+         * EP0 buffer/hooks. Freeing the table or reconnecting with that state is
+         * the suspected cause of the E0354 post-RenderStream "unknown device".
+         * Hold (no unbind, no table free, no reconnect) so the verified-stop
+         * gate keeps the module pinned and the trace records where it stopped. */
+        if (s->bridge.class_requests) {
+            printk("[a6400_td] abort guard: %u CLASS request(s) outstanding, "
+                   "native error %d; holding before unbind/free/reconnect\n",
+                   s->bridge.class_requests, ret);
+            return error;
+        }
         goto demote;
     }
 

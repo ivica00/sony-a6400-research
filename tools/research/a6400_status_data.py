@@ -218,22 +218,22 @@ class StatusSnapshot:
 
 STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
-    as_of="2026-11-11",
+    as_of="2026-11-12",
     latest=EvidenceRef(
-        evidence_id="E0354",
-        path="docs/evidence/0354-run-b-selector-accepts-084-renderstream-fails.md",
-        date="2026-11-11",
-        title="Run B/B2: selector accepts 0x84; RenderStream still fails",
+        evidence_id="E0374",
+        path="docs/evidence/0374-run-b13-gc-context-and-second-queue-proof.md",
+        date="2026-11-12",
+        title="Run B13 GC context and second queue",
         demonstrated=(
-            "Instrumented START selector accepts the composite endpoint 0x84 with the dep flag set "
-            "(so the dep+0x4C relaxation is unnecessary); Run B teardown was clean. Run B2 with a real "
-            "RenderStream attempt reproduced the DirectShow pin failure under USB ETW capture."
+            "Run B13: gadgetcore gc_ep0 = class ep0 (68a1c9c0, eq=1) with ops 603dfb4c; later control traffic shows GC_EP0 queue "
+            "calls with caller LR 602b9fdc (right after setup_req 0x602b9fd8) on the same ep0 with a different request 68a84da0 "
+            "and lengths 18/39/26/4/20/9/0 -> the delegated second queue is real and was previously invisible. The camera "
+            "receipt was clean but the camera rebooted during post-run cleanup and recovered to MSC."
         ),
         boundary=(
-            "Open: EP0/pin failure point unanalysed, WPD cannot bind composite MI_00, and the Run B2 "
-            "host attempt lost MSC again (battery pull); no UVC frame."
+            "Open: implement GC-wrapper guard dropping only the delegated queue (LR==0x602b9fdc), prove in Unicorn, then B14."
         ),
-        tier="PHYSICAL, RAM-ONLY",
+        tier="PHYSICAL + GC CONTEXT",
     ),
     headline="1312 tests recorded passing | No verified emulator GUI frame",
     cards=(
@@ -283,25 +283,24 @@ STATUS_SNAPSHOT = StatusSnapshot(
             tier="PHYSICAL OBSERVATION",
         ),
         EvidenceRef(
-            evidence_id="E0354",
-            path="docs/evidence/0354-run-b-selector-accepts-084-renderstream-fails.md",
-            date="2026-11-11",
-            title="Track B Run B/B2",
+            evidence_id="E0374",
+            path="docs/evidence/0374-run-b13-gc-context-and-second-queue-proof.md",
+            date="2026-11-12",
+            title="Run B13 GC/second-queue proof",
             demonstrated=(
-                "Instrumented selector accepts 0x84 (dep flag set); RenderStream still fails with the "
-                "audited module; USB ETW retained for offline EP0 analysis."
+                "gc_ep0 == class ep0 (eq=1); setup_req 0x9fd8 queues a second request on the same ep0 (LR 602b9fdc, req 68a84da0, "
+                "len 18/39/26/4/20/9/0); receipt clean but camera rebooted during cleanup and recovered to MSC."
             ),
             boundary=(
-                "Open: EP0/pin root cause, WPD binding of composite MI_00, and MSC recovery after a "
-                "host RenderStream attempt."
+                "Open: GC-wrapper guard dropping only the delegated queue; prove in Unicorn; B14."
             ),
-            tier="PHYSICAL, RAM-ONLY",
+            tier="PHYSICAL + GC CONTEXT",
         ),
     ),
     suite=SuiteRecord(
         test_count=1312,
-        recorded_at="2026-11-11",
-        evidence_id="E0354",
+        recorded_at="2026-11-12",
+        evidence_id="E0374",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(

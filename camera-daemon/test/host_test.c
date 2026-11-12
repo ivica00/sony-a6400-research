@@ -1,7 +1,8 @@
 /* Host unit tests for the a6400 daemon's pure logic.
  *
- * No hardware, no camera node, no /dev/uipc, no ptrace: only src/frame_hook.c and
- * src/control_bridge.c are linked, plus the two clock stubs below. Every assertion is
+ * No hardware, no camera node, no /dev/uipc, no ptrace: only src/frame_hook.c,
+ * src/control_bridge.c, src/sd_policy.c and src/recovery_policy.c are linked,
+ * plus the two clock stubs below. Every assertion is
  * an expected behaviour transcribed from the contract headers and the evidence
  * cited in those files.
  *
@@ -17,6 +18,7 @@
 #include "a6400_daemon.h"
 #include "a6400_frame.h"
 #include "a6400_internal.h"
+#include "a6400_recovery.h"
 #include "a6400_sdlog.h"
 
 /* ---- clock stubs (control.c asks the daemon core for monotonic time) ------ */
@@ -1339,6 +1341,238 @@ static void test_sd_policy(void)
     }
 }
 
+/* ---- park recovery after a failed stop attestation (E0358) ---------------- */
+
+/* The matrix the E0357 Run B3 receipt requires:
+ *   1. clean        (stop_verified=1)  -> the recovery never runs;
+ *   2. degraded ok  (stop_verified=0, recovery succeeds)
+ *                                    -> recovered + degraded_teardown receipt;
+ *   3. degraded bad (stop_verified=0, a recovery step fails)
+ *                                    -> park, but the SD evidence stays written.
+ * `state=-1,-1,-1,-1` is the exact B3 value: the daemon's own sentinel meaning
+ * "STOP failed before the status query answered", so it is *not* a verified
+ * state and the retry must be allowed. */
+static void test_recovery_policy(void)
+{
+    struct a6400_recovery ok, bad;
+    const int *order = NULL;
+    uint32_t n;
+    int i;
+
+    /* A new status/exit code; the four historical codes are untouched. */
+    CHECK_EQ(A6400_EXIT_DEGRADED, 5);
+    CHECK_NE(A6400_EXIT_DEGRADED, 0);
+    CHECK_NE(A6400_EXIT_DEGRADED, 2);
+    CHECK_NE(A6400_EXIT_DEGRADED, 3);
+    CHECK_NE(A6400_EXIT_DEGRADED, 4);
+
+    /* The order is contractual: durable evidence first, resume before close. */
+    n = a6400_recovery_step_order(&order);
+    CHECK_EQ(n, 7);
+    CHECK(order != NULL);
+    if (order && n == 7) {
+        CHECK_EQ(order[0], A6400_REC_EVIDENCE);
+        CHECK_EQ(order[1], A6400_REC_STATE_QUERY);
+        CHECK_EQ(order[2], A6400_REC_STOP_RETRY);
+        CHECK_EQ(order[3], A6400_REC_FREEZE);
+        CHECK_EQ(order[4], A6400_REC_HOOK_RETIRE);
+        CHECK_EQ(order[5], A6400_REC_RESUME);
+        CHECK_EQ(order[6], A6400_REC_CLOSE);
+        for (i = 0; i < (int)n; i++)
+            CHECK(order[i] != A6400_REC_NONE);
+        CHECK(order[0] != A6400_REC_CLOSE);
+        CHECK(order[n - 1] != A6400_REC_EVIDENCE);
+    }
+    CHECK_EQ(a6400_recovery_step_order(NULL), 7);
+
+    /* --- scenario 1: clean (stop_verified=1) ----------------------------- */
+    CHECK_EQ(a6400_recovery_needed(1), 0);
+    CHECK_EQ(a6400_recovery_needed(0), 1);
+    memset(&ok, 0, sizeof ok);
+    CHECK_EQ(a6400_recovery_outcome(&ok), A6400_RECOVERY_NOT_ATTEMPTED);
+    /* No success claim without an attempt, even if a status word says so. */
+    ok.status = A6400_RECOVERY_RECOVERED;
+    CHECK_EQ(a6400_recovery_outcome(&ok), A6400_RECOVERY_NOT_ATTEMPTED);
+    ok.attempted = 1;
+    ok.evidence_written = 1;
+    ok.stop_retry_verified = 1;
+    ok.hook_retired = 1;
+    ok.closed = 1;
+    ok.failed_step = A6400_REC_NONE;
+    CHECK_EQ(a6400_recovery_outcome(&ok), A6400_RECOVERY_RECOVERED);
+
+    /* --- scenario 2: degraded success (B3 sentinel) ---------------------- */
+    {
+        const int32_t sentinel[4] = { -1, -1, -1, -1 };
+        const int32_t held[4] = { 3, 1, 1, -5 }; /* phase HELD, pinned, hooks */
+        const int32_t zero[4] = { 0, 0, 0, 0 };
+        struct a6400_recovery rec;
+
+        /* An unanswered read is never "verified", not even all-zero-looking. */
+        CHECK_EQ(a6400_recovery_state_verified(0, zero), 0);
+        CHECK_EQ(a6400_recovery_state_verified(1, zero), 1);
+        CHECK_EQ(a6400_recovery_state_verified(1, sentinel), 0);
+        CHECK_EQ(a6400_recovery_state_verified(1, held), 0);
+        CHECK_EQ(a6400_recovery_state_verified(0, sentinel), 0);
+        CHECK_EQ(a6400_recovery_state_verified(1, NULL), 0);
+
+        /* The retry is the only userspace recovery primitive: a held or
+         * unanswered state must allow exactly it; an already-clean read must
+         * not issue a second destructive STOP. */
+        CHECK_EQ(a6400_recovery_retry_allowed(0, sentinel), 1);
+        CHECK_EQ(a6400_recovery_retry_allowed(1, sentinel), 1);
+        CHECK_EQ(a6400_recovery_retry_allowed(1, held), 1);
+        CHECK_EQ(a6400_recovery_retry_allowed(1, zero), 0);
+        CHECK_EQ(a6400_recovery_retry_allowed(0, zero), 1);
+
+        memset(&rec, 0, sizeof rec);
+        rec.attempted = 1;
+        rec.status = A6400_RECOVERY_PENDING;
+        rec.failed_step = A6400_REC_NONE;
+        for (i = 0; i < 4; i++) {
+            rec.state_before[i] = -1;
+            rec.state_after[i] = -1;
+        }
+        /* Evidence is mandatory before anything can be called recovered. */
+        CHECK_EQ(a6400_recovery_outcome(&rec), A6400_RECOVERY_FAILED);
+        rec.evidence_written = 1;
+        CHECK_EQ(rec.evidence_written, 1);
+        CHECK_EQ(a6400_recovery_outcome(&rec), A6400_RECOVERY_FAILED);
+        /* The retry must be attested by the module (all-zero state). */
+        rec.stop_retry_verified = 1;
+        CHECK_EQ(a6400_recovery_outcome(&rec), A6400_RECOVERY_FAILED);
+        /* The entry hook must be retired under a successful freeze/resume. */
+        rec.freeze_rc = 0;
+        rec.frozen_tids = 181;
+        rec.retire_rc = 0;
+        rec.hook_retired = 1;
+        CHECK_EQ(a6400_recovery_outcome(&rec), A6400_RECOVERY_FAILED);
+        rec.resume_rc = 0;
+        CHECK_EQ(a6400_recovery_outcome(&rec), A6400_RECOVERY_FAILED);
+        rec.closed = 1;
+        rec.status = A6400_RECOVERY_RECOVERED;
+        CHECK_EQ(a6400_recovery_outcome(&rec), A6400_RECOVERY_RECOVERED);
+        CHECK_EQ(rec.frozen_tids, 181);
+
+        /* state_before holds the module's own words, never fabricated. */
+        rec.state_before_valid = 1;
+        for (i = 0; i < 4; i++)
+            rec.state_before[i] = held[i];
+        rec.state_after_valid = 1;
+        for (i = 0; i < 4; i++)
+            rec.state_after[i] = zero[i];
+        CHECK_EQ(a6400_recovery_state_verified(rec.state_after_valid,
+                                               rec.state_after), 1);
+        CHECK_EQ(a6400_recovery_state_verified(rec.state_before_valid,
+                                               rec.state_before), 0);
+        CHECK_EQ(a6400_recovery_outcome(&rec), A6400_RECOVERY_RECOVERED);
+    }
+
+    /* --- scenario 3: degraded failure -> park (evidence still written) --- */
+    {
+        memset(&bad, 0, sizeof bad);
+        bad.attempted = 1;
+        bad.status = A6400_RECOVERY_RECOVERED; /* a lie the classifier must reject */
+        bad.evidence_written = 1;
+        bad.stop_retry_verified = 1;
+        bad.freeze_rc = 0;
+        bad.frozen_tids = 181;
+        bad.retire_rc = 0;
+        bad.hook_retired = 1;
+        bad.resume_rc = 0;
+        bad.closed = 1;
+        bad.failed_step = A6400_REC_NONE;
+        CHECK_EQ(a6400_recovery_outcome(&bad), A6400_RECOVERY_RECOVERED);
+
+        /* The SD flush/receipt step never being written is itself a failure:
+         * a success claim without the durable evidence is impossible. */
+        {
+            struct a6400_recovery r = bad;
+
+            r.evidence_written = 0;
+            CHECK_EQ(a6400_recovery_outcome(&r), A6400_RECOVERY_FAILED);
+        }
+        /* The bounded STOP retry was refused or the state never came back
+         * zero: park, even though the evidence exists. */
+        {
+            struct a6400_recovery r = bad;
+
+            r.stop_retry_verified = 0;
+            r.failed_step = A6400_REC_STOP_RETRY;
+            CHECK_EQ(a6400_recovery_outcome(&r), A6400_RECOVERY_FAILED);
+        }
+        /* Freeze failed: nothing may be retired and the attestation set must
+         * not be left frozen (a partial attach is resumed by the freeze path). */
+        {
+            struct a6400_recovery r = bad;
+
+            r.freeze_rc = -5;
+            r.failed_step = A6400_REC_FREEZE;
+            CHECK_EQ(a6400_recovery_outcome(&r), A6400_RECOVERY_FAILED);
+        }
+        /* HOOK_RETIRE failed (the module refuses while the session is held):
+         * the entry hook still owns the native ioctl path -> park. */
+        {
+            struct a6400_recovery r = bad;
+
+            r.retire_rc = -16;
+            r.hook_retired = 0;
+            r.failed_step = A6400_REC_HOOK_RETIRE;
+            CHECK_EQ(a6400_recovery_outcome(&r), A6400_RECOVERY_FAILED);
+        }
+        /* Resume failed: a frozen attestation set must never be reported as a
+         * completed recovery. */
+        {
+            struct a6400_recovery r = bad;
+
+            r.resume_rc = -10;
+            r.failed_step = A6400_REC_RESUME;
+            CHECK_EQ(a6400_recovery_outcome(&r), A6400_RECOVERY_FAILED);
+        }
+        /* Close never happened: the descriptor is still owned. */
+        {
+            struct a6400_recovery r = bad;
+
+            r.closed = 0;
+            r.failed_step = A6400_REC_CLOSE;
+            CHECK_EQ(a6400_recovery_outcome(&r), A6400_RECOVERY_FAILED);
+        }
+        /* A recorded failed step always wins over otherwise-good fields. */
+        {
+            struct a6400_recovery r = bad;
+
+            r.failed_step = A6400_REC_STOP_RETRY;
+            CHECK_EQ(a6400_recovery_outcome(&r), A6400_RECOVERY_FAILED);
+        }
+        /* NULL is a decision error, never a success. */
+        CHECK_EQ(a6400_recovery_outcome(NULL), A6400_RECOVERY_NOT_ATTEMPTED);
+    }
+
+    /* --- vocabulary (receipt strings are part of the evidence) ----------- */
+    CHECK_EQ(strcmp(a6400_recovery_status_name(A6400_RECOVERY_NOT_ATTEMPTED),
+                    "not_attempted"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_status_name(A6400_RECOVERY_PENDING),
+                    "pending"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_status_name(A6400_RECOVERY_RECOVERED),
+                    "recovered"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_status_name(A6400_RECOVERY_FAILED),
+                    "failed"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_status_name(99), "unknown"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(A6400_REC_NONE), "none"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(A6400_REC_EVIDENCE), "evidence"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(A6400_REC_STATE_QUERY),
+                    "state_query"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(A6400_REC_STOP_RETRY),
+                    "stop_retry"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(A6400_REC_FREEZE), "freeze"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(A6400_REC_HOOK_RETIRE),
+                    "hook_retire"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(A6400_REC_RESUME), "resume"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(A6400_REC_CLOSE), "close"), 0);
+    CHECK_EQ(strcmp(a6400_recovery_step_name(99), "unknown"), 0);
+    CHECK_EQ(A6400_REC_STEP_COUNT, 8);
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(int argc, char **argv)
@@ -1360,6 +1594,7 @@ int main(int argc, char **argv)
     test_framing();
     test_handle_frame(ack_path);
     test_sd_policy();
+    test_recovery_policy();
 
     printf("checks: %d\n", g_checks);
     printf("failures: %d\n", g_failures);

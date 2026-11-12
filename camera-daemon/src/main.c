@@ -42,6 +42,7 @@
 #include "a6400_internal.h"
 #include "a6400_log.h"
 #include "a6400_osal.h"
+#include "a6400_recovery.h"
 #include "a6400_sdlog.h"
 #include "a6400_uvc.h"
 
@@ -75,6 +76,8 @@ static int g_rc_session_active;
 static int g_rc_hook_published;
 static int g_rc_hook_retired;
 static int g_rc_stop_verified;
+static int g_rc_teardown_verified; /* clean gate OR a verified bounded retry */
+static uint32_t g_rc_stop_attempts;
 static uint32_t g_rc_tid_count;
 static uint32_t g_rc_freeze_ms;
 static uint32_t g_rc_attest_completed;
@@ -100,9 +103,15 @@ static uint32_t g_wait_timeouts;
 static uint32_t g_dma_phys_opt;
 static uint32_t g_dma_size_opt;
 static uint32_t g_stats_interval_s;
+static int g_dmesg_sd;
 static uint32_t g_wait_bound_ms = 1000u;
 static int g_read_prefix;
 static int g_arm_transport;
+/* E0358: bounded recovery after a failed stop attestation. On by default
+ * because the alternative is a guaranteed battery pull; --no-park-recovery
+ * restores the old fail-closed park for a conservative run. */
+static int g_park_recovery = 1;
+static struct a6400_recovery g_recovery;
 
 struct daemon_rt {
     struct a6400_uvc uvc;
@@ -162,11 +171,12 @@ static void alarm_handler(int sig)
 static const char *status_name(int code)
 {
     switch (code) {
-    case A6400_EXIT_CLEAN:   return "clean";
-    case A6400_EXIT_STAGE:   return "stage_failed";
-    case A6400_EXIT_REFUSED: return "refused";
-    case A6400_EXIT_FATAL:   return "fatal";
-    default:                 return "unknown";
+    case A6400_EXIT_CLEAN:    return "clean";
+    case A6400_EXIT_STAGE:    return "stage_failed";
+    case A6400_EXIT_REFUSED:  return "refused";
+    case A6400_EXIT_FATAL:    return "fatal";
+    case A6400_EXIT_DEGRADED: return "degraded_teardown";
+    default:                  return "unknown";
     }
 }
 
@@ -308,10 +318,12 @@ uint32_t a6400_daemon_receipt(const struct a6400_daemon_stats *st,
            cfg->fps, cfg->comp_level, cfg->path_width);
     sb_add(&s, "\"dry_run\":%d,\"verbose\":%d,\"arm_transport\":%d,\"read_prefix\":%d,",
            cfg->dry_run, cfg->verbose, g_arm_transport, g_read_prefix);
+    sb_add(&s, "\"park_recovery\":%d,", g_park_recovery);
     sb_add(&s, "\"stats_interval_s\":%u,\"wait_bound_ms\":%u,",
            g_stats_interval_s, g_wait_bound_ms);
     sb_add(&s, "\"dma_phys_opt\":%u,\"dma_size_opt\":%u,", g_dma_phys_opt, g_dma_size_opt);
-    sb_add(&s, "\"sd_log\":%d,\"sd_mount\":%d,\"sd_dev\":", cfg->sd_log, cfg->sd_mount);
+    sb_add(&s, "\"sd_log\":%d,\"sd_mount\":%d,\"dmesg_sd\":%d,\"sd_dev\":",
+           cfg->sd_log, cfg->sd_mount, cfg->dmesg_sd);
     sb_path(&s, cfg->sd_dev);
     sb_add(&s, ",\"sd_mountpoint\":");
     sb_path(&s, cfg->sd_mountpoint);
@@ -321,6 +333,8 @@ uint32_t a6400_daemon_receipt(const struct a6400_daemon_stats *st,
            g_rc_init_attempted, g_rc_session_active);
     sb_add(&s, "\"hook_published\":%d,\"hook_retired\":%d,\"stop_verified\":%d,",
            g_rc_hook_published, g_rc_hook_retired, g_rc_stop_verified);
+    sb_add(&s, "\"stop_attempts\":%u,\"teardown_verified\":%d,",
+           g_rc_stop_attempts, g_rc_teardown_verified);
     sb_add(&s, "\"freeze_tid_count\":%u,\"freeze_ms\":%u,",
            g_rc_tid_count, g_rc_freeze_ms);
     sb_add(&s, "\"attest_version\":2,\"attest_owner\":%d,"
@@ -354,6 +368,37 @@ uint32_t a6400_daemon_receipt(const struct a6400_daemon_stats *st,
     sb_add(&s, "\"control_requests\":%u,\"control_errors\":%u},",
            g_control_requests, g_control_errors);
 
+    /* Bounded park recovery (E0358). `status` is not_attempted on every clean
+     * path and on a run that never reached teardown; `pending` is what the
+     * durable pre-recovery receipt records, so a battery pull in the middle of
+     * the attempt cannot present it as recovered. `state_before/after` are the
+     * module's own {phase,pinned,hook_mask,error} words, -1 filled when the
+     * status query did not answer (never invented). */
+    sb_add(&s, "\"recovery\":{\"enabled\":%d,\"attempted\":%d,\"status\":",
+           g_park_recovery, g_recovery.attempted);
+    sb_path(&s, a6400_recovery_status_name(g_recovery.status));
+    sb_add(&s, ",\"evidence_written\":%d,\"state_before_valid\":%d,",
+           g_recovery.evidence_written, g_recovery.state_before_valid);
+    sb_add(&s, "\"state_before\":[%d,%d,%d,%d],",
+           g_recovery.state_before[0], g_recovery.state_before[1],
+           g_recovery.state_before[2], g_recovery.state_before[3]);
+    sb_add(&s, "\"stop_retry_rc\":%d,\"state_after_valid\":%d,",
+           g_recovery.stop_retry_rc, g_recovery.state_after_valid);
+    sb_add(&s, "\"state_after\":[%d,%d,%d,%d],",
+           g_recovery.state_after[0], g_recovery.state_after[1],
+           g_recovery.state_after[2], g_recovery.state_after[3]);
+    sb_add(&s, "\"stop_retry_verified\":%d,\"freeze_rc\":%d,\"frozen_tids\":%u,",
+           g_recovery.stop_retry_verified, g_recovery.freeze_rc,
+           g_recovery.frozen_tids);
+    sb_add(&s, "\"hook_retire_rc\":%d,\"hook_retired\":%d,\"resume_rc\":%d,"
+               "\"closed\":%d,\"failed_step\":",
+           g_recovery.retire_rc, g_recovery.hook_retired, g_recovery.resume_rc,
+           g_recovery.closed);
+    sb_path(&s, a6400_recovery_step_name(g_recovery.failed_step));
+    sb_add(&s, ",\"detail\":");
+    sb_path(&s, g_recovery.detail[0] ? g_recovery.detail : NULL);
+    sb_add(&s, "},");
+
     /* Durable crash-safe SD status (E0350): every field is the observed value,
      * including refusals and failures. `mounted` is 1 only after mount(2), an
      * exact /proc/mounts match and a sentinel round-trip. */
@@ -363,8 +408,10 @@ uint32_t a6400_daemon_receipt(const struct a6400_daemon_stats *st,
            g_sd.mounted, g_sd.device_ok, g_sd.verified, g_sd.sentinel_ok);
     sb_add(&s, "\"mount_rc\":%d,\"unmount_rc\":%d,\"open_rc\":%d,\"sync_mode\":%d,",
            g_sd.mount_rc, g_sd.unmount_rc, g_sd.open_rc, g_sd.sync_mode);
-    sb_add(&s, "\"receipt_written\":%d,\"errors\":%u,\"rotations\":%u,\"device\":",
+    sb_add(&s, "\"receipt_written\":%d,\"errors\":%u,\"rotations\":%u,",
            g_sd.receipt_written, g_sd.errors, g_sd.rotations);
+    sb_add(&s, "\"trace_lines\":%u,\"trace_errors\":%u,\"device\":",
+           g_sd.trace_lines, g_sd.trace_errors);
     sb_path(&s, g_sd.device);
     sb_add(&s, ",\"mountpoint\":");
     sb_path(&s, g_sd.mountpoint);
@@ -884,6 +931,11 @@ static int stream_loop(struct daemon_rt *rt, const struct a6400_daemon_config *c
             return 1;
         (void)poll_control(rt);
         g_loop_ticks++;
+        /* E0356: mirror the kernel [a6400_*] trace to the SD card every ~150
+         * ticks (about 5 s at 30 fps) so a later hang/power cycle cannot lose
+         * the CLASS/START evidence. Bounded; failures are counted. */
+        if (g_dmesg_sd && g_sd.mounted && (g_loop_ticks % 150u) == 0u)
+            (void)a6400_sd_flush_kernel_trace(&g_sd);
 
         if (g_stats_interval_s && (uint64_t)a6400_now_ns() >= next_report) {
             log_event("stats",
@@ -894,6 +946,8 @@ static int stream_loop(struct daemon_rt *rt, const struct a6400_daemon_config *c
                       g_stats.frames_dropped, g_stats.frames_rejected,
                       g_stats.transport_errors, g_stats.get_jpeg_polls,
                       g_stats.get_jpeg_empty, g_stats.wait_ms_max);
+            if (g_dmesg_sd && g_sd.mounted)
+                (void)a6400_sd_flush_kernel_trace(&g_sd);
             (void)write_receipt();
             next_report += (uint64_t)g_stats_interval_s * 1000000000ull;
         }
@@ -992,6 +1046,8 @@ static int validate_config(const struct a6400_daemon_config *cfg)
         return -15;
     if (g_stats_interval_s > 3600u)
         return -16;
+    if (cfg->dmesg_sd && (!cfg->sd_log || !cfg->sd_mount))
+        return -20; /* --dmesg-sd requires --sd-log --sd-mount */
     if (cfg->sd_mount && !cfg->sd_log)
         return -17; /* mounting without the SD sink is never useful */
     if (cfg->sd_log) {
@@ -1047,10 +1103,18 @@ static void usage(const char *argv0)
         "\n"
         "Crash-safe SD logging (E0350; both flags default OFF):\n"
         "  --sd-log              mirror every JSONL line + the receipt to the SD card\n"
+        "  --dmesg-sd            mirror kernel [a6400_*] trace to SD every ~5 s\n"
+        "                        (requires --sd-log --sd-mount; O_SYNC A6400K.LOG)\n"
         "  --sd-mount            explicit consent to mount the SD (requires --sd-log;\n"
         "                        only after PC Remote 054c:0caa, before INIT, never in MSC)\n"
         "  --sd-dev PATH         block device (default /dev/mmca1; only that node is accepted)\n"
         "  --sd-mountpoint PATH  mount point (default /tmp_bt/sd; must be under /tmp_bt/)\n"
+        "\n"
+        "Degraded teardown (E0358):\n"
+        "  --no-park-recovery    disable the bounded recovery; a failed stop\n"
+        "                        attestation parks immediately (default: write the SD\n"
+        "                        evidence, retry STOP once, retire/resume, then park\n"
+        "                        only if a recovery step fails)\n"
         "  --help\n",
         argv0);
 }
@@ -1111,6 +1175,11 @@ static int parse_argv(int argc, char **argv, struct a6400_daemon_config *cfg)
             g_wait_bound_ms = (uint32_t)strtoul(argv[++i], NULL, 0);
         } else if (!strcmp(a, "--sd-log")) {
             cfg->sd_log = 1;
+        } else if (!strcmp(a, "--dmesg-sd")) {
+            cfg->dmesg_sd = 1;
+            g_dmesg_sd = 1;
+        } else if (!strcmp(a, "--no-park-recovery")) {
+            g_park_recovery = 0;
         } else if (!strcmp(a, "--sd-mount")) {
             cfg->sd_mount = 1;
         } else if (!strcmp(a, "--sd-dev") && i + 1 < argc) {
@@ -1153,11 +1222,202 @@ static void sd_teardown(void)
     }
     a6400_log_sd_close(&g_log);
     if (g_sd.mounted) {
-        (void)a6400_sd_unmount(&g_sd);
+        if (g_dmesg_sd && g_sd.mounted)
+        (void)a6400_sd_flush_kernel_trace(&g_sd);
+    (void)a6400_sd_unmount(&g_sd);
         log_event("sd_log_unmount",
                   "\"rc\":%d,\"still_mounted\":%d,\"errors\":%u",
                   g_sd.unmount_rc, g_sd.mounted, g_sd.errors);
     }
+}
+
+/* ---- bounded park recovery (E0358) --------------------------------------- */
+
+/* (a) Durable evidence, ALWAYS before any recovery step. The kernel trace is
+ * the only record of which teardown gate refused, and the SD copy of
+ * A6400RCPT.JSON is what a battery pull cannot destroy (E0350/E0357). */
+static void recovery_evidence(void)
+{
+    if (g_sd.enabled && g_sd.mounted) {
+        int rc = a6400_sd_flush_kernel_trace(&g_sd);
+
+        log_event("recovery_sd_trace",
+                  "\"rc\":%d,\"dmesg_sd\":%d,\"trace_lines\":%u,\"trace_errors\":%u",
+                  rc, g_dmesg_sd, g_sd.trace_lines, g_sd.trace_errors);
+    } else {
+        log_event("recovery_sd_trace", "\"mounted\":0,\"durable\":0");
+    }
+    g_recovery.evidence_written = write_receipt() == 0 ? 1 : 0;
+    if (!g_recovery.evidence_written)
+        a6400_logf(&g_log, A6400_LOG_ERROR,
+                   "recovery_evidence_failed reason=receipt_write_failed");
+}
+
+/* (c) Freeze -> HOOK_RETIRE -> resume. The attestation set is resumed on every
+ * path, including a failed retire, so the firmware is never left frozen (the
+ * publish path follows the same rule). */
+static int recovery_retire_hook(struct daemon_rt *rt)
+{
+    int rc;
+
+    log_destructive("ptrace_freeze_for_recovery_retire");
+    rc = a6400_runner_freeze(&rt->runner);
+    g_recovery.freeze_rc = rc;
+    g_recovery.frozen_tids = rt->runner.tid_count;
+    g_rc_tid_count = rt->runner.tid_count;
+    g_rc_freeze_ms = rt->runner.last_freeze_ms;
+    a6400_logf(&g_log, A6400_LOG_INFO, "recovery_freeze rc=%d tids=%u",
+               rc, rt->runner.tid_count);
+    if (rc != 0)
+        return rc; /* the freeze failure path already resumed a partial attach */
+
+    log_destructive("hook_retire_recovery");
+    rc = a6400_runner_retire_hook(&rt->runner);
+    g_recovery.retire_rc = rc;
+    g_rc_attest_completed = rt->runner.attest_completed;
+    g_rc_attest_error = rt->runner.attest_error;
+    a6400_logf(&g_log, A6400_LOG_INFO,
+               "recovery_hook_retire rc=%d completed=%u error=%d",
+               rc, rt->runner.attest_completed, rt->runner.attest_error);
+    if (rc == 0) {
+        g_recovery.hook_retired = 1;
+        g_rc_hook_retired = 1;
+        g_rc_hook_published = 0;
+        rt->hook_retired = 1;
+    }
+
+    log_destructive("ptrace_resume");
+    g_recovery.resume_rc = a6400_runner_resume(&rt->runner);
+    a6400_logf(&g_log, A6400_LOG_INFO, "recovery_resume rc=%d",
+               g_recovery.resume_rc);
+    return rc;
+}
+
+/* Closes every descriptor the daemon owns. Used by the recovered path so the
+ * camera re-enumerates from a released owner, exactly like a clean teardown. */
+static void recovery_close(struct daemon_rt *rt)
+{
+    if (rt->ctl) {
+        a6400_control_destroy(rt->ctl);
+        rt->ctl = NULL;
+    }
+    if (rt->mem_fd >= 0) {
+        (void)close(rt->mem_fd);
+        rt->mem_fd = -1;
+    }
+    if (rt->uipc_open) {
+        a6400_uipc_close(&rt->uipc);
+        rt->uipc_open = 0;
+    }
+    if (rt->uvc_open) {
+        a6400_uvc_close(&rt->uvc);
+        rt->uvc_open = 0;
+    }
+    g_recovery.closed = 1;
+}
+
+static int recovery_fail(int step, const char *detail)
+{
+    g_recovery.failed_step = step;
+    g_recovery.status = A6400_RECOVERY_FAILED;
+    if (detail)
+        snprintf(g_recovery.detail, sizeof g_recovery.detail, "%s", detail);
+    a6400_logf(&g_log, A6400_LOG_ERROR, "recovery_step_failed step=%s detail=%s",
+               a6400_recovery_step_name(step), detail ? detail : "");
+    return 0;
+}
+
+/* Runs the bounded recovery after a failed STOP attestation (E0358).
+ * Returns 1 when every gate passed (the caller finishes with degraded_teardown
+ * and the descriptors have already been closed), 0 when a step errored (the
+ * caller parks as the last resort; the durable evidence was written first). */
+static int recovery_attempt(struct daemon_rt *rt)
+{
+    int stop_rc = 0, state_valid = 0, verified, i;
+
+    memset(&g_recovery, 0, sizeof g_recovery);
+    g_recovery.attempted = 1;
+    g_recovery.status = A6400_RECOVERY_PENDING;
+    g_recovery.failed_step = A6400_REC_NONE;
+    for (i = 0; i < 4; i++) {
+        g_recovery.state_before[i] = -1;
+        g_recovery.state_after[i] = -1;
+    }
+    log_event("recovery_begin", "\"reason\":\"stop_attestation_failed\"");
+
+    /* (a) Evidence first: never skipped, even when every later step fails. */
+    recovery_evidence();
+    if (!g_recovery.evidence_written)
+        return recovery_fail(A6400_REC_EVIDENCE, "receipt_write_failed");
+
+    /* Step 2: read-only status. This is the module-supplied diagnostic the old
+     * park path never had: state=-1,-1,-1,-1 only ever meant "STOP failed
+     * before the query"; this call reports {phase,pinned,hooks,error}. */
+    g_recovery.state_before_valid =
+        a6400_runner_query_session_state(rt->uvc.fd, g_recovery.state_before);
+    log_event("recovery_state",
+              "\"source\":\"after_failed_stop\",\"valid\":%d,\"phase\":%d,"
+              "\"pin\":%d,\"hooks\":%d,\"error\":%d",
+              g_recovery.state_before_valid, g_recovery.state_before[0],
+              g_recovery.state_before[1], g_recovery.state_before[2],
+              g_recovery.state_before[3]);
+
+    /* Step 3: one bounded STOP retry. The module's STOP runs the ordered
+     * 9-phase unconfigure-first teardown (cleanup -> session_end ->
+     * a6400_uvc_soft_disconnect); HOOK_RETIRE does not run it and the module
+     * refuses HOOK_RETIRE while the session is held. */
+    if (a6400_recovery_retry_allowed(g_recovery.state_before_valid,
+                                     g_recovery.state_before)) {
+        log_destructive("uvc_stop_retry");
+        g_rc_stop_attempts = 2u;
+        verified = a6400_runner_retry_stop(rt->uvc.fd, g_recovery.state_after,
+                                           &stop_rc, &state_valid);
+        g_recovery.stop_retry_rc = stop_rc;
+        g_recovery.state_after_valid = state_valid;
+        g_recovery.stop_retry_verified = verified;
+        log_event("recovery_stop_retry",
+                  "\"ioctl_rc\":%d,\"state_valid\":%d,\"phase\":%d,\"pin\":%d,"
+                  "\"hooks\":%d,\"error\":%d,\"verified\":%d",
+                  stop_rc, state_valid, g_recovery.state_after[0],
+                  g_recovery.state_after[1], g_recovery.state_after[2],
+                  g_recovery.state_after[3], verified);
+        if (stop_rc != 0)
+            return recovery_fail(A6400_REC_STOP_RETRY,
+                                 "stop_retry_ioctl_failed");
+        if (!verified)
+            return recovery_fail(A6400_REC_STOP_RETRY,
+                                 "state_not_zero_after_retry");
+    } else {
+        /* The read-only state already proved the session idle: no second
+         * destructive STOP is issued. */
+        for (i = 0; i < 4; i++)
+            g_recovery.state_after[i] = g_recovery.state_before[i];
+        g_recovery.state_after_valid = g_recovery.state_before_valid;
+        g_recovery.stop_retry_verified = 1;
+        log_event("recovery_stop_retry", "\"skipped\":\"state_already_zero\"");
+    }
+
+    /* Step 4: retire the entry hook under a verified ptrace stop scope and
+     * always resume the attestation set (the 181 TIDs of E0357 are this set). */
+    if (recovery_retire_hook(rt) != 0) {
+        if (g_recovery.freeze_rc != 0)
+            return recovery_fail(A6400_REC_FREEZE, "freeze_failed");
+        return recovery_fail(A6400_REC_HOOK_RETIRE, "hook_retire_failed");
+    }
+    if (g_recovery.resume_rc != 0)
+        return recovery_fail(A6400_REC_RESUME, "resume_failed");
+
+    /* Step 5: close, then let the pure classifier decide. */
+    log_destructive("recovery_close");
+    recovery_close(rt);
+    g_recovery.status = a6400_recovery_outcome(&g_recovery);
+    if (g_recovery.status != A6400_RECOVERY_RECOVERED) {
+        g_recovery.failed_step = A6400_REC_CLOSE;
+        snprintf(g_recovery.detail, sizeof g_recovery.detail, "%s",
+                 "close_incomplete");
+        return 0;
+    }
+    return 1;
 }
 
 static void teardown(struct daemon_rt *rt, const struct a6400_daemon_config *cfg,
@@ -1192,10 +1452,11 @@ static void teardown(struct daemon_rt *rt, const struct a6400_daemon_config *cfg
     }
 
     /* 3. STOP plus the all-zero session-state attestation. This is the gate
-     *    that permits hook retirement; if it fails the daemon parks instead of
-     *    retrying cleanup blindly (uvc_ptp_runner_stop.h:7-19). */
+     *    that permits hook retirement (uvc_ptp_runner_stop.h:7-19). A failure
+     *    first runs the bounded E0358 recovery; only a recovery error parks. */
     if (rt->init_attempted) {
         log_destructive("uvc_stop");
+        g_rc_stop_attempts = 1u;
         g_rc_stop_verified = a6400_runner_stop_verified(rt->uvc.fd, state);
         g_rc_session_active = 0;
         g_stats.session_active = 0;
@@ -1203,14 +1464,68 @@ static void teardown(struct daemon_rt *rt, const struct a6400_daemon_config *cfg
                    "uvc_stop verified=%d state=%d,%d,%d,%d",
                    g_rc_stop_verified, state[0], state[1], state[2], state[3]);
         if (!g_rc_stop_verified) {
-            g_stage = "parked";
-            g_exit_code = A6400_EXIT_FATAL;
-            *code = A6400_EXIT_FATAL;
+            int recovered = 0;
+
+            /* `state` is the daemon's -1 sentinel here: STOP failed before the
+             * status query, so no module state was read (E0358 analysis). */
             snprintf(g_fail_reason, sizeof g_fail_reason,
                      "stop attestation failed state=%d,%d,%d,%d",
                      state[0], state[1], state[2], state[3]);
+            if (g_park_recovery) {
+                /* (a)-(c): evidence first, then one bounded STOP retry that
+                 * re-enters the 9-phase teardown, then retire/resume/close. */
+                g_stage = "recovery";
+                g_exit_code = A6400_EXIT_DEGRADED;
+                recovered = recovery_attempt(rt);
+            } else {
+                a6400_logf(&g_log, A6400_LOG_WARN,
+                           "recovery_disabled flag=--no-park-recovery");
+            }
+            if (recovered) {
+                g_rc_teardown_verified = 1;
+                g_exit_code = A6400_EXIT_DEGRADED;
+                *code = A6400_EXIT_DEGRADED;
+                g_stage = "teardown_degraded";
+                snprintf(g_fail_reason, sizeof g_fail_reason,
+                         "stop attestation failed state=%d,%d,%d,%d; "
+                         "recovered by one bounded STOP retry",
+                         state[0], state[1], state[2], state[3]);
+                log_event("recovery_complete",
+                          "\"status\":\"recovered\",\"stop_attempts\":%u",
+                          g_rc_stop_attempts);
+                (void)write_receipt();
+                sd_teardown();
+                return;
+            }
+            /* Fail closed: park remains the last resort. The durable evidence
+             * was already written by the evidence step; this receipt records
+             * which recovery step failed so a future run is diagnosable. */
+            g_stage = "parked";
+            g_exit_code = A6400_EXIT_FATAL;
+            *code = A6400_EXIT_FATAL;
+            if (g_recovery.attempted) {
+                snprintf(g_fail_reason, sizeof g_fail_reason,
+                         "stop attestation failed state=%d,%d,%d,%d; recovery "
+                         "failed step=%s rc=%d detail=%s",
+                         state[0], state[1], state[2], state[3],
+                         a6400_recovery_step_name(g_recovery.failed_step),
+                         g_recovery.stop_retry_rc,
+                         g_recovery.detail[0] ? g_recovery.detail : "none");
+            }
             a6400_logf(&g_log, A6400_LOG_ERROR,
-                       "parked reason=stop_attestation_failed; no retire, no close, no retry");
+                       "parked reason=stop_attestation_failed recovery=%s "
+                       "failed_step=%s",
+                       a6400_recovery_status_name(g_recovery.status),
+                       a6400_recovery_step_name(g_recovery.failed_step));
+            /* Defensive, before any slow SD work: never park while this process
+             * holds a ptrace stop scope. The recovery path always resumes; this
+             * catches a state the logic above believes impossible. */
+            if (rt->runner.frozen) {
+                int resume_rc = a6400_runner_resume(&rt->runner);
+
+                a6400_logf(&g_log, A6400_LOG_WARN,
+                           "park_resume_guard rc=%d", resume_rc);
+            }
             (void)write_receipt();
             /* Make the durable receipt and unmount BEFORE parking: a parked
              * process can sit indefinitely and the camera may be battery-pulled
@@ -1277,6 +1592,9 @@ static void teardown(struct daemon_rt *rt, const struct a6400_daemon_config *cfg
                      "resume after retire failed rc=%d", rc);
         }
         rt->hook_retired = g_rc_hook_retired;
+        /* The clean path is verified only when the STOP gate AND the retire
+         * both succeeded; the recovered (degraded) path sets the same field. */
+        g_rc_teardown_verified = g_rc_hook_retired ? 1 : 0;
     }
 
     /* 5. Close everything. The node is not unlinked (see a6400_uvc_close). */
@@ -1398,6 +1716,14 @@ int a6400_daemon_run(const struct a6400_daemon_config *cfg)
     g_stage = "init";
     g_fail_reason[0] = '\0';
     g_exit_code = A6400_EXIT_CLEAN;
+    /* E0358: no recovery state exists unless a failed STOP created it. The
+     * state arrays stay at -1 so the receipt can never present an unanswered
+     * status read as an all-zero (verified) session. */
+    memset(&g_recovery, 0, sizeof g_recovery);
+    memset(g_recovery.state_before, 0xff, sizeof g_recovery.state_before);
+    memset(g_recovery.state_after, 0xff, sizeof g_recovery.state_after);
+    g_rc_teardown_verified = 0;
+    g_rc_stop_attempts = 0;
     g_cfg = *cfg;
     /* Initialise the SD status even when the feature is off: the receipt then
      * says "enabled:0" instead of omitting the block. */
@@ -1809,6 +2135,7 @@ int main(int argc, char **argv)
     cfg.sd_mount = 0;                  /* explicit consent, default OFF */
     cfg.sd_dev = A6400_SD_DEV_DEFAULT;
     cfg.sd_mountpoint = A6400_SD_MOUNT_DEFAULT;
+    g_park_recovery = 1;               /* E0358: bounded recovery is the default */
 
     rc = parse_argv(argc, argv, &cfg);
     if (rc == 1)

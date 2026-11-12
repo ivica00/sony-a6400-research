@@ -312,6 +312,59 @@ int a6400_runner_retire_hook(struct a6400_runner *r)
     return rc;
 }
 
+int a6400_runner_query_session_state(int uvc_fd, int32_t state[4])
+{
+    int i;
+
+    if (!state)
+        return 0;
+    for (i = 0; i < 4; i++)
+        state[i] = -1;
+    if (uvc_fd < 0)
+        return 0;
+    if (ioctl(uvc_fd, A6400_UVC_IOCTL_QUERY_SESSION_STATE, state) != 0)
+        return 0;
+    return 1;
+}
+
+int a6400_runner_retry_stop(int uvc_fd, int32_t state[4], int *stop_rc,
+                            int *state_valid)
+{
+    int i;
+
+    if (stop_rc)
+        *stop_rc = -EINVAL;
+    if (state_valid)
+        *state_valid = 0;
+    if (!state)
+        return 0;
+    for (i = 0; i < 4; i++)
+        state[i] = -1;
+    if (uvc_fd < 0)
+        return 0;
+
+    /* Exactly one attempt. The module's session_end() keeps the ordered
+     * teardown re-enterable and records failed_phase; a refused retry is
+     * reported to the caller, which parks (E0358).
+     */
+    if (ioctl(uvc_fd, A6400_UVC_IOCTL_STOP, NULL) != 0) {
+        if (stop_rc)
+            *stop_rc = -errno;
+        return 0;
+    }
+    if (stop_rc)
+        *stop_rc = 0;
+    if (!a6400_runner_query_session_state(uvc_fd, state))
+        return 0;
+    if (state_valid)
+        *state_valid = 1;
+    /* phase IDLE, pin absent, descriptor hooks absent, no retained error. */
+    for (i = 0; i < 4; i++)
+        if (state[i])
+            return 0;
+    return 1;
+}
+
 int a6400_runner_stop_verified(int uvc_fd, int32_t state[4])
 {
     int i;
@@ -324,7 +377,7 @@ int a6400_runner_stop_verified(int uvc_fd, int32_t state[4])
         return 0;
     if (ioctl(uvc_fd, A6400_UVC_IOCTL_STOP, NULL) != 0)
         return 0;
-    if (ioctl(uvc_fd, A6400_UVC_IOCTL_QUERY_SESSION_STATE, state) != 0)
+    if (!a6400_runner_query_session_state(uvc_fd, state))
         return 0;
     /* phase IDLE, pin absent, descriptor hooks absent, no retained error. */
     for (i = 0; i < 4; i++)

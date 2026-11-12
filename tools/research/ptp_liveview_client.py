@@ -300,18 +300,34 @@ class SonyWpdPTPLiveView:
         self.ctx = MtpContext()
         self.drv = None
 
-    def connect(self, device_index=0):
+    def connect(self, device_index=0, device_id=None):
         from pmca.usb.driver.windows.wpd import (
             tag_inner_PROPVARIANT, VT_UI4, CreateObject,
             PortableDevicePropVariantCollection,
         )
         print("Discovering Sony cameras via Windows WPD (PC Remote mode)...")
         devices = list(self.ctx.listDevices(0x054C))
+        if device_id:
+            devices = [d for d in devices
+                       if device_id.lower() in str(d.handle).lower()]
         if not devices:
+            # E0355 task 3: distinguish "WPD lists nothing" from "WPD lists it but
+            # the selection filter is wrong". Dump every WPD DeviceID read-only.
+            try:
+                from tools.research.wpd_device_dump import enumerate_wpd, parse_device_id
+                all_wpd = list(enumerate_wpd())
+                print(f"  WPD manager lists {len(all_wpd)} device(s):")
+                for candidate in all_wpd:
+                    vid, pid, mi = parse_device_id(str(candidate.handle))
+                    print(f"    vid={vid} pid={pid} mi={mi} {candidate.handle}")
+            except Exception as exc:
+                print(f"  WPD diagnostic unavailable: {type(exc).__name__}: {exc}")
+            detail = (f" (requested device id filter: {device_id!r})" if device_id else "")
             raise RuntimeError(
-                "No Sony camera found on USB in PC Remote mode.\n"
-                "Ensure camera is powered ON and set to:\n"
-                "  MENU -> Setup -> USB Connection -> PC Remote"
+                "No Sony camera found on USB in PC Remote mode" + detail + ".\n"
+                "If PnP shows USB\\VID_054C&PID_0322&MI_00 as 'MTP USB Device' while this list "
+                "is empty, the composite WPD child is not exposed through "
+                "PortableDeviceManager in this state (E0355)."
             )
         if not 0 <= device_index < len(devices):
             raise IndexError(f'device index {device_index} outside 0..{len(devices)-1}')
@@ -754,6 +770,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', choices=['ptp', 'uvc'], default='ptp', help='Video source: ptp (PC Remote) or uvc (USB Video Class)')
     parser.add_argument('--camera-index', type=int, default=None, help='UVC device index for --source uvc (default auto-detect)')
+    parser.add_argument('--wpd-device-id', default=None,
+                        help='select a specific WPD DeviceID substring (composite MI_00 support, E0355)')
     parser.add_argument('--serve', action='store_true', help='Start HTTP MJPEG / WebGL2 streaming server')
     parser.add_argument('--port', type=int, default=8080, help='Port for HTTP server (default 8080)')
     parser.add_argument('--no-auto-deploy', action='store_true', help='Do not auto-deploy UVC module via MSC debugger')
@@ -769,7 +787,8 @@ def main():
 
     try:
         if args.source == 'ptp':
-            client.connect(device_index=args.camera_index or 0)
+            client.connect(device_index=args.camera_index or 0,
+                           device_id=args.wpd_device_id)
         else:
             client.connect()
     except Exception as e:

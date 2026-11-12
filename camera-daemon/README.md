@@ -23,7 +23,7 @@ exactly once.
 | Claim | Status |
 | --- | --- |
 | Code written and cross-compiled for ARMv7-A softfp | **yes** (host build only) |
-| Unit-tested offline against the contract headers | **yes** (399 assertions) |
+| Unit-tested offline against the contract headers | **yes** (474 assertions) |
 | Ever executed on a camera | **NO** |
 | Ever caused a frame to be streamed to a host | **NO** |
 | Deployable under the project's own rules today | **NO** â€” boundaries B3 and B5 |
@@ -113,6 +113,7 @@ into growing latency, which is the failure mode this design forbids.
 | `src/log.c` | Bounded 256 KiB JSONL logger + optional O_SYNC SD second sink. |
 | `src/sd_policy.c` | **Added.** Pure device/mount-point/window/rotation gates (host-tested). |
 | `src/sd_mount.c` | **Added.** mount(2)/umount2/stat//proc/mounts/sentinel verification. |
+| `include/a6400_recovery.h`, `src/recovery_policy.c` | **Added (E0358).** Pure bounded park-recovery decisions (evidence-first order, one STOP retry, retire/resume/close gate; host-tested). |
 | `src/main.c` | Lifecycle, pacing, teardown, receipt. |
 | `build.sh` | Static ARM build + `build/manifest.json`. |
 | `Makefile`, `make.cmd` | Thin wrappers (see Â§4). |
@@ -156,10 +157,10 @@ python test/run_host_tests.py
 Current receipts (measured, host build only):
 
 ```
-ARM    build/a6400-lived      629592 bytes
-       sha256 aa2c1cb020b9afcbb63f4d14b65bb8a5bc578b3691fa1955a9b3bc4f96d90ec6
+ARM    build/a6400-lived      630536 bytes
+       sha256 990475753ecf20e02a9b5c7b095a74606bf72c710271148d939f7edd910b2f16
        warnings 0 under -Werror; statically linked ARM EABI5
-host   build/host_test.exe    399 checks, 0 failures
+host   build/host_test.exe    474 checks, 0 failures
 ```
 
 Re-run the commands above to refresh them; the numbers in this file are a
@@ -193,6 +194,7 @@ receipt, not a promise.
 | `--sd-log` | off | E0350: mirror every completed JSONL line **and** the final receipt to the SD card. A battery pull wipes `/tmp_bt`; the SD copy is the only receipt that survives. A failed SD write drops the sink, counts the error and leaves RAM logging intact. |
 | `--sd-mount` | off | Explicit mount(2) consent. **Requires `--sd-log`.** Refused unless PC Remote `054c:0caa` was confirmed, INIT has not started, and this is not a dry run; never mounted in Mass Storage (the camera app owns the card). |
 | `--sd-dev PATH` | `/dev/mmca1` | SD data partition (block 250:11, E0222). Only that exact node is accepted; `/dev/mmca` (whole card) and every `/dev/nflasha*` internal-flash node are refused before any syscall. |
+| `--dmesg-sd` | off | E0356: mirror the kernel `[a6400_*]` trace (`klogctl` READ_ALL ring, bounded 192 KiB/128 KiB) to `<mountpoint>/A6400K.LOG` with `O_APPEND|O_SYNC` + `fsync`, every ~150 stream ticks (~5 s at 30 fps), at each stats interval, and once before unmount. Requires `--sd-log --sd-mount`. Failures are counted in `sd_log.trace_errors`; a card failure never blocks the frame loop. |
 | `--sd-mountpoint PATH` | `/tmp_bt/sd` | Rootfs is read-only ext2 and `/tmp_bt` is the only writable directory, so the mount point must be a child of `/tmp_bt/`. `mkdir` is attempted there only; `/setting`, `/etc`, `/system`, `/log`, `/tmp`, `/lens`, `/cert` are refused. |
 | `--verbose` | off | DEBUG-level logging and control-layer diagnostics on stderr. |
 
@@ -226,6 +228,22 @@ receipt, not a promise.
   the receipt): it rewrites the receipt while mounted, closes the sink, then
   `umount2(mountpoint, 0)`. A failed unmount leaves `mounted: 1` and records
   `unmount_rc`; it is never reported as clean.
+* **Degraded teardown (E0358).** A failed stop attestation no longer parks
+  immediately. The daemon first writes the durable evidence (flush `A6400K.LOG`,
+  rewrite `A6400RCPT.JSON` with `status=degraded_teardown`), then reads the
+  module's status `0x8010f022` and issues **one** bounded retry of
+  `IOCTL_UVC_STOP` (which is what re-enters the ordered 9-phase unconfigure-first
+  teardown; `HOOK_RETIRE` cannot, and the module refuses it while the session is
+  held), then freeze → `HOOK_RETIRE` → resume → close. The evidence flush runs
+  whenever the SD sink is mounted and verified (the `--dmesg-sd` flag only gates
+  the periodic ~5 s mirroring). Success is claimed only when the retry is
+  followed by an all-zero status, the entry hook is retired, the attestation
+  set is resumed and the descriptors are closed; the receipt then says
+  `status=degraded_teardown`, `exit_code=5`, `lifecycle.stop_verified=0`,
+  `lifecycle.teardown_verified=1` and carries the full `recovery` block. A failed
+  recovery step still parks (fail closed) with the failed step and rcs recorded;
+  `--no-park-recovery` restores the old immediate park. The clean path
+  (`stop_verified=1`) is untouched.
 * **Risks, stated plainly.**
   * The camera app owns the SD in Mass Storage, so a mount after a missed mode
     check can fail `EBUSY` (`mount_rc = -16`) or mount the wrong namespace. The
@@ -241,7 +259,9 @@ receipt, not a promise.
     unmount before returning to Mass Storage. A mount that is still live at
     process exit is reported, not hidden.
 
-Exit codes: **0** clean, **2** stage failure, **3** refused, **4** fatal.
+Exit codes: **0** clean, **2** stage failure, **3** refused, **4** fatal,
+**5** degraded teardown (E0358: a failed stop attestation was recovered by the
+bounded retry; see §5.1).
 
 ---
 
@@ -367,9 +387,13 @@ Every item below is an intentional refusal, not an unfinished path.
 6. **`REG_BUF` rejection** â†’ stage failure before any frame is attempted.
 7. **Repeated transport errors** (30 consecutive `GET_JPEG`/`WAIT`/`UPDATE`
    failures) â†’ stage failure, exit 2. No infinite retry loop.
-8. **Stop attestation failure** â†’ **park**. The receipt is written, and the
-   process keeps the fd and hook state instead of retiring, closing or retrying.
-   A signal is the operator's explicit decision to leave.
+8. **Stop attestation failure** â†’ **bounded recovery, then park** (E0358). The
+   durable evidence (SD trace + `degraded_teardown` receipt) is written first,
+   then exactly one STOP retry, then freeze/`HOOK_RETIRE`/resume/close. If any
+   recovery step fails, the process parks: the receipt records
+   `recovery.failed_step`/rcs, the fd and hook state are kept, and a signal is
+   the operator's explicit decision to leave. `--no-park-recovery` restores the
+   old immediate park.
 9. **Freeze / retire / resume failure** â†’ exit 4 with the exact rc in the
    receipt. Never a fabricated clean session.
 10. **Unknown control opcode** â†’ `UNKNOWN_OPCODE`, never ignored.

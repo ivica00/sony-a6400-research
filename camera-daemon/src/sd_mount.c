@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/klog.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -357,5 +358,87 @@ int a6400_sd_write_receipt(struct a6400_sd_status *st, const char *json,
         return rc;
     }
     st->receipt_written = 1;
+    return 0;
+}
+
+/* ---- E0356 crash-safe kernel trace -------------------------------------- */
+
+#define A6400_TRACE_READ_MAX (192u * 1024u)
+#define A6400_TRACE_OUT_MAX  (128u * 1024u)
+#define A6400_TRACE_LAST_MAX 512u
+
+static char g_trace_read[A6400_TRACE_READ_MAX + 1u];
+static char g_trace_out[A6400_TRACE_OUT_MAX + 1u];
+static char g_trace_last[A6400_TRACE_LAST_MAX + 1u];
+
+int a6400_sd_flush_kernel_trace(struct a6400_sd_status *st)
+{
+    char path[A6400_SD_PATH_MAX + 32u];
+    uint32_t sidx = 0, olen = 0, lines = 0;
+    int fd, n, rc = 0;
+
+    if (!st || !st->mounted)
+        return 0;
+    /* SYSLOG_ACTION_READ_ALL (3): read the ring without consuming it. */
+    n = klogctl(3, g_trace_read, (int)A6400_TRACE_READ_MAX);
+    if (n < 0) {
+        st->trace_errors++;
+        return -errno;
+    }
+    g_trace_read[n] = '\0';
+    if (g_trace_last[0]) {
+        char *pos = strstr(g_trace_read, g_trace_last);
+        if (pos) {
+            char *nl = strchr(pos, '\n');
+            sidx = nl ? (uint32_t)(nl - g_trace_read + 1)
+                      : (uint32_t)(pos - g_trace_read) + (uint32_t)strlen(g_trace_last);
+        } else {
+            sidx = 0; /* ring wrapped: re-read the whole buffer (bounded duplicates) */
+        }
+    }
+    while (sidx < (uint32_t)n) {
+        char *line = g_trace_read + sidx;
+        char *nl = strchr(line, '\n');
+        uint32_t len = nl ? (uint32_t)(nl - line + 1) : (uint32_t)strlen(line);
+
+        if (len == 0)
+            break;
+        if (strstr(line, "[a6400_")) {
+            if (olen + len <= A6400_TRACE_OUT_MAX) {
+                memcpy(g_trace_out + olen, line, len);
+                olen += len;
+                lines++;
+                if (len < A6400_TRACE_LAST_MAX) {
+                    memcpy(g_trace_last, line, len);
+                    g_trace_last[len] = '\0';
+                }
+            }
+        }
+        sidx += len;
+        if (!nl)
+            break;
+    }
+    if (!olen)
+        return 0;
+    if (snprintf(path, sizeof path, "%s/%s", st->mountpoint,
+                 A6400_SD_TRACE_NAME) <= 0) {
+        st->trace_errors++;
+        return A6400_SD_ERR_IO;
+    }
+    fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_SYNC | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        st->trace_errors++;
+        return -errno;
+    }
+    rc = write_all_fd(fd, g_trace_out, olen);
+    if (rc == 0 && fsync(fd) != 0)
+        rc = -errno;
+    if (close(fd) != 0 && rc == 0)
+        rc = -errno;
+    if (rc != 0) {
+        st->trace_errors++;
+        return rc;
+    }
+    st->trace_lines += lines;
     return 0;
 }

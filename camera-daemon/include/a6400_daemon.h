@@ -61,6 +61,7 @@ struct a6400_daemon_config {
      * requires explicit consent (--sd-mount) and the PC Remote window. */
     int         sd_log;           /* --sd-log: mirror JSONL + receipt to SD   */
     int         sd_mount;         /* --sd-mount: explicit mount consent       */
+    int         dmesg_sd;         /* --dmesg-sd: mirror [a6400_*] kernel trace to SD */
     const char *sd_dev;           /* default /dev/mmca1 (SD partition)        */
     const char *sd_mountpoint;    /* default /tmp_bt/sd; must be under /tmp_bt/ */
 };

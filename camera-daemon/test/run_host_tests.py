@@ -35,7 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 SOURCES = ["test/host_test.c", "src/frame_hook.c", "src/control_bridge.c",
-           "src/sd_policy.c"]
+           "src/sd_policy.c", "src/recovery_policy.c"]
 CFLAGS = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Iinclude"]
 MIN_ASSERTIONS = 40
 WSL_DISTRO = os.environ.get("A6400_WSL_DISTRO", "Ubuntu")

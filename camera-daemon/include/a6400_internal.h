@@ -53,6 +53,21 @@ int  a6400_runner_retire_hook(struct a6400_runner *r);
  * four state words are zero; 0 otherwise. Never retries. */
 int  a6400_runner_stop_verified(int uvc_fd, int32_t state[4]);
 
+/* Read-only session status query (0x8010f022), no side effect. Returns 1 and
+ * fills `state` when the ioctl answered; 0 otherwise (state stays -1..-1 so a
+ * caller can never mistake an unanswered read for an all-zero session). This is
+ * the only module-supplied diagnostic available after a failed STOP (E0358). */
+int  a6400_runner_query_session_state(int uvc_fd, int32_t state[4]);
+
+/* Bounded recovery primitive for a failed stop attestation: exactly ONE retry
+ * of STOP (0x0000e001), which re-enters the module's ordered 9-phase teardown,
+ * followed by the same status query the clean gate uses. Returns 1 only when
+ * the retry returned 0 AND the follow-up state is all zero. `stop_rc` receives
+ * the ioctl result (0 or -errno) and `state_valid` whether the query answered.
+ * A refused retry is reported, never retried again. */
+int  a6400_runner_retry_stop(int uvc_fd, int32_t state[4], int *stop_rc,
+                             int *state_valid);
+
 /* Parks the caller without retrying cleanup. Returns 1 when *stop_flag became
  * non-zero (a signal handler asked us to leave), 0 only if stop_flag is NULL
  * (then this call does not return). */

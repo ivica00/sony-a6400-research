@@ -31,6 +31,12 @@ struct uvc_bridge {
     uvc_u32 started_interface;
     /* Optional native endpoint validation; returns matching gadgetcore wrapper. */
     uvc_u32 (*bulk_endpoint)(uvc_u32 count, uvc_u32 array);
+    /* E0355 abort accounting (appended; earlier offsets unchanged): a CLASS or
+     * VENDOR thunk may have queued an asynchronous EP0 completion that the
+     * synchronous in_flight counter cannot observe. The teardown uses this to
+     * hold before unbind/free/reconnect when the native error check reports a
+     * failure while such a request is outstanding. */
+    volatile uvc_u32 class_requests, vendor_requests, class_last_result;
 };
 typedef int (*uvc_register_fn)(struct uvc_old_descriptor *);
 typedef int (*uvc_unregister_fn)(struct uvc_old_descriptor *);

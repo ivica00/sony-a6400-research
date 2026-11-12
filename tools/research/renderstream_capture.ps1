@@ -80,6 +80,10 @@ param(
     [string]$Command = '',
     [ValidateRange(1, 600)]
     [int]$TimeoutSec = 90,
+    # E0356: keep the ETW session armed after the caller command (for the
+    # MSC switch / unknown-device transition) before stopping the capture.
+    [ValidateRange(0, 600)]
+    [int]$PostCaptureWaitSec = 0,
     [string]$UsbPcapDevice = '\\.\USBPcap1',
     [string]$NpcapInterface = '',
     [string]$Analyze = '',
@@ -225,7 +229,8 @@ function Get-UsbProviders {
     $wanted = @(
         'Microsoft-Windows-USB-USBPORT',
         'Microsoft-Windows-USB-USBHUB3',
-        'Microsoft-Windows-USB-USBXHCI'
+        'Microsoft-Windows-USB-USBXHCI',
+        'Microsoft-Windows-USB-UCX'
     )
     $rows = @()
     $table = @{}
@@ -427,7 +432,8 @@ function Start-Capture {
                 $providers = @(
                     'Microsoft-Windows-USB-USBPORT',
                     'Microsoft-Windows-USB-USBHUB3',
-                    'Microsoft-Windows-USB-USBXHCI'
+                    'Microsoft-Windows-USB-USBXHCI',
+                    'Microsoft-Windows-USB-UCX'
                 )
                 Write-Utf8File -Path $providersFile -Text (($providers -join "`r`n") + "`r`n")
                 $out = & logman create trace a6400usb -pf $providersFile -o $Spec.path -ets 2>&1
@@ -804,7 +810,8 @@ $manifest = [pscustomobject]@{
     required_providers = @(
         'Microsoft-Windows-USB-USBPORT',
         'Microsoft-Windows-USB-USBHUB3',
-        'Microsoft-Windows-USB-USBXHCI'
+        'Microsoft-Windows-USB-USBXHCI',
+        'Microsoft-Windows-USB-UCX'
     )
 }
 $mp = Write-Manifest -OutDir $outDir -Manifest $manifest

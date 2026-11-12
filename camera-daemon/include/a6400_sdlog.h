@@ -41,6 +41,7 @@
 #define A6400_SD_LOG_ROTATED   "A6400LD.1"
 #define A6400_SD_RECEIPT_NAME  "A6400RCPT.JSON"
 #define A6400_SD_SENTINEL_NAME "A6400SNT.TMP"
+#define A6400_SD_TRACE_NAME   "A6400K.LOG"   /* kernel [a6400_*] trace */
 
 #define A6400_SD_LOG_ROTATE_BYTES (128u * 1024u)
 #define A6400_SD_PATH_MAX   128u
@@ -155,6 +156,8 @@ struct a6400_sd_status {
     int      receipt_written;   /* 1 = A6400RCPT.JSON copied + fsynced */
     uint32_t errors;            /* failed opens/writes/verifications */
     uint32_t rotations;
+    uint32_t trace_lines;       /* [a6400_*] kernel lines mirrored to SD */
+    uint32_t trace_errors;      /* failed klogctl/open/write/fsync */
     char     device[A6400_SD_PATH_MAX];
     char     mountpoint[A6400_SD_PATH_MAX];
     char     reason[A6400_SD_REASON_MAX];
@@ -179,5 +182,13 @@ int a6400_sd_unmount(struct a6400_sd_status *st);
  * This is the durable receipt; failure is counted, never hidden. */
 int a6400_sd_write_receipt(struct a6400_sd_status *st, const char *json,
                            uint32_t len);
+
+/* E0356 crash-safe kernel trace: reads the kernel log ring (klogctl READ_ALL),
+ * filters lines containing "[a6400_", and appends only lines after the last one
+ * already mirrored to <mountpoint>/A6400K.LOG with O_APPEND|O_SYNC + fsync.
+ * Bounded (128KiB read/append), duplicates avoided by last-line matching, and
+ * never blocks the frame loop: a failure is counted in trace_errors. Returns 0
+ * when nothing needed writing or the write succeeded, negative on error. */
+int a6400_sd_flush_kernel_trace(struct a6400_sd_status *st);
 
 #endif /* A6400_SDLOG_H */
