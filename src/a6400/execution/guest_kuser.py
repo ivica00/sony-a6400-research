@@ -19,6 +19,7 @@ KUSER_VERSION_SLOT = 0xffff0ffc
 
 # Expected SHA256 of the 160-byte template extracted from vmlinux.bin
 EXPECTED_KUSER_SHA256 = 'f9e6a6128970c915c1b372dbeb16ebed77e032b9be042e21f1540c466d5f4297'
+KUSER_TEMPLATE_PREFIX = bytes.fromhex('f0002de9d040c0e1d060c1e15ff07ff5')
 VMLINUX_KUSER_OFFSET = 0x388fe0
 # Per-kernel template offsets, keyed by vmlinux.bin SHA-256. The template bytes are still
 # checked against EXPECTED_KUSER_SHA256 (byte-identical in the ILCE-6100A V1.01 kernel).
@@ -28,6 +29,19 @@ VMLINUX_KUSER_OFFSETS = {
 }
 
 
+def _find_kuser_template(data):
+    """Locate the verified 160-byte kuser template anywhere in an unknown kernel image."""
+    pos = 0
+    while True:
+        idx = data.find(KUSER_TEMPLATE_PREFIX, pos)
+        if idx < 0:
+            return None
+        candidate = data[idx:idx + KUSER_TEMPLATE_SIZE]
+        if len(candidate) == KUSER_TEMPLATE_SIZE and hashlib.sha256(candidate).hexdigest() == EXPECTED_KUSER_SHA256:
+            return candidate
+        pos = idx + 4
+
+
 def extract_kuser_template(kernel_path_or_bytes, expected_kernel_hash=None):
     """Extract and verify the kuser helper template from vmlinux.bin."""
     if isinstance(kernel_path_or_bytes, (str, Path)):
@@ -35,15 +49,21 @@ def extract_kuser_template(kernel_path_or_bytes, expected_kernel_hash=None):
     else:
         data = bytes(kernel_path_or_bytes)
 
+    actual_kernel_hash = hashlib.sha256(data).hexdigest()
     if expected_kernel_hash is not None:
-        actual_kernel_hash = hashlib.sha256(data).hexdigest()
         if actual_kernel_hash != expected_kernel_hash:
             raise ValueError(f'Kernel hash mismatch: expected {expected_kernel_hash}, got {actual_kernel_hash}')
 
-    offset = VMLINUX_KUSER_OFFSETS.get(hashlib.sha256(data).hexdigest(), VMLINUX_KUSER_OFFSET)
+    offset = VMLINUX_KUSER_OFFSETS.get(actual_kernel_hash, VMLINUX_KUSER_OFFSET)
     template = data[offset:offset + KUSER_TEMPLATE_SIZE]
+    if actual_kernel_hash not in VMLINUX_KUSER_OFFSETS and (
+        len(template) != KUSER_TEMPLATE_SIZE or hashlib.sha256(template).hexdigest() != EXPECTED_KUSER_SHA256
+    ):
+        found = _find_kuser_template(data)
+        if found is not None:
+            template = found
     if len(template) != KUSER_TEMPLATE_SIZE:
-        raise ValueError(f'Kernel image too small to extract kuser template at offset {hex(VMLINUX_KUSER_OFFSET)}')
+        raise ValueError(f'Kernel image too small to extract kuser template at offset {hex(offset)}')
 
     template_hash = hashlib.sha256(template).hexdigest()
     if template_hash != EXPECTED_KUSER_SHA256:

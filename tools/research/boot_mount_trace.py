@@ -64,10 +64,10 @@ def parse_devno_table() -> list[dict[str, Any]]:
         return entries
 
 
-def parse_init_mounts() -> tuple[list[dict[str, Any]], list[dict[str, str]], list[dict[str, str]]]:
+def parse_init_mounts(init_bin: Path = INIT_BIN) -> tuple[list[dict[str, Any]], list[dict[str, str]], list[dict[str, str]]]:
     import hashlib
-    mnts_addr, drv1_addr, drv2_addr = INIT_TABLES[hashlib.sha256(INIT_BIN.read_bytes()).hexdigest()]
-    with open(INIT_BIN, "rb") as f:
+    mnts_addr, drv1_addr, drv2_addr = INIT_TABLES[hashlib.sha256(init_bin.read_bytes()).hexdigest()]
+    with open(init_bin, "rb") as f:
         elf = elffile.ELFFile(f)
         rodata_sec = elf.get_section_by_name(".rodata")
         data_sec = elf.get_section_by_name(".data")
