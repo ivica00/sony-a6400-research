@@ -5,6 +5,11 @@
  */
 #include "uvc_callback_bridge.h"
 
+/* E0388: hot-path diagnostics are OFF in the default build. */
+#ifndef A6400_UVC_TRACE
+#define A6400_UVC_TRACE 0
+#endif
+
 /* E0356: setup-packet/return logging (kernel symbol, same as the other module files). */
 extern int printk(const char *fmt, ...);
 
@@ -64,6 +69,150 @@ enum { START, STOP, SET_HALT, CLEAR_HALT, SUSPEND, RESUME, DISCONNECT, CLASS, VE
  * heap objects sit at 0x68xxxxxx (dwc 689e5810, dep 68a1c1c0, ep0 68a1c9c0).
  * Widen the read-only diagnostic bound to the kernel lowmem/vmalloc window. */
 static uvc_u32 g_ep0_last;
+static uvc_u32 g_class_lr; /* E0386: class-entry caller identity */
+static int g_class_dir_out;
+extern int a6400_uvc_restore_descriptors_bridge(void);
+extern int schedule_work(void *work);
+extern void msleep(unsigned int msecs);
+static int g_disconnect_restored;
+static uvc_u32 g_restore_work[8] __attribute__((aligned(4)));
+static void a6400_uvc_restore_work_fn(void *work);
+
+static int a6400_uvc_kernel_ptr(uvc_u32 p);
+static uvc_u32 a6400_uvc_rd32(uvc_u32 address);
+static uvc_u8 a6400_uvc_rd8(uvc_u32 address);
+static uvc_u32 g_req_complete_orig;
+struct a6400_ts { unsigned int sec, nsec; };
+/* E0391: zero-printk in-RAM EP0 ring, dumped only once at STOP. */
+struct a6400_ring_rec {
+    uvc_u32 sec, nsec, hook, ep, req, bmrt, reqcode, wValue, wIndex, wLength;
+    uvc_u32 lpos, cnt, evword, ep0state, next, fl, trb_ctl, trb_sz;
+    uvc_u32 actual, status, buf0, buf1, bounce0, bounce1, result;
+    uvc_u32 len, flags, lr;
+};
+static struct a6400_ring_rec g_ring[128];
+static unsigned g_ring_n, g_ring_dropped, g_ring_dumped, g_ring_installed;
+static uvc_u32 g_ring_ops_orig, g_ring_queue_orig, g_ring_ops_shadow[16], g_ring_ep;
+static uvc_u32 g_start_count, g_class_call_count, g_get_cur_count, g_set_cur_count;
+static uvc_u32 g_queue_count, g_complete_count;
+static void a6400_uvc_ring_record(uvc_u32 hook, uvc_u32 ep, uvc_u32 req,
+                                  const uvc_u8 *setup, uvc_u32 result);
+static int a6400_uvc_ring_queue_wrap(void *ep, void *req, unsigned int gfp);
+static void a6400_uvc_ring_complete_thunk(void *ep, void *req);
+
+static void a6400_uvc_now(uvc_u32 *sec, uvc_u32 *ns)
+{
+    struct a6400_ts ts; ts.sec=0; ts.nsec=0;
+    ((void (*)(void *))0x60157a14u)(&ts);
+    *sec=ts.sec; *ns=ts.nsec;
+}
+
+static void a6400_uvc_ring_record(uvc_u32 hook, uvc_u32 ep, uvc_u32 req,
+                                  const uvc_u8 *setup, uvc_u32 result)
+{
+    struct a6400_ring_rec *r;
+    uvc_u32 dwc=0, ev=0, arr=0, buf=0, bv=0, trb=0, lpos=0, cnt=0;
+    if (hook==0) g_start_count++; else if (hook==1) g_class_call_count++;
+    else if (hook==2) g_queue_count++; else if (hook==3) g_complete_count++;
+    if (g_ring_n >= 128u) { g_ring_dropped++; return; }
+    r=&g_ring[g_ring_n++]; r->hook=hook; r->ep=ep; r->req=req; r->result=result; r->lr=0;
+    a6400_uvc_now(&r->sec,&r->nsec);
+    if (setup) { r->bmrt=setup[0]; r->reqcode=setup[1]; r->wValue=(uvc_u32)setup[2]|((uvc_u32)setup[3]<<8);
+        r->wIndex=(uvc_u32)setup[4]|((uvc_u32)setup[5]<<8); r->wLength=(uvc_u32)setup[6]|((uvc_u32)setup[7]<<8); }
+    if (ep && a6400_uvc_kernel_ptr(ep)) dwc=a6400_uvc_rd32(ep+0x48u);
+    if (dwc && a6400_uvc_kernel_ptr(dwc)) {
+        r->ep0state=a6400_uvc_rd8(dwc+0x2e0u); r->next=a6400_uvc_rd32(dwc+0x2dcu); r->fl=a6400_uvc_rd8(dwc+0x2d8u);
+        arr=a6400_uvc_rd32(dwc+0xccu); ev=(arr && a6400_uvc_kernel_ptr(arr))?a6400_uvc_rd32(arr):0;
+        if (ev && a6400_uvc_kernel_ptr(ev)) { lpos=a6400_uvc_rd32(ev+8u); cnt=a6400_uvc_rd32(ev+0xcu);
+            buf=a6400_uvc_rd32(ev); if (buf && a6400_uvc_kernel_ptr(buf) && lpos<0x1000u) r->evword=a6400_uvc_rd32(buf+lpos); }
+        r->lpos=lpos; r->cnt=cnt;
+        trb=a6400_uvc_rd32(dwc+4u); if (trb && a6400_uvc_kernel_ptr(trb)) { r->trb_sz=a6400_uvc_rd32(trb+8u); r->trb_ctl=a6400_uvc_rd32(trb+0xcu); }
+        bv=a6400_uvc_rd32(dwc+8u); if (bv && a6400_uvc_kernel_ptr(bv)) { r->bounce0=a6400_uvc_rd32(bv); r->bounce1=a6400_uvc_rd32(bv+4u); }
+    }
+    if (req && a6400_uvc_kernel_ptr(req)) {
+        r->len=a6400_uvc_rd32(req+4u); r->flags=a6400_uvc_rd8(req+0x1au);
+        r->actual=a6400_uvc_rd32(req+0x30u); r->status=a6400_uvc_rd32(req+0x2cu);
+        buf=a6400_uvc_rd32(req); if (buf && a6400_uvc_kernel_ptr(buf)) { r->buf0=a6400_uvc_rd32(buf); r->buf1=a6400_uvc_rd32(buf+4u); }
+    }
+}
+
+static int a6400_uvc_ring_queue_wrap(void *ep, void *req, unsigned int gfp)
+{
+    uvc_u32 r=(uvc_u32)req;
+    /* E0395: match the standard setup_req request flag for short class IN. */
+    if (!g_class_dir_out && r && a6400_uvc_kernel_ptr(r))
+        *(volatile uvc_u8 *)(r+0x1au) |= 0x02u;
+    a6400_uvc_ring_record(2u,(uvc_u32)ep,r,0,0);
+    if (g_ring_n) g_ring[g_ring_n-1].lr=(uvc_u32)__builtin_return_address(0);
+    if (r && a6400_uvc_kernel_ptr(r)) {
+        uvc_u32 comp=a6400_uvc_rd32(r+0x1cu);
+        if (comp && comp!=(uvc_u32)a6400_uvc_ring_complete_thunk) {
+            g_req_complete_orig=comp;
+            *(volatile uvc_u32 *)(r+0x1cu)=(uvc_u32)a6400_uvc_ring_complete_thunk;
+        }
+    }
+    if (!g_ring_queue_orig) return -22;
+    return ((int (*)(void *,void *,unsigned int))g_ring_queue_orig)(ep,req,gfp);
+}
+
+static void a6400_uvc_ring_complete_thunk(void *ep, void *req)
+{
+    uvc_u32 r=(uvc_u32)req, orig=g_req_complete_orig;
+    a6400_uvc_ring_record(3u,(uvc_u32)ep,r,0,0);
+    if (r && a6400_uvc_kernel_ptr(r) && orig) *(volatile uvc_u32 *)(r+0x1cu)=orig;
+    if (orig && orig!=(uvc_u32)a6400_uvc_ring_complete_thunk)
+        ((void (*)(void *,void *))orig)((void *)ep,(void *)req);
+}
+
+static void a6400_uvc_ring_install(uvc_u32 ep)
+{
+    uvc_u32 ops; unsigned i;
+    if (g_ring_installed || !ep || !a6400_uvc_kernel_ptr(ep)) return;
+    ops=a6400_uvc_rd32(ep+8u); if (!ops || !a6400_uvc_kernel_ptr(ops)) return;
+    g_ring_ops_orig=ops;
+    for (i=0;i<16u;i++) g_ring_ops_shadow[i]=a6400_uvc_rd32(ops+4u*i);
+    g_ring_queue_orig=g_ring_ops_shadow[4];
+    g_ring_ops_shadow[4]=(uvc_u32)a6400_uvc_ring_queue_wrap;
+    *(volatile uvc_u32 *)(ep+8u)=(uvc_u32)g_ring_ops_shadow;
+    g_ring_ep=ep; g_ring_installed=1;
+}
+
+static void a6400_uvc_ring_dump(void)
+{
+    unsigned i;
+    if (g_ring_dumped) return;
+    g_ring_dumped=1;
+    printk("[a6400_uvc] RAMRING n=%u dropped=%u start=%u class=%u get=%u set=%u queue=%u complete=%u\n",
+           g_ring_n,g_ring_dropped,g_start_count,g_class_call_count,g_get_cur_count,g_set_cur_count,g_queue_count,g_complete_count);
+    for (i=0;i<g_ring_n;i++) {
+        struct a6400_ring_rec *r=&g_ring[i];
+        printk("[a6400_uvc] RR %u h=%u t=%u.%09u ep=%08x req=%08x bm=%02x rq=%02x v=%04x i=%04x l=%04x lpos=%x cnt=%x ev=%08x st=%02x nx=%x fl=%02x ctl=%08x sz=%08x act=%u sts=%d b0=%08x b1=%08x bo0=%08x bo1=%08x res=%d len=%u flg=%02x lr=%08x\n",
+            i,(unsigned)r->hook,r->sec,r->nsec,(unsigned)r->ep,(unsigned)r->req,
+            (unsigned)r->bmrt,(unsigned)r->reqcode,(unsigned)r->wValue,(unsigned)r->wIndex,(unsigned)r->wLength,
+            (unsigned)r->lpos,(unsigned)r->cnt,(unsigned)r->evword,(unsigned)r->ep0state,
+            (unsigned)r->next,(unsigned)r->fl,(unsigned)r->trb_ctl,(unsigned)r->trb_sz,
+            (unsigned)r->actual,(int)r->status,(unsigned)r->buf0,(unsigned)r->buf1,
+            (unsigned)r->bounce0,(unsigned)r->bounce1,(int)r->result,
+            (unsigned)r->len,(unsigned)r->flags,(unsigned)r->lr);
+    }
+}
+
+static void a6400_uvc_ring_install_early(void)
+{
+    uvc_u32 gc=a6400_uvc_rd32(0x6051b17cu);
+    if (gc && a6400_uvc_kernel_ptr(gc)) {
+        uvc_u32 ep=a6400_uvc_rd32(gc+4u);
+        if (ep && a6400_uvc_kernel_ptr(ep)) a6400_uvc_ring_install(ep);
+    }
+}
+
+static void a6400_uvc_ring_restore(void)
+{
+    if (g_ring_installed && g_ring_ep && a6400_uvc_kernel_ptr(g_ring_ep))
+        *(volatile uvc_u32 *)(g_ring_ep+8u)=g_ring_ops_orig;
+    g_ring_installed=0;
+}
+
 
 static int a6400_uvc_kernel_ptr(uvc_u32 p)
 { return p>=0x5f000000u && p<0x70000000u; }
@@ -88,7 +237,7 @@ static uvc_u32 a6400_uvc_gc_ctx(uvc_u32 ep)
 }
 
 static int a6400_uvc_gc_queue_wrap(void *ep, void *req, unsigned int gfp);
-static void a6400_uvc_gc_wrap_install(uvc_u32 ep)
+__attribute__((unused)) static void a6400_uvc_gc_wrap_install(uvc_u32 ep)
 {
     uvc_u32 gc, gc_ep, ops, i;
     if (g_gc_wrapped) return;
@@ -98,6 +247,12 @@ static void a6400_uvc_gc_wrap_install(uvc_u32 ep)
     if (!gc_ep || !a6400_uvc_kernel_ptr(gc_ep)) return;
     ops=a6400_uvc_rd32(gc_ep+8u);
     if (!ops || !a6400_uvc_kernel_ptr(ops)) return;
+    /* E0375: read-only GC observation only. Do NOT install a second ops shadow:
+     * gc_ep0 == class ep0, nested shadows dangle ep0->ops during unload. */
+    printk("[a6400_uvc] GCRO gc=%08x gc_ep=%08x ops=%08x class_ep=%08x eq=%d\n",
+           (unsigned)gc,(unsigned)gc_ep,(unsigned)ops,(unsigned)ep,
+           (unsigned)(gc_ep==ep));
+    return;
     g_gc_ep0=gc_ep; g_gc_ops_orig=ops;
     for (i=0;i<16;i++) g_gc_ops_shadow[i]=a6400_uvc_rd32(ops+i*4u);
     g_gc_queue_orig=g_gc_ops_shadow[4];
@@ -108,7 +263,7 @@ static void a6400_uvc_gc_wrap_install(uvc_u32 ep)
            (unsigned)gc,(unsigned)gc_ep,(unsigned)ops,(unsigned)ep,
            (unsigned)(gc_ep==ep));
 }
-static void a6400_uvc_gc_wrap_restore(void)
+__attribute__((unused)) static void a6400_uvc_gc_wrap_restore(void)
 {
     if (g_gc_wrapped && g_gc_ep0 && g_gc_ops_orig)
         *(volatile uvc_u32 *)(g_gc_ep0+8u)=g_gc_ops_orig;
@@ -171,6 +326,82 @@ static void a6400_uvc_log_events(const char *tag, uvc_u32 dwc)
     (void)i; (void)w;
 }
 
+static uvc_u32 a6400_uvc_rd32(uvc_u32 address);
+
+/* E0383: read-only timestamps via a6400 ktime_get_ts 0x60157a14. */
+static void a6400_uvc_tstamp(const char *tag)
+{
+    struct a6400_ts ts; ts.sec=0; ts.nsec=0;
+    ((void (*)(void *))0x60157a14u)(&ts);
+    printk("[a6400_uvc] TS %s sec=%u nsec=%u\n",tag,ts.sec,ts.nsec);
+}
+
+/* E0378: read-only controller snapshot: ctrl_req, single ep0_trb, bounce, dep
+ * request lists, event ring, GEVNTCOUNT0, ep0 state. No writes. */
+static uvc_u8 a6400_uvc_rd8(uvc_u32 address);
+static void a6400_uvc_gcro(const char *tag, uvc_u32 ep, uvc_u32 ctrl)
+{
+    uvc_u32 dwc,regs,cr0=0,cr1=0,trb,ta,bv,ba,dep0,dep1,e0l,e1l,ev,lpos,cnt,flg,i,word;
+    uvc_u32 gcnt=0,d0i=0,d1i=0,d0r=0,d1r=0,d0c=0,d1c=0;
+    if (!ep || !a6400_uvc_kernel_ptr(ep)) return;
+    dwc=a6400_uvc_rd32(ep+0x48u);
+    if (!dwc || !a6400_uvc_kernel_ptr(dwc)) return;
+    if (ctrl) { cr0=a6400_uvc_rd32(ctrl); cr1=a6400_uvc_rd32(ctrl+4u); }
+    else { uvc_u32 cp=a6400_uvc_rd32(dwc); if (cp && a6400_uvc_kernel_ptr(cp)) { cr0=a6400_uvc_rd32(cp); cr1=a6400_uvc_rd32(cp+4u); } }
+    regs=a6400_uvc_rd32(dwc+0x2b4u);
+    if (regs) gcnt=a6400_uvc_rd32(regs+0xc30cu);
+    trb=a6400_uvc_rd32(dwc+4u); ta=a6400_uvc_rd32(dwc+0x14u);
+    bv=a6400_uvc_rd32(dwc+8u); ba=a6400_uvc_rd32(dwc+0x18u);
+    dep0=a6400_uvc_rd32(dwc+0xd0u); dep1=a6400_uvc_rd32(dwc+0xd4u);
+    e0l=dep0?a6400_uvc_rd32(dep0+0x24u):0; e1l=dep1?a6400_uvc_rd32(dep1+0x24u):0;
+    /* E0386: dwc+0xcc is the ev_bufs[] POINTER ARRAY; the evt is [arr+0] (double dereference). */
+    { uvc_u32 arr=a6400_uvc_rd32(dwc+0xccu);
+      ev=(arr && a6400_uvc_kernel_ptr(arr))?a6400_uvc_rd32(arr):0; }
+    if (ev && a6400_uvc_kernel_ptr(ev)) { lpos=a6400_uvc_rd32(ev+8u); cnt=a6400_uvc_rd32(ev+0xcu); flg=a6400_uvc_rd32(ev+0x10u); }
+    else { lpos=0; cnt=0; flg=0; }
+    /* E0386: dep->resource_index (dep+0x57), physical index (dep+0x55), live DEPCMD. */
+    d0i=dep0?a6400_uvc_rd8(dep0+0x55u):0; d1i=dep1?a6400_uvc_rd8(dep1+0x55u):0;
+    d0r=dep0?a6400_uvc_rd8(dep0+0x57u):0; d1r=dep1?a6400_uvc_rd8(dep1+0x57u):0;
+    d0c=regs?a6400_uvc_rd32(regs+0x700u+0x10u*d0i+0xcu):0;
+    d1c=regs?a6400_uvc_rd32(regs+0x700u+0x10u*d1i+0xcu):0;
+    printk("[a6400_uvc] GCRO %s ctrl=%08x cr0=%08x cr1=%08x dma=%08x trb=%08x ta=%08x bpl=%08x bph=%08x sz=%08x ctl=%08x bv=%08x ba=%08x dep0=%08x/%08x dep1=%08x/%08x e0=%08x e1=%08x ev=%08x lpos=%x cnt=%x flg=%x gcnt=%x state=%x next=%x fl=%02x dep0i=%x dep0r=%x depcmd0=%08x cmdsts0=%x rsc0=%x dep1i=%x dep1r=%x depcmd1=%08x cmdsts1=%x rsc1=%x\n",
+        tag,(unsigned)ctrl,(unsigned)cr0,(unsigned)cr1,(unsigned)a6400_uvc_rd32(dwc+0x10u),
+        (unsigned)trb,(unsigned)ta,
+        (unsigned)(trb?a6400_uvc_rd32(trb):0),(unsigned)(trb?a6400_uvc_rd32(trb+4u):0),
+        (unsigned)(trb?a6400_uvc_rd32(trb+8u):0),(unsigned)(trb?a6400_uvc_rd32(trb+0xcu):0),
+        (unsigned)bv,(unsigned)ba,
+        (unsigned)dep0,(unsigned)(dep0?a6400_uvc_rd32(dep0+0x4cu):0),
+        (unsigned)dep1,(unsigned)(dep1?a6400_uvc_rd32(dep1+0x4cu):0),
+        (unsigned)e0l,(unsigned)e1l,(unsigned)ev,(unsigned)lpos,(unsigned)cnt,(unsigned)flg,(unsigned)gcnt,
+        (unsigned)a6400_uvc_rd32(dwc+0x2e0u),(unsigned)a6400_uvc_rd32(dwc+0x2dcu),
+        (unsigned)(a6400_uvc_rd32(dwc+0x2d8u)&0xffu),
+        (unsigned)d0i,(unsigned)d0r,(unsigned)d0c,(unsigned)((d0c>>12)&0xfu),(unsigned)((d0c>>16)&0x7fu),
+        (unsigned)d1i,(unsigned)d1r,(unsigned)d1c,(unsigned)((d1c>>12)&0xfu),(unsigned)((d1c>>16)&0x7fu));
+    if (ev && a6400_uvc_kernel_ptr(ev)) {
+        uvc_u32 buf=a6400_uvc_rd32(ev), len=a6400_uvc_rd32(ev+4u);
+        if (buf && a6400_uvc_kernel_ptr(buf) && len>=0x10u && len<=0x1000u) {
+            uvc_u32 idx=lpos>>2, words=len>>2;
+            printk("[a6400_uvc] GCRO %s evw=",tag);
+            for (i=0;i<6;i++) { word=a6400_uvc_rd32(buf+(((idx+words-1u+i)%words)<<2)); printk("%08x ",(unsigned)word); }
+            printk("\n");
+        }
+    }
+    if (e0l && dep0 && e0l!=dep0+0x24u && a6400_uvc_kernel_ptr(e0l)) {
+        uvc_u32 r=e0l-0x34u, buf, len, act, st;
+        if (a6400_uvc_kernel_ptr(r)) {
+            buf=a6400_uvc_rd32(r); len=a6400_uvc_rd32(r+4u); act=a6400_uvc_rd32(r+0x30u); st=a6400_uvc_rd32(r+0x2cu);
+            printk("[a6400_uvc] GCRO %s dep0_head req=%08x buf=%08x len=%u actual=%u status=%d\n",tag,(unsigned)r,(unsigned)buf,(unsigned)len,(unsigned)act,(int)st);
+        }
+    }
+    if (e1l && dep1 && e1l!=dep1+0x24u && a6400_uvc_kernel_ptr(e1l)) {
+        uvc_u32 r=e1l-0x34u, buf, len, act, st;
+        if (a6400_uvc_kernel_ptr(r)) {
+            buf=a6400_uvc_rd32(r); len=a6400_uvc_rd32(r+4u); act=a6400_uvc_rd32(r+0x30u); st=a6400_uvc_rd32(r+0x2cu);
+            printk("[a6400_uvc] GCRO %s dep1_head req=%08x buf=%08x len=%u actual=%u status=%d\n",tag,(unsigned)r,(unsigned)buf,(unsigned)len,(unsigned)act,(int)st);
+        }
+    }
+}
+
 static void a6400_uvc_log_trb(const char *tag, uvc_u32 dwc)
 {
     uvc_u32 tv=0, ta=0, bv=0, ba=0, bpl=0, bph=0, size=0, ctrl=0, b0=0, b1=0;
@@ -218,11 +449,10 @@ static uvc_u32 a6400_uvc_rd32(uvc_u32 address);
 static uvc_u8 a6400_uvc_rd8(uvc_u32 address);
 
 static uvc_u32 g_ep0_ops_orig, g_ep0_queue_orig, g_ep0_ops_shadow[16];
-static int g_ep0_wrapped, g_class_dir_out;
+static int g_ep0_wrapped;
 static uvc_u32 g_gc_ep0, g_gc_ops_orig, g_gc_queue_orig, g_gc_ops_shadow[16];
 static int g_gc_wrapped;
 
-static uvc_u32 g_req_complete_orig;
 
 /* E0364: corrected EP0 completion observation. Linux gadget ABI:
  *   void (*complete)(struct usb_ep *ep, struct usb_request *req)
@@ -258,13 +488,15 @@ static void a6400_uvc_ep0_complete_thunk(void *ep, void *req)
                    (int)a6400_uvc_rd32(r+0x2cu),(unsigned)a6400_uvc_rd32(r+0x30u),
                    (unsigned)st,(unsigned)nx,(unsigned)ev,(unsigned)f0,(unsigned)f1);
         }
-        if (dwc) { a6400_uvc_log_events("complete",dwc); a6400_uvc_log_trb("EP0 complete",dwc); }
+        printk("[a6400_uvc] EP0 complete lr=%08x state=%02x next=%08x fl=%02x\n",(unsigned)(uvc_u32)__builtin_return_address(0),(unsigned)(dwc?a6400_uvc_rd32(dwc+0x2e0u):0),(unsigned)(dwc?a6400_uvc_rd32(dwc+0x2dcu):0),(unsigned)(dwc?(a6400_uvc_rd32(dwc+0x2d8u)&0xffu):0));
+        if (dwc) { a6400_uvc_gcro("complete",(uvc_u32)e,0); a6400_uvc_log_events("complete",dwc); a6400_uvc_log_trb("EP0 complete",dwc); }
         if (dwc && a6400_uvc_kernel_ptr(dwc)) {
             uvc_u32 e0=a6400_uvc_rd32(dwc+0xd0u), e1=a6400_uvc_rd32(dwc+0xd4u);
             printk("[a6400_uvc] EP0 list pre e0=%08x/%08x->%08x e1=%08x/%08x->%08x\n",
                    (unsigned)e0,(unsigned)(e0?a6400_uvc_rd32(e0+0x24u):0),(unsigned)(e0?a6400_uvc_rd32(e0+0x28u):0),
                    (unsigned)e1,(unsigned)(e1?a6400_uvc_rd32(e1+0x24u):0),(unsigned)(e1?a6400_uvc_rd32(e1+0x28u):0));
         }
+        a6400_uvc_tstamp("complete-entry");
         if (orig && orig!=(uvc_u32)a6400_uvc_ep0_complete_thunk)
             ((void (*)(void *,void *))orig)((void *)e,(void *)r);
         return;
@@ -273,7 +505,6 @@ static void a6400_uvc_ep0_complete_thunk(void *ep, void *req)
            (unsigned)e,(unsigned)r);
 }
 
-static uvc_u32 g_req_complete_orig;
 
 
 static int a6400_uvc_ep0_queue_wrap(void *ep, void *req, unsigned int gfp)
@@ -297,7 +528,9 @@ static int a6400_uvc_ep0_queue_wrap(void *ep, void *req, unsigned int gfp)
            g_class_dir_out?"OUT":"IN",(unsigned)r,(unsigned)buf,(unsigned)dma,
            (unsigned)len,mapped);
     if (!g_ep0_queue_orig) return -22;
+    a6400_uvc_tstamp("queue-before-orig");
     ret=((int (*)(void *,void *,unsigned int))g_ep0_queue_orig)(ep,req,gfp);
+    a6400_uvc_tstamp("queue-after-orig");
     if (r && a6400_uvc_kernel_ptr(r)) {
         uvc_u32 comp=a6400_uvc_rd32(r+0x1cu);
         if (comp && comp!=(uvc_u32)a6400_uvc_ep0_complete_thunk) {
@@ -314,11 +547,12 @@ static int a6400_uvc_ep0_queue_wrap(void *ep, void *req, unsigned int gfp)
            ret,(unsigned)(r?a6400_uvc_rd32(r+8u):0),(unsigned)state,
            (unsigned)next,(unsigned)event);
     /* E0370: unconditional TRB/bounce diagnostics (raw + aliases). */
-    if (dwc) { a6400_uvc_log_events("queue",dwc); a6400_uvc_log_trb("EP0 queue",dwc); }
+    a6400_uvc_tstamp("queue-entry");
+    if (dwc) { a6400_uvc_gcro("queue",(uvc_u32)ep,0); a6400_uvc_log_events("queue",dwc); a6400_uvc_log_trb("EP0 queue",dwc); }
     return ret;
 }
 
-static void a6400_uvc_ep0_wrap_install(void *ep)
+__attribute__((unused)) static void a6400_uvc_ep0_wrap_install(void *ep)
 {
     uvc_u32 ops, i;
     if (!ep || !a6400_uvc_kernel_ptr((uvc_u32)ep)) return;
@@ -334,7 +568,7 @@ static void a6400_uvc_ep0_wrap_install(void *ep)
            (unsigned)g_ep0_ops_orig,(unsigned)g_ep0_queue_orig);
 }
 
-static void a6400_uvc_ep0_wrap_restore(void *ep)
+__attribute__((unused)) static void a6400_uvc_ep0_wrap_restore(void *ep)
 {
     if (!g_ep0_wrapped || !ep) return;
     *(volatile uvc_u32 *)((uvc_u32)ep+8u)=g_ep0_ops_orig;
@@ -349,12 +583,14 @@ static uvc_u32 a6400_uvc_rd32(uvc_u32 address)
 static uvc_u8 a6400_uvc_rd8(uvc_u32 address)
 { return *(volatile uvc_u8 *)address; }
 
-static void a6400_uvc_ep0_snapshot(const char *tag,uvc_u32 c)
+__attribute__((unused)) static void a6400_uvc_ep0_snapshot(const char *tag,uvc_u32 c)
 {
     uvc_u32 ep=(uvc_u32)c,dwc,e0,e1,ops,next;
     if (ep && a6400_uvc_kernel_ptr(ep)) g_ep0_last=ep;
     if (!ep || !a6400_uvc_kernel_ptr(ep)) {
-        printk("[a6400_uvc] %s ep0=%08x no-udc-ep\n",tag,(unsigned)ep);
+        uvc_u32 dw=(ep&&a6400_uvc_kernel_ptr(ep))?a6400_uvc_rd32(ep+0x48u):0;
+        printk("[a6400_uvc] %s ep0=%08x no-udc-ep lr=%08x dwc=%08x\n",
+               tag,(unsigned)ep,(unsigned)g_class_lr,(unsigned)dw);
         return;
     }
     ops=a6400_uvc_rd32(ep+8);
@@ -418,6 +654,27 @@ static struct uvc_bridge *owner(struct uvc_old_descriptor *d)
         (d!=&b->shadow[0] && d!=&b->shadow[1])) return (void *)0;
     if (!stable(b)) { b->last_error=ESTALE_; return (void *)0; }
     return b;
+}
+
+static void a6400_uvc_restore_work_fn(void *work)
+{
+    struct uvc_bridge *b=(struct uvc_bridge *)current;
+    int i;
+    (void)work;
+    for (i=0;i<20;i++) {
+        if (!b || b->in_flight==0) break;
+        msleep(10u);
+    }
+    printk("[a6400_uvc] DEFERRED restore work start in_flight=%u\n",(unsigned)(b?b->in_flight:0));
+    a6400_uvc_restore_descriptors_bridge();
+    printk("[a6400_uvc] DEFERRED restore work done\n");
+}
+
+static void a6400_uvc_schedule_restore(void)
+{
+    g_restore_work[0]=0; g_restore_work[1]=0; g_restore_work[2]=0;
+    g_restore_work[3]=(uvc_u32)a6400_uvc_restore_work_fn;
+    schedule_work((void *)g_restore_work);
 }
 
 static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
@@ -484,19 +741,23 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
         const uvc_u8 *wire=(const uvc_u8 *)a1;
         if (a6400_uvc_ptp_translate_setup(wire,d->interface_number,translated)==0) {
             forward_a1=(uvc_u32)translated;
+#if A6400_UVC_TRACE
             printk("[a6400_uvc] CLASS translated wire_iface=%u idx=%04x -> native idx=%04x\n",
                    d->interface_number,
                    (unsigned)(wire[4]|((unsigned)wire[5]<<8)),
                    (unsigned)(translated[4]|((unsigned)translated[5]<<8)));
+#endif
         }
     }
     if (which==CLASS || which==VENDOR) {
+#if A6400_UVC_TRACE
         const uvc_u8 *rq=(const uvc_u8 *)a1;
         /* E0356: log the exact setup packet and the synchronous reference
          * result. This is the camera-side substitute for the missing host
          * URB/setup trace (E0355): bmRequestType/bRequest/wValue/wIndex/wLength
          * are the fields usbvideo uses for VS_PROBE/CONTROL 0x0100, COMMIT
          * 0x0200 and SET_INTERFACE. */
+#if A6400_UVC_TRACE
         if (rq) {
             printk("[a6400_uvc] %s entry rt=%02x req=%02x val=%04x idx=%04x len=%04x\n",
                    which==CLASS?"CLASS":"VENDOR",
@@ -508,16 +769,26 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
             printk("[a6400_uvc] %s entry request=NULL\n",
                    which==CLASS?"CLASS":"VENDOR");
         }
+#endif
+#endif
         if (which==CLASS) b->class_requests++;
         else b->vendor_requests++;
     }
     if (primary || which==START || which==STOP) b->reference->alternate=d->alternate;
+    if (which==START) { a6400_uvc_ring_install_early(); a6400_uvc_ring_record(0u,g_ep0_last,(uvc_u32)a2,0,(uvc_u32)a3); }
+#if A6400_UVC_TRACE
+    if (which==START) {
+        printk("[a6400_uvc] START entry a1=%08x a2=%08x a3=%08x ep0_last=%08x\n",(unsigned)a1,(unsigned)a2,(unsigned)a3,(unsigned)g_ep0_last);
+        if (g_ep0_last) a6400_uvc_gcro("START pre",g_ep0_last,0);
+    }
+#endif
     if (which==START || which==STOP) {
         printk("[a6400_uvc] reference %s entry iface=%u count=%u\n",
                which==START?"START":"STOP",d->interface_number,(unsigned)(a2&0xffu));
         /* E0360: after the 5 s host timeout the EP0 request state is the only way
          * to tell "completion never fired" (request still pending/BUSY) from
          * "completion fired but the host rejected/missed the data". Read-only. */
+#if A6400_UVC_TRACE
         if (which==STOP && g_ep0_last)
         {
             if (g_ep0_last) a6400_uvc_log_events("STOP",a6400_uvc_rd32((uvc_u32)g_ep0_last+0x48u));
@@ -525,14 +796,35 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
             a6400_uvc_ep0_snapshot("STOP-pre",g_ep0_last);
             a6400_uvc_ep0_wrap_restore((void *)(uvc_u32)g_ep0_last);
         }
+#endif
     }
     if (which==CLASS) {
         const uvc_u8 *drq=(const uvc_u8 *)a1;
         if (drq) g_class_dir_out=((drq[0]&0x80u)==0u)?1:0;
+        a6400_uvc_ring_record(1u,(uvc_u32)a2,0,(const uvc_u8 *)a1,0);
+        if (drq) { if (drq[0]&0x80u) g_get_cur_count++; else g_set_cur_count++; }
+        a6400_uvc_ring_install((uvc_u32)a2);
+#if A6400_UVC_TRACE
+        g_class_lr=(uvc_u32)__builtin_return_address(0);
+        {   uvc_u32 d=(a2 && a6400_uvc_kernel_ptr((uvc_u32)a2))?a6400_uvc_rd32((uvc_u32)a2+0x48u):0;
+            printk("[a6400_uvc] CLASS lr=%08x ep=%08x a3=%08x dwc=%08x state=%02x next=%08x fl=%02x\n",
+                   (unsigned)g_class_lr,(unsigned)a2,(unsigned)a3,(unsigned)d,
+                   (unsigned)((d&&a6400_uvc_kernel_ptr(d))?a6400_uvc_rd8(d+0x2d8u):0),
+                   (unsigned)((d&&a6400_uvc_kernel_ptr(d))?a6400_uvc_rd32(d+0x2dcu):0),
+                   (unsigned)((d&&a6400_uvc_kernel_ptr(d))?a6400_uvc_rd8(d+0x2d8u):0)); }
         if (a2) a6400_uvc_log_events("CLASS pre",a6400_uvc_rd32((uvc_u32)a2+0x48u));
+        a6400_uvc_tstamp("CLASS-pre-ts");
+        if (a2) a6400_uvc_gcro("CLASS pre",(uvc_u32)a2,(uvc_u32)a1);
         a6400_uvc_ep0_snapshot("CLASS ep0-pre",a2);
         a6400_uvc_gc_wrap_install((uvc_u32)a2);
         a6400_uvc_ep0_wrap_install((void *)(uvc_u32)a2);
+#endif
+    }
+    if (which==STOP) { a6400_uvc_ring_dump(); a6400_uvc_ring_restore(); }
+    if (which==DISCONNECT && !b->started && !g_disconnect_restored) {
+        g_disconnect_restored=1;
+        printk("[a6400_uvc] DISCONNECT schedule deferred restore started=%u in_flight=%u\n",(unsigned)b->started,(unsigned)b->in_flight);
+        a6400_uvc_schedule_restore();
     }
     if (which==START || which==STOP || (which>=SUSPEND && which<=DISCONNECT)) {
         ((void (*)(struct uvc_reference_descriptor *,uvc_u32,uvc_u32,uvc_u32))target)
@@ -543,8 +835,13 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
     }
     if (which==CLASS) {
         b->class_last_result=result;
+        a6400_uvc_ring_record(4u,(uvc_u32)a2,0,(const uvc_u8 *)a1,result);
+#if A6400_UVC_TRACE
+        a6400_uvc_tstamp("CLASS-post-ts");
+        if (a2) { a6400_uvc_gcro("CLASS post",(uvc_u32)a2,(uvc_u32)a1); }
         a6400_uvc_ep0_snapshot("CLASS ep0-post",a2);
         printk("[a6400_uvc] CLASS exit result=%d\n",(int)result);
+#endif
     } else if (which==VENDOR) {
         printk("[a6400_uvc] VENDOR exit result=%d\n",(int)result);
     } else if (which==START) {
@@ -553,7 +850,11 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
     } else if (which==STOP) {
         printk("[a6400_uvc] reference STOP returned iface=%u\n",d->interface_number);
     }
-    if (which==START) { b->started_interface=d->interface_number;b->started=1; }
+    if (which==START) {
+        printk("[a6400_uvc] START exit result=%d\n",(int)result);
+        if (g_ep0_last) a6400_uvc_gcro("START post",g_ep0_last,0);
+        b->started_interface=d->interface_number;b->started=1;
+    }
     if (which==STOP) b->started=0;
     __sync_sub_and_fetch(&b->in_flight,1);
     return result;
@@ -607,7 +908,7 @@ int a6400_uvc_bridge_activate(struct uvc_bridge *b,uvc_u32 registered_mask)
 {
     if (!b || b!=current || b->magic!=MAGIC || b->active || registered_mask!=3 || !stable(b))
         return EINVAL_;
-    __sync_synchronize();b->active=1;return 0;
+    __sync_synchronize();b->active=1;a6400_uvc_ring_install_early();return 0;
 }
 
 int a6400_uvc_bridge_retire(struct uvc_bridge *b,uvc_u32 still_registered_mask)
@@ -655,6 +956,7 @@ int a6400_uvc_bridge_register(struct uvc_bridge *b, uvc_register_fn reg_fn, uvc_
         return ret;
     }
     return 0;
+    if (ret==0) a6400_uvc_ring_install_early();
 }
 
 int a6400_uvc_bridge_unregister(struct uvc_bridge *b, uvc_unregister_fn unreg_fn)

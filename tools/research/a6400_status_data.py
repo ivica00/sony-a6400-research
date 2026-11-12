@@ -220,24 +220,151 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-12",
     latest=EvidenceRef(
-        evidence_id="E0374",
-        path="docs/evidence/0374-run-b13-gc-context-and-second-queue-proof.md",
+        evidence_id="E0424",
+        path="docs/evidence/0424-cxd90045-pl011-primecell-and-ash-shell.md",
         date="2026-11-12",
-        title="Run B13 GC context and second queue",
+        title="PL011 PrimeCell IDs, live ttyAM0 console and cmdline-override discovery",
         demonstrated=(
-            "Run B13: gadgetcore gc_ep0 = class ep0 (68a1c9c0, eq=1) with ops 603dfb4c; later control traffic shows GC_EP0 queue "
-            "calls with caller LR 602b9fdc (right after setup_req 0x602b9fd8) on the same ep0 with a different request 68a84da0 "
-            "and lengths 18/39/26/4/20/9/0 -> the delegated second queue is real and was previously invisible. The camera "
-            "receipt was clean but the camera rebooted during post-run cleanup and recovered to MSC."
+            "Added ARM PL011 PrimeCell identification registers at 0xF2000000+0xFE0..0xFFC "
+            "(PeriphID 0x00141011, PCellID 0xB105F00D); the kernel then registered the console: "
+            "uart0 ttyAM0 at MMIO 0xf2000000 (irq 150) is AMBA/PL011, console [ttyAM0] enabled. Live "
+            "serial capture works (52,976 bytes) and scripted RX injection is read by the guest "
+            "(help -> monitor help, shell -> 'shell is disabled', commands parsed). The live log also "
+            "reveals setup_arch(): invalid cmdline override @ 0x60103000. Using default cmdline."
         ),
         boundary=(
-            "Open: implement GC-wrapper guard dropping only the delegated queue (LR==0x602b9fdc), prove in Unicorn, then B14."
+            "init=/bin/ash still cannot be applied: Sony's setup_arch rejects the boot-params content "
+            "at 0x103000 and uses the built-in kemco CONFIG_CMDLINE (init=/sbin/init), so boot panics "
+            "with 'No init found' before userspace; the Sony override object format is still undecoded. "
+            "The updater monitor's own shell is compiled out (EM_DEBUG). No /bin/ash shell claim."
         ),
-        tier="PHYSICAL + GC CONTEXT",
+        tier="OFFLINE BOUNDED UNICORN BRING-UP",
     ),
-    headline="1312 tests recorded passing | No verified emulator GUI frame",
+    headline="1476 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
+            evidence_id="E0406",
+            path="docs/evidence/0406-bcm4339-wifi-bt-tuning-surface-readonly.md",
+            date="2026-11-12",
+            title="BCM4339 Wi-Fi/BT static surface",
+            demonstrated=(
+                "Hash-identified BCM4339 firmware and kernel modules from preserved images; string/symbol/table tuning "
+                "surface recorded offline."
+            ),
+            boundary=(
+                "No live runtime defaults, regulatory state or radio behaviour claimed; no camera access."
+            ),
+            tier="OFFLINE STATIC IMAGE",
+        ),
+        EvidenceRef(
+            evidence_id="E0405",
+            path="docs/evidence/0405-option-a-offline-preflight.md",
+            date="2026-11-12",
+            title="Option A offline pre-flight",
+            demonstrated=(
+                "Full gadgetcore+0x84 reference audit: only the 0xEE/compat MS OS handlers and the gadgetcore ioctl "
+                "start/reconfiguration path touch the byte; no MSC or endpoint path does. Root entry layout confirmed as an "
+                "internal per-speed record, so bcdUSB is generated at request time."
+            ),
+            boundary=(
+                "bcdUSB source, tree extension, EP0 vendor queue, /dev/a6400_dbg ABI and MS OS 2.0 configuration subset "
+                "remain unimplemented; B2/B3 were not started."
+            ),
+            tier="OFFLINE PRE-FLIGHT + BLOCKERS",
+        ),
+        EvidenceRef(
+            evidence_id="E0404",
+            path="docs/evidence/0404-b1b-mode-gate-and-b2-b3-blockers.md",
+            date="2026-11-12",
+            title="B1b mode-gate inspection",
+            demonstrated=(
+                "Read-only probe of the live gadgetcore state: MSC tree topology decoded (one interface, Bulk-Only, two "
+                "bulk endpoints, max_speed=1) and the Microsoft OS mode gate gadgetcore+0x84 read as 0."
+            ),
+            boundary=(
+                "The zero mode gate blocks the MS OS string/compat path in Mass Storage, so WinUSB auto-binding cannot "
+                "proceed without an additional approved kernel write/hook or a different transport class."
+            ),
+            tier="READ-ONLY PHYSICAL + BLOCKER",
+        ),
+        EvidenceRef(
+            evidence_id="E0403",
+            path="docs/evidence/0403-winusb-control-transport-msc-verification.md",
+            date="2026-11-12",
+            title="WinUSB control transport (B1c)",
+            demonstrated=(
+                "Bounded 18-byte MS OS string patch in volatile kernel data, executed by a RAM-only helper module with "
+                "save/CRC32/readback/restore; two Mass Storage load-unload cycles verified stock->patched->stock CRCs, with "
+                "cycle 2 independently proving restoration."
+            ),
+            boundary=(
+                "No vendor interface or /dev/a6400_dbg node; WinUSB was not bound and the winusb transport is untested. "
+                "EP0 chunking and bcdUSB gates remain open; PC Remote untouched."
+            ),
+            tier="PHYSICAL B1C + STATIC AUDIT",
+        ),
+        EvidenceRef(
+            evidence_id="E0402",
+            path="docs/evidence/0402-always-on-winusb-debugger-feasibility-and-phase-a.md",
+            date="2026-11-12",
+            title="Always-on WinUSB debugger (Phase A)",
+            demonstrated=(
+                "Decoded gadgetcore driver registration/callback/descriptor-tree ABI; built vendor-interface + MS OS 1.0 "
+                "descriptor contracts with 16 offline checks, a fail-closed host WinUSB transport, and daemon v2.1 with ping "
+                "and a dual-transport loop; staged upgrade preserved a rollback copy."
+            ),
+            boundary=(
+                "Bulk OUT completion and device-recipient vendor dispatch are still undecoded; no gadget module, no "
+                "composite interface, no PC Remote reachability yet."
+            ),
+            tier="OFFLINE ABI + PHASE A DAEMON",
+        ),
+        EvidenceRef(
+            evidence_id="E0401",
+            path="docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md",
+            date="2026-11-12",
+            title="USB Debugger v2",
+            demonstrated=(
+                "Warm klog ring readout with magic/write-position/CRC32 verification over USB (two boots captured); "
+                "non-destructive dmesg, usb-state and process-context recover; staged v1->v2 upgrade with preserved "
+                "rollback; same pid through an MSC->PC Remote->MSC round trip; Unicorn trampoline with byte-identical rollback."
+            ),
+            boundary=(
+                "PC Remote exposes no debugger transport; composite-gadget work is required for always-on access there. "
+                "No kernel-text write and no loaded-module teardown on hardware."
+            ),
+            tier="PHYSICAL + UNICORN",
+        ),
+        EvidenceRef(
+            evidence_id="E0398",
+            path="docs/evidence/0398-runb21-status-stage-and-disconnect-verdict.md",
+            date="2026-11-12",
+            title="Run B21 status/disconnect",
+            demonstrated=(
+                "GET_CUR data completes at 138.358552 act=26, SET_CUR class starts 5.011194 s later and completes act=0; "
+                "GET_DESCRIPTOR/GET_CUR share flg=02, so status OUT remains the divergence. ev/trb fields still zero; no status "
+                "records. Disconnect hook fired but synchronous restore hung (battery pull)."
+            ),
+            boundary=(
+                "Open: deferred workqueue restore and status-stage hook."
+            ),
+            tier="PHYSICAL STATUS/DISCONNECT",
+        ),
+        EvidenceRef(
+            evidence_id="E0395",
+            path="docs/evidence/0395-runb19-reqflags-fix-verdict.md",
+            date="2026-11-12",
+            title="Run B19 reqflags verdict",
+            demonstrated=(
+                "req+0x1a bit1 is read by DWC3 complete_data, but setting it did not remove the 5 s wait: GET data actual=26, SET "
+                "class 5.007 s later actual=0. Flag fix rejected; 0x8ac8 is standard config/interface, clear_halt_ep0 only gc+0x83. "
+                "Battery pull at final MSC switch."
+            ),
+            boundary=(
+                "Open: status-stage path with silent ring; no flag fix."
+            ),
+            tier="PHYSICAL FLAG-FIX TEST",
+        ),        EvidenceRef(
             evidence_id="E0332",
             path="docs/evidence/0332-sync-callback-delivery-first-invocation.md",
             date="2026-11-11",
@@ -283,24 +410,26 @@ STATUS_SNAPSHOT = StatusSnapshot(
             tier="PHYSICAL OBSERVATION",
         ),
         EvidenceRef(
-            evidence_id="E0374",
-            path="docs/evidence/0374-run-b13-gc-context-and-second-queue-proof.md",
+            evidence_id="E0386",
+            path="docs/evidence/0386-runb16-depcmd-cmdstatus-and-ring-verdict.md",
             date="2026-11-12",
-            title="Run B13 GC/second-queue proof",
+            title="Run B16 DEPCMD CmdStatus and ring verdict",
             demonstrated=(
-                "gc_ep0 == class ep0 (eq=1); setup_req 0x9fd8 queues a second request on the same ep0 (LR 602b9fdc, req 68a84da0, "
-                "len 18/39/26/4/20/9/0); receipt clean but camera rebooted during cleanup and recovered to MSC."
+                "Fixed ev double-deref gives valid lpos/cnt (GET complete 0x294/c, SET pre 0x2a0/c, SET complete 0x2a8/8); "
+                "DEPCMD0/1 CmdStatus=0, XferRscIdx 0/1 at every sample -> no rejected STARTTRANSFER, missing check unexercised; "
+                "CLASS lr=5f5694b4, no shadow in B16; SET actual=0 with bounce HWO=1 reproduced; 5 s host-side. Battery pull was "
+                "needed; camera healthy MSC, logs/ETL preserved, receipt not clean."
             ),
             boundary=(
-                "Open: GC-wrapper guard dropping only the delegated queue; prove in Unicorn; B14."
+                "No firmware fix supported; host/XHC or word-level event trace remains. Battery pull required."
             ),
-            tier="PHYSICAL + GC CONTEXT",
+            tier="PHYSICAL + DEPCMD",
         ),
     ),
     suite=SuiteRecord(
-        test_count=1312,
+        test_count=1476,
         recorded_at="2026-11-12",
-        evidence_id="E0374",
+        evidence_id="E0424",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(

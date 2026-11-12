@@ -1,5 +1,39 @@
 # Native USB debugger (installed; normal MSC verified)
 
+## Protocol v2 (E0401): warm log readout, recover, and the PC Remote boundary
+
+The installed daemon now speaks protocol v2 (same 4096-byte frame, feature
+`0x23`, opcode `0x7a`) and adds four operations while keeping the v1 surface:
+
+* `usb-state` — UDC/module/node/klog/debugger receipt.
+* `dmesg` — non-destructive kernel printk readout over USB (`SYSLOG_ACTION_READ_ALL`);
+  no SD card needed.
+* `dump-ring` — the camera kernel's warm-reboot klog ring at the
+  `/proc/cmdline`-verified `klog.addr` (`0x035a5000`, `0x20000` bytes), read
+  through `/dev/mem` O_RDONLY, validated against `/proc/iomem`, CRC32-checked,
+  and split into per-boot segments. A warm reboot keeps the previous boot's log
+  and appends the next boot's log (decoded from the preserved `vmlinux.bin`).
+* `recover` — process-context removal of allowlisted authored modules with a
+  receipt; `recover --to-msc` additionally asks a PTP-mode camera to reconnect
+  to Mass Storage (`SonyReqReconnect 0x9282`), where that operation exists.
+
+**Measured boundary:** this firmware's stock PC Remote mode (`054C:0CAA`) exposes
+only PTP `0x1001-0x100A/0x101B/0x9201/0x9202/0x9205/0x9207/0x9209` — no
+`SonyDiExtCmd 0x9280/0x9281` and no `0x9282`. The debugger therefore answers in
+Mass Storage and survives a full MSC→PC Remote→MSC round trip with the same
+pid, but is **not reachable while PC Remote is active**. Recovery from PC Remote
+is currently the camera's own menu switch (zero battery pulls), or a future
+composite-gadget interface. An "MTP" USB setting was requested but the camera
+re-enumerated as Mass Storage before each recorded session, so MTP-mode
+reachability and a live in-band MTP→MSC switch are **not** claimed; the
+`0x9282` request is sent on the same open MTP session when one is present. See
+[E0401](evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md).
+
+`tools/research/upgrade_usb_debugger.py` stages a new daemon over USB
+(`/tmp_bt` → `/setting`) with a preserved rollback copy and never needs service
+mode; the daemon retries lock/registration so the old instance can be stopped
+without leaving the camera without a debugger.
+
 Research update, 2026-11-06: see E0106–E0109 for complete active-menu capture,
 original lookup/geometry/hit/selection controls and the remaining activation
 resource-manager boundary. The one-shot main-thread helper reads TLS/registers

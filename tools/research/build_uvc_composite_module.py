@@ -183,6 +183,16 @@ def main():
                 raise ValueError('Reference endpoint/classifier instruction mismatch')
             raw_rebound[text_offset+offset:text_offset+offset+4]=bytes.fromhex(new)
 
+        # E0388: make the reference 26-byte VS_PROBE template coherent with the
+        # Bulk 0x84/512 endpoint: max frame buffer 1280*720*2 = 0x001c2000 and
+        # max payload = module native max_payload 131060 (0x0001fff4).
+        probe_old=bytes.fromhex('0000010115160500000000000000000000000000e100e0930400')
+        probe_new=bytes.fromhex('00000101151605000000000000000000000000201c00f4ff0100')
+        probe_at=raw_rebound.find(probe_old)
+        if probe_at<0:
+            raise ValueError('Reference VS_PROBE template not found')
+        raw_rebound[probe_at:probe_at+len(probe_old)]=probe_new
+
     rebound_ref.write_bytes(raw_rebound)
 
     print("Step 2: Compiling composite shim and callback bridge...")

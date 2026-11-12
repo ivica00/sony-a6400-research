@@ -5,102 +5,80 @@ the Sony BIONZ X `CXD90045` camera family: an offline original-code execution
 environment, a decoded hardware/OS contract reference, and a low-latency USB / UVC
 streaming workstream you can contribute to **without owning a camera**.
 
-We study original ARM/Thumb firmware code, the Linux and Sony service contracts it runs
-on, and the physical camera's behaviour — and we label every result by what it actually
-demonstrates: offline execution, read-only observation, authored demonstration or a
-physically verified operation. Nothing here is a percentage of "firmware compatibility".
+Every result is labelled by what it actually demonstrates — offline execution,
+read-only observation, authored demonstration, or a physically verified operation.
+Nothing here is a percentage of "firmware compatibility".
 
 ## Project pillars
 
 | Pillar | What it means | Current state |
 | --- | --- | --- |
-| **1 · Clean-Room Firmware Emulator (`CXD90045`)** | Execute original `im.elf` code, OSAL/UIPC messaging, GPES GPU contracts and the USB FSM offline, with no hardware risk | Bounded, opt-in contracts. Original code executes through startup and event dispatch; the full camera boot is **not** proven |
-| **2 · Low-Latency Monitoring & Native UVC (`CinemaHUD` + Track A/B)** | Glass-to-glass latency measurement and control with the camera's own USB transport | **Track A** (host-driven pipelined PTP + Android SGSR 1.0 shader) has a physically verified liveview link. **Track B** (camera-side composite UVC push from DMM JPEG buffers) enumerates but cannot yet stream |
-| **3 · Multi-Device BIONZ X Platform Support** | Share the SoC/kernel contracts across a6400, ZV-E10, a6100, a6600 and a7 III instead of forking the emulator | A typed `TargetProfile` registry with a verified a6400 profile, a reference ZV-E10 chain and explicit stubs for the rest |
+| **1 · Clean-Room Firmware Emulator (`CXD90045`)** | Execute original `im.elf`, kernel/bootloader, OSAL/UIPC, GPES GPU, and USB FSM code offline with no hardware risk | Bounded, opt-in contracts. `im.elf` reaches startup and event dispatch; the updater kernel boots to `ttyAM0` console + `cramfs` rootfs; full camera boot is **not** proven |
+| **2 · Low-Latency Monitoring & Native UVC (`CinemaHUD` + Track A/B)** | Glass-to-glass latency measurement and control with the camera's own USB transport | **Track A** (pipelined PTP + Android SGSR 1.0) has a physically verified liveview link. **Track B** (composite UVC push) enumerates with clean teardown but still stalls on EP0 `SET_CUR` status-OUT |
+| **3 · Multi-Device BIONZ X Platform Support** | Share SoC/kernel contracts across a6400, ZV-E10, a6100, a6600, and a7 III | Typed `TargetProfile` registry with a verified a6400 profile, a ZV-E10 reference chain, and explicit stubs for the rest |
 
-## Research status
+## Recent breakthroughs
 
-**2026-11-11 | [E0352](docs/evidence/0352-offline-teardown-soft-disconnect-fix.md).**
-Offline disassembly and Unicorn close the current loop on the Track B transport: the
-`Could not RenderStream to connect pins` failure is ranked to **START endpoint selection**
-(the EP0 class handler is byte-identical to the physically streaming reference,
-[E0351](docs/evidence/0351-offline-renderstream-verdict-and-crash-safe-logging.md)), and
-the post-session Mass Storage loss has a root cause plus a clean **unconfigure-first
-soft-disconnect** sequencer that replaces the teardown that lost the proven order
-([E0352](docs/evidence/0352-offline-teardown-soft-disconnect-fix.md)). The decisive
-forward result is the **P1 probe**: a foreign `GET_JPEG` sees real DMM frames at 29.8 FPS
-while the host PTP stream keeps running
-([E0349](docs/evidence/0349-p1-foreign-get-jpeg-succeeds-in-pc-remote.md)), and the
-composite itself enumerates as parent + PTP + Camera with DirectShow visible
-([E0350](docs/evidence/0350-trackb-transport-enumerates-but-renderstream-fails.md)). Run A then ran the unconfigure-first soft disconnect **on hardware**: the composite enumerated, the daemon exited clean, and Mass Storage returned without a battery pull ([E0353](docs/evidence/0353-run-a-teardown-success.md)). Run B then instrumented the live START selector: it **accepts** the composite endpoint (`ep=0x84`, dep flag set), so the strict-check relaxation is unnecessary; Run B2 with a real RenderStream attempt and USB ETW reproduced the DirectShow `RenderStream` failure, could not bind the composite MI_00 through WPD, and lost MSC again ([E0354](docs/evidence/0354-run-b-selector-accepts-084-renderstream-fails.md)). Offline analysis of that capture shows the ETL has **no EP0/URB payloads** (xHCI TRB-level only), but recovers the correct 173-byte host descriptor and the exact ffmpeg failure timing; a CLASS-request **abort guard** was added to the teardown and Unicorn-proven (13/13), and host WPD diagnostics now exist for the composite MI_00 problem ([E0355](docs/evidence/0355-offline-etl-abortguard-wpd.md)). Offline prep for the 5-second EP0 hypothesis now logs every UVC CLASS/VENDOR setup packet and return plus reference START/STOP from the camera side, mirrors the kernel trace to the SD card (`--dmesg-sd`), and adds the xHCI **UCX** provider + post-command wait to the host capture. Unicorn shows `core_cb_class` returns synchronously (no starved worker), so the timeout must be in gadgetcore EP0 completion/ownership — to be settled by the next instrumented run ([E0356](docs/evidence/0356-offline-ep0-trace-prep-and-unicorn-verdict.md)). The first instrumented hardware run (Run B3) captured exactly one UVC class request — `GET_CUR(PROBE)` answered 0 — which the host never received (ffmpeg timed out ~5 s later with no follow-up `SET_CUR`); the daemon parked on a failed stop attestation, explaining the battery pull. The bridge now applies the wire→native CLASS setup translation and Unicorn proves it ([E0357](docs/evidence/0357-run-b3-get-cur-never-delivered-and-class-translation-fix.md)). Two offline checks before Run B4: the EP0 `queue` slot resolves to the **UDC** `dwc3_gadget_ep0_queue` (not gadgetcore), which returns 0 on paths that arm no transfer — now logged read-only as `CLASS ep0-pre/post`; and the daemon gained a bounded **park-recovery** (SD evidence first, one STOP retry, retire/resume) so a failed teardown should no longer need a battery pull ([E0358](docs/evidence/0358-offline-ep0-queue-target-and-park-recovery.md)). Run B4 then showed the bridge translation live (GET_CUR → SET_CUR PROBE 5.002 s later, both answered 0), but the replies still timed out (probable no-transfer branch); crucially the **teardown was clean and the camera returned to Mass Storage without a battery pull**. The ep0 probe pointer-range bug (`no-udc-ep`) is fixed in module [E0359](docs/evidence/0359-run-b4-translation-live-probe-bug-and-clean-teardown.md).
-Earlier in the same window, kernel-to-user **sync callback delivery** ran the original
-h4109 callback to completion ([E0332](docs/evidence/0332-sync-callback-delivery-first-invocation.md)),
-and the architecture decision plus safe read-only DMA probe are recorded in
-[E0348](docs/evidence/0348-uvc-monitor-architecture-probe-and-reference-client.md) /
-[ARCHITECTURE_UVC_MONITOR.md](docs/ARCHITECTURE_UVC_MONITOR.md).
+- **Offline CXD90045 Kernel & Boot Bring-Up ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0424](docs/evidence/0424-cxd90045-pl011-primecell-and-ash-shell.md)):**
+  Decoded the read-only `nflashaB0` (`EXBL` / Sony `DGU5`) loader and `nflasha1`/`nflasha3`
+  boot sets (`0x00000DA9` / `ARM-CXD900X0`). Modelled the GIC + `0xF2403000` timer IRQs,
+  `__ex_table` fault recovery, CRCDC clock path (`0xF2A31000`), and bidirectional PL011
+  UART (`0xF2000000` with PrimeCell IDs) in Unicorn. The updater kernel now passes
+  `calibrate_delay`, mounts `cramfs`, enables `console [ttyAM0]`, and captures **52,976
+  bytes** of live serial boot + exception-monitor output (next: decode Sony's
+  `0x60103000` cmdline override format so `init=/bin/ash` takes effect).
+- **Persistent USB Debugger v2 & WinUSB Preflight ([E0400](docs/evidence/0400-usb-debugger-and-runtime-probe-infra.md)–[E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md)):**
+  Protocol v2 (`dmesg`, CRC-checked warm-reboot `klog` ring, `usb-state`, `recover`) runs
+  persistently in Mass Storage without SD or battery pulls. Offline WinUSB / MS OS 2.0
+  contracts, the dynamic `bcdUSB` builder (`0x602bb988`), the `gadgetcore+0x84` mode gate,
+  and a RAM-only `MSFT100 -> MSFT20` round-trip are verified.
+- **Track B Composite UVC Teardown & EP0 Root Cause ([E0352](docs/evidence/0352-offline-teardown-soft-disconnect-fix.md)–[E0399](docs/evidence/0399-runb22-deferred-restore-and-status-capture.md)):**
+  Unconfigure-first soft-disconnect and bounded park-recovery restore Mass Storage cleanly
+  without battery pulls. `P1` confirms 29.8 FPS DMM JPEG frames under live PTP; hardware
+  ETW + RAM-ring runs narrowed the `RenderStream` timeout to the EP0 `SET_CUR` status-OUT
+  stage and deferred disconnect restore.
+- **BCM4339 Wi-Fi / BT Surface ([E0406](docs/evidence/0406-bcm4339-wifi-bt-tuning-surface-readonly.md), [E0408](docs/evidence/0408-clm-blob-and-wlan-baseline.md)):**
+  Static Wi-Fi/BT firmware, kernel modules, and CLM blobs are hash-identified offline
+  against ZV-E10.
 
-Recorded suite: 1312 tests. Each result above is bounded by its own record; no UVC frame,
-no control write and no full firmware boot is claimed.
+Recorded suite: 1476 tests. Each result is bounded by its own evidence record; no UVC
+frame, no control write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=2e4bc5cad446)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=a3b01929c7c7)
 
 ### Subsystem status matrix
 
 | Subsystem | Demonstrated & verified | Remaining boundary | Evidence |
 | --- | --- | --- | --- |
-| Firmware execution — offline | Original ARM/Thumb code reaches `im.elf` and the first event-dispatch phase | Full camera boot unproven; 1/8 task phases and 0/198 static plugin definitions | [status data](tools/research/a6400_status_data.py) |
-| UIPC / USB FSM — offline | MWF dispatch, ObjMsg wire layout, opt-in kernel-to-user sync callback delivery; the original h4109 callback executes and completes | `h4109`/`h4110` packet payload format and the downstream post path are still unmodelled (`sync_callback_packet_format_unmodelled`); no FSM transition claimed | [E0327](docs/evidence/0327-mwf-objmsg-wire-format.md), [E0331](docs/evidence/0331-usb-lane-local-queue-vs-sync-callback.md), [E0332](docs/evidence/0332-sync-callback-delivery-first-invocation.md) |
-| Host enumeration — offline | Byte-verified 173-byte UVC+PTP descriptor decoded; `SET_CONFIGURATION`/endpoint selection modelled; ObjMsg dispatch reaches FSM event `0x13` | Inbound `SET_CONFIG` cannot yet be delivered on the original sync lane end-to-end | [E0337](docs/evidence/0337-emulator-uvc-ptp-preparation-and-0a4002-broadcast.md) |
-| Display / GPU — physical capture + offline model | Camera OSD A/B confirmed as 640×480 RGBA4444; GPES BAR/IRQ contracts decoded; the opt-in engine model reaches a second original guest signal | Keyed `0x820E` completion, guest condition release, OSD mapping and the rasterizer remain open; no verified GUI frame | [E0298](docs/evidence/0298-safe-osd-capture-and-sugilite-correction.md), [E0313](docs/evidence/0313-readonly-physical-gpes-bar-and-grm-state.md), [E0314](docs/evidence/0314-gpes-bar-irq-contract-engine-model.md) |
-| PTP liveview — physical | Original PC Remote mode delivers real 1024×680 sensor JPEGs; a foreign `GET_JPEG` sees the same DMM frames at 29.8 FPS under host load | Simultaneous UVC + PTP with reliable teardown is not demonstrated | [E0349](docs/evidence/0349-p1-foreign-get-jpeg-succeeds-in-pc-remote.md), [E0151](docs/evidence/0151-pc-remote-liveview-and-uvc-verified.md) |
-| Composite USB / UVC — physical | Authored composite enumerates as parent + `MI_00` PTP + `MI_01` Camera, with DirectShow seeing an ILCE-6400 video device | DirectShow cannot connect the UVC pins (`trackb_directshow_pin_connect_unproven`); post-session MSC needed a power cycle; no UVC frame | [E0348](docs/evidence/0348-uvc-monitor-architecture-probe-and-reference-client.md), [E0350](docs/evidence/0350-trackb-transport-enumerates-but-renderstream-fails.md) |
-| Track B — physical (E0353..E0374) | Run B13: gc_ep0 == class ep0 (eq=1); `setup_req 0x9fd8` provably queues a second request on the same ep0 (LR `602b9fdc`, req `68a84da0`, len 18/39/26/4/20/9/0), invisible to the class shadow. Receipt clean/0CAA, but camera rebooted during cleanup (recovered MSC, 42 modules) | Next: implement GC-wrapper guard that drops only the delegated queue (LR==0x602b9fdc), prove in Unicorn, then B14 | [E0374](docs/evidence/0374-run-b13-gc-context-and-second-queue-proof.md), [E0373](docs/evidence/0373-corrected-lpos-timeline-set-data-acked-by-other-ep0-resource.md) |
-| UVC transport — authored pattern | Static MJPEG 1280×720 at 29.9592 FPS over 180 frames; the ZV-E10 UVC chain is hash-pinned as reference | Sensor feeder unwired; the ZV-E10 UVC stack is **not enabled** on the a6400 and physical load is outside the read-only scope | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md), [E0322](docs/evidence/0322-zve10-uvc-overlay-plan.md) |
-| Native monitor / storage — physical | Original help and a fixed `IFSYS getdriveinfo A` reply verified; A: identified as SD | General command behaviour and competing-consumer ownership remain open; the diagnostic SD journal is unwritten | [E0234](docs/evidence/0234-ordinary-pcremote-ifsys-query-answered.md), [E0222](docs/evidence/0222-physical-sd-volume-device-association.md) |
-| Custom menu — authored demonstration | Our interface drawn on the camera display | Does not establish original Sony menu behaviour, navigation or settings — [photo](docs/images/framebuffer-camera-menu.png) | [authored demo](docs/images/framebuffer-camera-menu.png) |
-| Multi-device targets | Typed a6400 profile with sourced kernel symbols, UIPC queues and USB identity; ZV-E10 reference chain; stubs carry no claims | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [ADDING_A_BIONZX_CAMERA](docs/ADDING_A_BIONZX_CAMERA.md) |
-| Validation — local suite | 1312 tests pass offline, including structure, target-profile and documentation-sync contracts | Bounded contracts, not compatibility or deployment safety | [tests/](tests/README.md) |
+| Firmware & kernel — offline | `im.elf` reaches event dispatch; updater kernel boots through `calibrate_delay`, `cramfs` mount, and live `ttyAM0` serial capture (52,976 B) | Full camera boot unproven; Sony `0x60103000` cmdline override format still to decode for `/bin/ash`; 1/8 task phases | [E0424](docs/evidence/0424-cxd90045-pl011-primecell-and-ash-shell.md), [status data](tools/research/a6400_status_data.py) |
+| UIPC / USB FSM — offline | MWF dispatch, ObjMsg wire layout, opt-in sync callback delivery (`h4109` runs to completion) | `h4109`/`h4110` packet payload format and downstream post path unmodelled | [E0327](docs/evidence/0327-mwf-objmsg-wire-format.md), [E0332](docs/evidence/0332-sync-callback-delivery-first-invocation.md) |
+| Host enumeration — offline | 173-byte UVC+PTP descriptor decoded; `SET_CONFIGURATION`/endpoint selection modelled; ObjMsg reaches FSM `0x13` | Inbound `SET_CONFIG` not yet delivered end-to-end on the sync lane | [E0337](docs/evidence/0337-emulator-uvc-ptp-preparation-and-0a4002-broadcast.md) |
+| Display / GPU — physical + offline | Camera OSD A/B confirmed 640×480 RGBA4444; GPES BAR/IRQ contracts decoded; opt-in engine reaches second guest signal | Keyed `0x820E` completion, guest condition release, OSD mapping, and rasterizer remain open | [E0298](docs/evidence/0298-safe-osd-capture-and-sugilite-correction.md), [E0314](docs/evidence/0314-gpes-bar-irq-contract-engine-model.md) |
+| PTP liveview — physical | Original PC Remote delivers 1024×680 sensor JPEGs; foreign `GET_JPEG` sees DMM frames at 29.8 FPS under load | Simultaneous UVC + PTP with reliable teardown not yet demonstrated | [E0349](docs/evidence/0349-p1-foreign-get-jpeg-succeeds-in-pc-remote.md), [E0151](docs/evidence/0151-pc-remote-liveview-and-uvc-verified.md) |
+| Composite USB / UVC — physical | Composite enumerates (`MI_00` PTP + `MI_01` Camera) with clean MSC teardown; ETW + RAM-ring isolated EP0 `SET_CUR` status-OUT divergence | DirectShow `RenderStream` times out; deferred workqueue restore + status-stage hook next | [E0350](docs/evidence/0350-trackb-transport-enumerates-but-renderstream-fails.md), [E0398](docs/evidence/0398-runb21-status-stage-and-disconnect-verdict.md) |
+| USB Debugger v2 — physical + offline | Persistent MSC debugger with `dmesg`, warm-reboot `klog` ring, `usb-state`, `recover`; RAM-only `MSFT20` round-trip verified | WinUSB composite vendor interface (`B2/B3`) and `bcdUSB` override not yet deployed | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
+| UVC transport — authored pattern | Static MJPEG 1280×720 @ 29.96 FPS (180 frames); ZV-E10 UVC chain hash-pinned as reference | Sensor feeder unwired; ZV-E10 stack not enabled on a6400 | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
+| Multi-device targets | Typed a6400 profile with sourced symbols, UIPC queues, and USB identity; ZV-E10 reference chain | Only a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [ADDING_A_BIONZX_CAMERA](docs/ADDING_A_BIONZX_CAMERA.md) |
+| Validation — local suite | 1476 tests pass offline (structure, target profiles, emulator contracts, docs sync) | Bounded contracts, not compatibility or deployment safety | [tests/](tests/README.md) |
 
-## How to contribute (no camera required!)
+## How to contribute (no camera required)
 
-Roughly 90% of the open work is offline Python: decoders, emulator contracts, tests and
-documentation. If you have a laptop and this repository, you can contribute today.
+Roughly 90% of the open work is offline Python: decoders, emulator contracts, tests, and documentation.
 
 **Top 3 open tasks right now**
 
-1. **`h4109`/`h4110` packet payload for the `UsbControl` FSM** — the sync lane now
-   delivers, but its packet format is unknown. Decode it and carry an inbound
-   `SET_CONFIG` from the queue to a real FSM observation.
-   Start at [`src/a6400/execution/usb_sync_callback.py`](src/a6400/execution/usb_sync_callback.py).
-2. **Offline Unicorn model of UVC EP0 `PROBE`/`COMMIT` and a clean MSC soft-disconnect
-   teardown** — the sequencer exists ([E0352](docs/evidence/0352-offline-teardown-soft-disconnect-fix.md));
-   it needs coverage of every fail-closed path before another physical run.
-   Start at [`tools/native_camera/uvc_ptp_soft_disconnect.c`](tools/native_camera/uvc_ptp_soft_disconnect.c).
-3. **GPES keyed `0x820E` completion** — resolve the cross-thread completion through the
-   driver-resolved context pointer and the guest condition release, so the display path
-   can progress without host-injected state.
-   Start at [`src/a6400/execution/guest_gles.py`](src/a6400/execution/guest_gles.py).
+1. **Sony `0x60103000` cmdline override format** — `setup_arch()` rejects standard ATAGS/raw cmdlines (`invalid cmdline override @ 0x60103000`). Decode the validator around `0x603D98EE` so `init=/bin/ash` boots to an interactive shell over `ttyAM0`.
+2. **`h4109`/`h4110` packet payload for the `UsbControl` FSM** — decode the sync-lane packet format and carry an inbound `SET_CONFIG` to a real FSM observation ([`usb_sync_callback.py`](src/a6400/execution/usb_sync_callback.py)).
+3. **GPES keyed `0x820E` completion** — resolve the cross-thread completion through the driver-resolved context pointer and guest condition release ([`guest_gles.py`](src/a6400/execution/guest_gles.py)).
 
-Where to read next:
-
-- [Contributing to UVC / PTP](docs/CONTRIBUTING_UVC_PTP.md) — six scoped workstreams with acceptance criteria.
-- [Adding a BIONZ X camera](docs/ADDING_A_BIONZX_CAMERA.md) — own another body? Register a `TargetProfile` with evidence.
-- [Consolidated UVC/PTP status](docs/UVC_PTP_STATUS.md) — the dated progress log.
-- Issue labels: [`uvc`](https://github.com/ivica00/sony-a6400-research/issues?q=label%3Auvc),
-  [`ptp`](https://github.com/ivica00/sony-a6400-research/issues?q=label%3Aptp),
-  [`good first issue`](https://github.com/ivica00/sony-a6400-research/issues?q=label%3A%22good+first+issue%22),
-  [`boundary`](https://github.com/ivica00/sony-a6400-research/issues?q=label%3Aboundary).
-
-A clean recorded boundary — "the original code stops here, with this PC and reason" — is a
-valid contribution on this project.
+More guides: [Contributing to UVC / PTP](docs/CONTRIBUTING_UVC_PTP.md) · [Adding a BIONZ X camera](docs/ADDING_A_BIONZX_CAMERA.md) · [Consolidated UVC/PTP status](docs/UVC_PTP_STATUS.md).
 
 ## Quick start
 
-No camera is needed for the offline suite. Python 3.10+ with the pinned dependencies from
-[`requirements.txt`](requirements.txt):
+Python 3.10+ with dependencies from [`requirements.txt`](requirements.txt) (no camera required):
 
 ```powershell
-# Windows (PowerShell), using the existing environment
+# Windows (PowerShell)
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 .\venv\Scripts\python.exe -m unittest discover -s tests -q
 ```
@@ -116,71 +94,37 @@ python3 -m unittest discover -s tests -q
 | Full offline suite | `python -m unittest discover -s tests -q` |
 | Structure + targets + docs sync | `python -m unittest tests.test_repository_layout tests.test_target_profiles tests.test_research_status_sync -v` |
 | Status card is current | `python -m tools.research.render_research_status --check` |
-| Interpreter probe (offline) | `python -m tools.research.probe_interpreter` |
-| Interface launchers (Windows) | [`scripts/`](scripts/) — `launch_cinemahud_ptp.bat`, `launch_cinemahud_android.ps1`, `launch_cinema_mpv.bat`, `start_camera_shell.bat` |
+| Interface launchers (Windows) | [`scripts/`](scripts/) (`launch_cinemahud_ptp.bat`, `launch_cinemahud_android.ps1`, `launch_cinema_mpv.bat`, `start_camera_shell.bat`) |
 
-Run first-party scripts as modules from the repository root
-(`python -m tools.research.<tool>`, `python -m legacy.<prototype>`). Firmware, backups and
-generated artifacts stay local; a source clone alone does not reproduce the physical
-experiments.
+Run first-party scripts as modules from the repository root (`python -m tools.research.<tool>`). Firmware, backups, and generated artifacts stay local and are excluded from Git.
 
 ## Repository map
 
 | Path | Contents |
 | --- | --- |
-| `src/a6400/execution/` | Bounded guest execution and verified OSAL/UIPC/USB/GPU contracts |
-| `src/a6400/targets/` | `TargetProfile` schema, fail-closed validation and the multi-device registry |
-| `src/a6400/visualization/` | Treemap status renderer (PNG) used by the inventory data module |
-| `tools/research/` | Analysis, original-code probes, experiment runners and the telemetry-dashboard generator |
-| `tools/native_camera/` | Authored native helpers, module sources and the UVC/PTP transport work |
-| `probes/` | Bounded read-only ARM probe for other BIONZ X bodies (+ build/receipt harness) |
-| `tests/` | Contract, regression and repository-structure checks |
-| `docs/evidence/` | Dated claims, identities, observations and limitations |
-| `docs/` | Architecture, workflows, contributor guides and the research-status card |
-| `scripts/` | Windows launchers, resolving the repository root from their own location |
-| `legacy/` | Historical HLE/UI prototypes; explicitly not compatibility evidence |
-| `android/`, `android-client-ref/` | Track A client and the CinemaHUD reference client |
-| `camera-daemon/` | Track B camera-side composite UVC push daemon (offline, gated) |
-| `firmware/`, `backups/`, `artifacts/` | Local preserved inputs and generated results; excluded from Git |
-
-See [docs/REPOSITORY.md](docs/REPOSITORY.md) for the layout history and launch paths.
+| `src/a6400/execution/` | Bounded guest execution, Unicorn machine, and verified OSAL/UIPC/USB/GPU contracts |
+| `src/a6400/targets/` | `TargetProfile` schema, fail-closed validation, and multi-device registry |
+| `src/a6400/debug/` | USB debugger protocol, ring buffer, and WinUSB transport |
+| `tools/research/` | Analysis, original-code probes, experiment runners, and status-dashboard generator |
+| `tools/native_camera/` | Authored native helpers, kernel-module sources, and UVC/PTP transport work |
+| `probes/` | Bounded read-only ARM probe for other BIONZ X bodies |
+| `tests/` | Contract, regression, and repository-structure checks |
+| `docs/evidence/` | Dated claims, identities, observations, and limitations |
+| `docs/` | Architecture, workflows, contributor guides, and status card |
+| `android/`, `android-client-ref/` | Track A client and CinemaHUD reference client |
+| `camera-daemon/` | Track B camera-side composite UVC push daemon |
+| `firmware/`, `backups/`, `artifacts/` | Local preserved inputs and generated results (excluded from Git) |
 
 ## Epistemic and safety boundaries
 
-This section is part of the method, not a disclaimer.
+- **Evidence policy:** Host-written navigation, rendering, UI, or camera decisions are **not** firmware compatibility. Every claim links to a dated record.
+- **Zero flash modification:** No internal-flash writes, firmware installation, or boot changes are part of ordinary work.
+- **Clean-room:** Original code owns application logic in fidelity experiments; unknown services stop with PC, arguments, and reason rather than fabricating success.
+- **Physical scope:** Read-only observations are authorized; writes, mode switches, module loads, and teardown experiments require explicit scope. Bulk `/dev/mem` sweeps are banned ([AGENTS.MD](AGENTS.MD)).
+- **Per-boot values:** Only `kallsyms` addresses are ASLR-free; library bases, fds, and DMM addresses change between boots.
 
-- **Evidence policy.** Host-written navigation, rendering, UI or camera decisions are
-  **not** firmware compatibility. An offline contract result, a read-only observation, an
-  authored demonstration and a physically verified operation are reported separately, and
-  each claim links to a dated record.
-- **Zero flash modification.** No internal-flash writes, no firmware installation, no
-  driver replacement and no boot changes are part of ordinary work. Firmware and captures
-  stay local; only hash-checked read-only inputs are consumed.
-- **Clean-room.** Original code owns application logic and rendering in fidelity
-  experiments. Unknown services are never replaced by fabricated success values, synthetic
-  messages or host-invoked callbacks; a run stops with its PC, arguments and reason.
-- **Physical scope.** Read-only camera observations need no extra approval; writes, mode
-  switches, module loads and teardown experiments do, and they are never incidental test
-  steps. Bulk `/dev/mem` sweeps are banned — one caused a USB drop and camera reboot; the
-  incident and its restriction are recorded in the safety note of [AGENTS.MD](AGENTS.MD).
-- **Per-boot values.** Only kallsyms addresses are ASLR-free. Library bases, the gadgetcore
-  fd and every DMM address change between boots; the target profiles record what was
-  observed and never hardcode a boot's values as a contract.
-- **Bounded claims.** A passing fixture, an instruction count or a rendered frame proves
-  only its own bounded contract. "Not yet verified" is a normal, publishable state.
+## Research records & attribution
 
-## Research records
+[Evidence index](docs/evidence/README.md) · [Architecture](docs/ARCHITECTURE.md) · [UVC monitor architecture](docs/ARCHITECTURE_UVC_MONITOR.md) · [Roadmap](docs/ROADMAP.md) · [Live camera / emulator workflow](docs/LIVE_CAMERA_EMULATOR_WORKFLOW.md) · [Contributing](CONTRIBUTING.MD) · [Repository layout](docs/REPOSITORY.md) · [Agent rules](AGENTS.MD) · [Archived README](docs/archives/README-2026-11-09.md)
 
-- [Evidence index and record format](docs/evidence/README.md)
-- [Architecture](docs/ARCHITECTURE.md) · [UVC monitor architecture](docs/ARCHITECTURE_UVC_MONITOR.md) · [Roadmap](docs/ROADMAP.md)
-- [Live camera / emulator workflow](docs/LIVE_CAMERA_EMULATOR_WORKFLOW.md) · [Dependency workflow](docs/DEPENDENCY_WORKFLOW.md)
-- [Contributing](CONTRIBUTING.MD) · [Repository layout](docs/REPOSITORY.md) · [Agent rules](AGENTS.MD)
-- [Archived README and earlier milestones](docs/archives/README-2026-11-09.md)
-
-## Scope and attribution
-
-Independent research; not affiliated with or endorsed by Sony. Sony, a6400, ILCE-6400 and
-BIONZ X are their respective owners' trademarks. Firmware packages, extracted proprietary
-binaries, device backups and raw RAM captures remain local. Custom graphics, passing
-fixtures and instruction counts do not establish complete firmware compatibility or
-deployment safety. Unknown behaviour must remain explicit.
+Independent research; not affiliated with or endorsed by Sony. Sony, a6400, ILCE-6400, and BIONZ X are their respective owners' trademarks.

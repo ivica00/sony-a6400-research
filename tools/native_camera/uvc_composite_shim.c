@@ -774,6 +774,11 @@ static int a6400_uvc_restore_descriptors(void)
     return 0;
 }
 
+int a6400_uvc_restore_descriptors_bridge(void)
+{
+    return a6400_uvc_restore_descriptors();
+}
+
 /* VideoStreaming bulk-IN address from the gadgetcore ACTIVE descriptor table.
  *
  * gc+0x6c is the descriptor-table pointer this module installs through
