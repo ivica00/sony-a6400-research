@@ -5,7 +5,8 @@ from pathlib import Path
 
 from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR,
                                UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1,
-                               UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SPSR)
+                               UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP,
+                               UC_ARM_REG_SPSR)
 
 from src.a6400.execution.arm_atags import build_atags
 from src.a6400.execution.unicorn_machine import UnicornMachine
@@ -39,6 +40,66 @@ class DataAbortDeliveryTests(unittest.TestCase):
                                                     0xEE153F10, 0xEAFFFFFE))
         machine.uc.emu_start(helper_pa, 0, count=2)  # no MMU in this test machine
         self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R2), 0x00123458)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R3), 0x800005)
+
+    def test_demand_page_helper_whitelist(self):
+        machine = self.make_machine(symbols={'__clear_user_std': 0x6025DB00,
+                                             'kmalloc': 0x60100000})
+        self.assertTrue(machine._in_demand_page_helper(0x6025DB1C))
+        self.assertFalse(machine._in_demand_page_helper(0x60100010))
+
+    def test_prefetch_abort_ifar_ifsr_and_vector(self):
+        machine = self.make_machine()
+        pc, cpsr = 0x00123456, 0x00000070  # user mode + Thumb
+        self.assertTrue(machine._deliver_prefetch_abort(pc, cpsr, 0x0402E790))
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x1F, 0x17)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SPSR), cpsr)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_LR), pc + 4)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0xFFFF000C)
+        # IFAR (c6,c0,2) and IFSR (c5,c0,1) read-back.
+        helper_pa = 0x02003000
+        machine.uc.mem_write(helper_pa, struct.pack('<3I', 0xEE162F50,
+                                                    0xEE153F30, 0xEAFFFFFE))
+        machine.uc.emu_start(helper_pa, 0, count=2)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R2), 0x0402E790)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R3), 0x5)
+        self.assertEqual(machine.prefetch_aborts_delivered, 1)
+        self.assertTrue(machine.prefetch_abort_trace[0]['user'])
+
+    def test_user_prefetch_enters_pabt_usr_with_isolated_abt_frame(self):
+        machine = self.make_machine(symbols={'__pabt_usr': 0x6010DE20})
+        machine.mode_sp['svc'] = 0x7DC0FFB0
+        machine.uc.reg_write(UC_ARM_REG_SP, 0x7DC0F000)  # user SP
+        machine.uc.reg_write(UC_ARM_REG_R0, 0x1234)
+        pc = 0x0402E790
+        self.assertTrue(machine._deliver_prefetch_abort(pc, 0x00000070, pc))
+        # Handler entered in SVC mode on the kernel SVC stack, not on SP_abt.
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0x6010DE20)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x1F, 0x13)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SP), 0x7DC0FFB0)
+        scratch_va = machine.VECTOR_SCRATCH_PA + machine.PAGE_OFFSET
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R0), scratch_va)
+        frame = struct.unpack('<3I', machine.uc.mem_read(machine.VECTOR_SCRATCH_PA, 12))
+        self.assertEqual(frame, (0x1234, pc, 0x00000070))
+        self.assertEqual(machine.user_sp, 0x7DC0F000)
+        self.assertTrue(machine._restore_user_sp)
+
+    def test_banked_usr_store_uses_saved_user_registers(self):
+        machine = self.make_machine(symbols={'__pabt_usr': 0x6010DE20})
+        machine.mode_sp['usr'] = 0x0E864F10
+        machine.mode_lr['usr'] = 0x04001234
+        sp = 0x0DC0FF20
+        machine.uc.reg_write(UC_ARM_REG_SP, sp)
+        machine.uc.reg_write(UC_ARM_REG_R0, sp + 0x3C)  # handler's add r0, sp, #0x3c
+        pc = 0x6010DE3C                                 # __pabt_usr+0x1c (stmdb ^)
+        machine._emulate_banked_store(pc)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), pc + 4)
+        frame = struct.unpack('<2I', machine.uc.mem_read(sp + 0x34, 8))
+        self.assertEqual(frame, (0x0E864F10, 0x04001234))
+
+    def test_flush_tlb_is_safe(self):
+        machine = self.make_machine()
+        machine._flush_tlb()  # must not raise even if the API is unavailable
 
     def test_abort_delivery_sets_armv7_abort_state(self):
         machine = self.make_machine()

@@ -34,7 +34,9 @@ from unicorn import (UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_MEM_READ,
 from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
                                UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2,
                                UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5,
-                               UC_ARM_REG_SP, UC_ARM_REG_SPSR)
+                               UC_ARM_REG_R6, UC_ARM_REG_R7, UC_ARM_REG_R8,
+                               UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
+                               UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_SPSR)
 
 UART0 = 0xF2000000
 PL011_DR = 0x00
@@ -106,6 +108,8 @@ class UnicornMachine:
                  probe_write_ranges: tuple = (),
                  serial_input: bytes = b'',
                  boot_params_payload: bytes | None = None,
+                 trace_user_mode: bool = False,
+                 trace_regs: dict | None = None,
                  trace_printk_at: int | None = None,
                  trace_points: dict | None = None,
                  instruction_limit: int = 40_000_000,
@@ -196,6 +200,29 @@ class UnicornMachine:
         # Bidirectional PL011: RX FIFO for injected console input.
         self.serial_input = bytearray(serial_input)
         self.boot_params_payload = boot_params_payload
+        self.trace_user_mode = trace_user_mode
+        self.trace_regs = trace_regs or {}
+        self.trace_reg_values: dict[int, list] = {}
+        self.user_mode_entries: list[dict] = []
+        # E0429: explicit per-mode SP banking (Unicorn shares R13 across
+        # modes) and prefetch-abort support.
+        self.mode_sp: dict[str, int | None] = {'svc': None, 'irq': None,
+                                              'abt': None, 'usr': None}
+        self.mode_lr: dict[str, int | None] = {'svc': None, 'irq': None,
+                                              'abt': None, 'usr': None}
+        self.user_sp: int | None = None
+        self._restore_user_sp = False
+        self._pending_exception = ''
+        self.prefetch_aborts_delivered = 0
+        self.prefetch_abort_trace: list[dict] = []
+        # E0428: user-access helpers whose faults must be delivered to the
+        # kernel do_DataAbort (handle_mm_fault) instead of being fixed up
+        # directly; the exec BSS/stack demand-paging path runs through them.
+        self.demand_page_helpers = {
+            '__clear_user_std', '__copy_to_user_std', '__copy_from_user_std',
+            '__clear_user', '__copy_to_user', '__copy_from_user',
+            'padzero', 'copy_strings', 'copy_strings_kernel',
+            'create_elf_tables', 'load_elf_binary'}
         self._uart_regs: dict[int, int] = {}
         self._crcdc_regs: dict[int, int] = {}
         self.trace_printk_at = trace_printk_at
@@ -492,6 +519,31 @@ class UnicornMachine:
             if self._instructions % self.sample_interval == 0:
                 self.pc_samples[address] += 1
 
+        def user_code(uc, address, size, user):
+            cpsr = uc.reg_read(UC_ARM_REG_CPSR)
+            if (cpsr & 0x1F) != 0x10:
+                return
+            if self._restore_user_sp and self.user_sp is not None:
+                uc.reg_write(UC_ARM_REG_SP, self.user_sp)
+                self._restore_user_sp = False
+            if len(self.user_mode_entries) < 20:
+                self.user_mode_entries.append({'pc': address, 'cpsr': cpsr})
+
+
+        _reg_getters = {
+            'r0': UC_ARM_REG_R0, 'r1': UC_ARM_REG_R1, 'r2': UC_ARM_REG_R2,
+            'r3': UC_ARM_REG_R3, 'r4': UC_ARM_REG_R4, 'r5': UC_ARM_REG_R5,
+            'r6': UC_ARM_REG_R6, 'r7': UC_ARM_REG_R7, 'r8': UC_ARM_REG_R8,
+            'r9': UC_ARM_REG_R9, 'r10': UC_ARM_REG_R10, 'r11': UC_ARM_REG_R11,
+            'r12': UC_ARM_REG_R12, 'sp': UC_ARM_REG_SP, 'lr': UC_ARM_REG_LR,
+            'pc': UC_ARM_REG_PC, 'cpsr': UC_ARM_REG_CPSR,
+        }
+        for pc, reg_names in self.trace_regs.items():
+            def capture(uc, address, size, user, pc=pc, reg_names=reg_names):
+                values = {name: uc.reg_read(_reg_getters[name])
+                          for name in reg_names if name in _reg_getters}
+                self.trace_reg_values.setdefault(pc, []).append(values)
+            self.uc.hook_add(UC_HOOK_CODE, capture, begin=pc, end=pc + 3)
         for begin, end in mmio_starts:
             self.uc.hook_add(UC_HOOK_MEM_READ, mmio_read, begin=begin, end=end)
             self.uc.hook_add(UC_HOOK_MEM_WRITE, mmio_write, begin=begin, end=end)
@@ -518,6 +570,32 @@ class UnicornMachine:
         # much slower than slice-based PC sampling, so the runner defaults to slices.
         if self.sample_interval and self.use_code_hook:
             self.uc.hook_add(UC_HOOK_CODE, code)
+        # E0429: capture the kernel SVC stack pointer right before the kernel
+        # returns to user mode; it is used as the ABT-mode stack for delivered
+        # user faults so abort frames never land on the user stack.
+        ret_to_user = None
+        for symbol_name, value in self.symbols.items():
+            if symbol_name == 'ret_to_user':
+                ret_to_user = value
+                break
+        if ret_to_user is not None:
+            def capture_svc_sp(uc, address, size, user):
+                self.mode_sp['svc'] = uc.reg_read(UC_ARM_REG_SP)
+            self.uc.hook_add(UC_HOOK_CODE, capture_svc_sp,
+                             begin=ret_to_user, end=ret_to_user + 3)
+        # E0431: emulate the usr_entry banked store `stmdb r0, {sp, lr}^` in the
+        # __pabt_usr/__dabt_usr handlers (Unicorn has no banked R13/R14).
+        for handler_name in ('__pabt_usr', '__dabt_usr'):
+            handler_pc = self._symbol_address(handler_name)
+            if handler_pc is not None:
+                banked_pc = handler_pc + 0x1C
+                def banked_store(uc, address, size, user, pc=banked_pc):
+                    self._emulate_banked_store(pc)
+                self.uc.hook_add(UC_HOOK_CODE, banked_store,
+                                 begin=banked_pc, end=banked_pc + 3)
+        if self.trace_user_mode:
+            # Wide low-user window: ld-linux (0x04000000+) and busybox (0x8000+).
+            self.uc.hook_add(UC_HOOK_CODE, user_code, begin=0x1000, end=0x60000000)
         # Pre-seed the PL011 FR value so reads hit a defined register image.
         try:
             self.uc.mem_write(self.uart_base + PL011_FR,
@@ -722,19 +800,113 @@ class UnicornMachine:
             return False
         return False
 
+    def _in_demand_page_helper(self, pc: int) -> bool:
+        if not self._symbol_addresses:
+            return False
+        import bisect
+        index = bisect.bisect_right(self._symbol_addresses, pc) - 1
+        if index < 0:
+            return False
+        symbol_pc = self._symbol_addresses[index]
+        name = None
+        for candidate, value in self.symbols.items():
+            if value == symbol_pc:
+                name = candidate
+                break
+        return name in self.demand_page_helpers
+
+    #: Scratch frame used to emulate the ARM Linux vector-stub entry when the
+    #: CPU's per-mode SP banking cannot be modelled by Unicorn (E0430).
+    VECTOR_SCRATCH_PA = 0x02002000
+
+    def _symbol_address(self, name: str) -> int | None:
+        for symbol_name, value in self.symbols.items():
+            if symbol_name == name:
+                return value
+        return None
+
+    def _flush_tlb(self) -> None:
+        """Flush Unicorn's software TLB after a guest PTE/TTBR0 update (E0431)."""
+        try:
+            flush = getattr(self.uc, 'ctl_flush_tlb', None)
+            if flush is not None:
+                flush()
+                return
+        except Exception:
+            pass
+        try:
+            import unicorn
+            self.uc.ctl(unicorn.UC_CTL_TLB_FLUSH, 0)
+        except Exception:
+            pass
+
+    def _emulate_banked_store(self, pc: int) -> None:
+        """Emulate `stmdb r0, {sp, lr}^` using the saved USR bank values.
+
+        Unicorn shares R13/R14 between modes, so the kernel's usr_entry banked
+        store would otherwise write the SVC stack/LR into pt_regs.
+        """
+        base = self.uc.reg_read(UC_ARM_REG_R0)
+        user_sp = self.mode_sp.get('usr')
+        user_lr = self.mode_lr.get('usr')
+        if user_sp is None:
+            user_sp = self.user_sp
+        try:
+            self.uc.mem_write(base - 8, struct.pack('<I', (user_sp or 0) & 0xFFFFFFFF))
+            self.uc.mem_write(base - 4, struct.pack('<I', (user_lr or 0) & 0xFFFFFFFF))
+        except Exception:
+            pass
+        self.uc.reg_write(UC_ARM_REG_PC, pc + 4)
+
+    def _deliver_user_exception(self, pc: int, cpsr: int) -> bool:
+        """Emulate vector_stub + usr_entry for a user fault (E0430).
+
+        The real ARMv7 vector code uses the banked SP_abt for a 12-byte scratch
+        frame before switching to SVC; Unicorn shares R13 between modes, so we
+        write that scratch frame ourselves, switch to SVC mode with the saved
+        kernel SVC stack pointer and jump straight to the kernel's __dabt_usr /
+        __pabt_usr handler with r0 pointing at the scratch frame.
+        """
+        handler = self._symbol_address(
+            '__pabt_usr' if self._pending_exception == 'pabt' else '__dabt_usr')
+        if handler is None:
+            return False
+        if self.mode_sp.get('svc') is None:
+            return False
+        scratch_pa = self.VECTOR_SCRATCH_PA
+        scratch_va = scratch_pa + self.PAGE_OFFSET
+        r0 = self.uc.reg_read(UC_ARM_REG_R0)
+        self.uc.mem_write(scratch_pa, struct.pack(
+            '<3I', r0 & 0xFFFFFFFF, pc & 0xFFFFFFFF, cpsr & 0xFFFFFFFF))
+        self.user_sp = self.uc.reg_read(UC_ARM_REG_SP)
+        self.mode_sp['usr'] = self.user_sp
+        self.mode_lr['usr'] = self.uc.reg_read(UC_ARM_REG_LR)
+        self._restore_user_sp = True
+        self.uc.reg_write(UC_ARM_REG_CPSR, 0x13 | 0xC0)  # SVC, IRQ/FIQ masked
+        self.uc.reg_write(UC_ARM_REG_SP, self.mode_sp['svc'])
+        self.uc.reg_write(UC_ARM_REG_R0, scratch_va)
+        self.uc.reg_write(UC_ARM_REG_LR, pc)
+        self.uc.reg_write(UC_ARM_REG_PC, handler)
+        self._flush_tlb()
+        return True
+
     # ------------------------------------------------- data abort delivery
     ABORT_HELPER_PA = 0x02001000
 
     def _set_cp15_fault(self, address: int, fsr: int) -> bool:
         """Populate DFAR (c6) and DFSR (c5) through emulated MCR instructions."""
         helper_va = self.ABORT_HELPER_PA + self.PAGE_OFFSET
-        code = struct.pack('<3I', 0xEE060F10, 0xEE050F10, 0xEAFFFFFE)
+        code = struct.pack('<3I', 0xEE060F10, 0xEE051F10, 0xEAFFFFFE)
         try:
             self.uc.mem_write(self.ABORT_HELPER_PA, code)
         except Exception:
             return False
         saved_r0 = self.uc.reg_read(UC_ARM_REG_R0)
         saved_r1 = self.uc.reg_read(UC_ARM_REG_R1)
+        saved_cpsr = self.uc.reg_read(UC_ARM_REG_CPSR)
+        # MCR is privileged: run the helper in SVC mode even when the fault
+        # came from user mode (E0429).
+        self.uc.reg_write(UC_ARM_REG_CPSR, 0xD3)
         self.uc.reg_write(UC_ARM_REG_R0, address & 0xFFFFFFFF)
         self.uc.reg_write(UC_ARM_REG_R1, fsr & 0xFFFFFFFF)
         try:
@@ -742,9 +914,74 @@ class UnicornMachine:
         except Exception:
             self.uc.reg_write(UC_ARM_REG_R0, saved_r0)
             self.uc.reg_write(UC_ARM_REG_R1, saved_r1)
+            self.uc.reg_write(UC_ARM_REG_CPSR, saved_cpsr)
             return False
         self.uc.reg_write(UC_ARM_REG_R0, saved_r0)
         self.uc.reg_write(UC_ARM_REG_R1, saved_r1)
+        self.uc.reg_write(UC_ARM_REG_CPSR, saved_cpsr)
+        return True
+
+    def _deliver_prefetch_abort(self, pc: int, cpsr: int, address: int) -> bool:
+        """Deliver an ARMv7 Prefetch Abort to vector 0xFFFF000C (E0429)."""
+        if not self.data_abort_delivery:
+            return False
+        if (cpsr & 0x1F) == 0x10 and self._symbol_address('__pabt_usr') is not None:
+            if not self._set_cp15_prefetch_fault(address, 0x5):
+                return False
+            self._pending_exception = 'pabt'
+            if self._deliver_user_exception(pc, cpsr):
+                self.prefetch_aborts_delivered += 1
+                if len(self.prefetch_abort_trace) < 64:
+                    self.prefetch_abort_trace.append({
+                        'pc': f'0x{pc:08x}', 'address': f'0x{address:08x}',
+                        'ifsr': '0x00000005', 'user': True})
+                return True
+        if self.prefetch_aborts_delivered >= self.data_abort_limit:
+            return False
+        if not self._set_cp15_prefetch_fault(address, 0x5):
+            return False
+        current_mode = cpsr & 0x1F
+        current_sp = self.uc.reg_read(UC_ARM_REG_SP)
+        if current_mode == 0x10:
+            self.user_sp = current_sp
+            if self.mode_sp.get('svc') is not None:
+                self.uc.reg_write(UC_ARM_REG_SP, self.mode_sp['svc'])
+            self._restore_user_sp = True
+        self.uc.reg_write(UC_ARM_REG_CPSR, 0x17 | 0xC0)
+        self.uc.reg_write(UC_ARM_REG_SPSR, cpsr)
+        self.uc.reg_write(UC_ARM_REG_LR, pc + 4)
+        self.uc.reg_write(UC_ARM_REG_PC, 0xFFFF000C)
+        self.prefetch_aborts_delivered += 1
+        if len(self.prefetch_abort_trace) < 64:
+            self.prefetch_abort_trace.append({
+                'pc': f'0x{pc:08x}', 'address': f'0x{address:08x}',
+                'ifsr': '0x00000005', 'user': current_mode == 0x10})
+        return True
+
+    def _set_cp15_prefetch_fault(self, address: int, ifsr: int) -> bool:
+        """Populate IFAR (c6,c0,2) and IFSR (c5,c0,1) via emulated MCR."""
+        helper_va = self.ABORT_HELPER_PA + self.PAGE_OFFSET
+        code = struct.pack('<3I', 0xEE060F50, 0xEE051F30, 0xEAFFFFFE)
+        try:
+            self.uc.mem_write(self.ABORT_HELPER_PA, code)
+        except Exception:
+            return False
+        saved_r0 = self.uc.reg_read(UC_ARM_REG_R0)
+        saved_r1 = self.uc.reg_read(UC_ARM_REG_R1)
+        saved_cpsr = self.uc.reg_read(UC_ARM_REG_CPSR)
+        self.uc.reg_write(UC_ARM_REG_CPSR, 0xD3)  # helper MCR needs SVC mode
+        self.uc.reg_write(UC_ARM_REG_R0, address & 0xFFFFFFFF)
+        self.uc.reg_write(UC_ARM_REG_R1, ifsr & 0xFFFFFFFF)
+        try:
+            self.uc.emu_start(helper_va, 0, count=2)
+        except Exception:
+            self.uc.reg_write(UC_ARM_REG_R0, saved_r0)
+            self.uc.reg_write(UC_ARM_REG_R1, saved_r1)
+            self.uc.reg_write(UC_ARM_REG_CPSR, saved_cpsr)
+            return False
+        self.uc.reg_write(UC_ARM_REG_R0, saved_r0)
+        self.uc.reg_write(UC_ARM_REG_R1, saved_r1)
+        self.uc.reg_write(UC_ARM_REG_CPSR, saved_cpsr)
         return True
 
     def _deliver_data_abort(self, pc: int, cpsr: int, address: int,
@@ -752,6 +989,12 @@ class UnicornMachine:
         """Deliver an ARMv7 Data Abort to 0xFFFF0010 with DFAR/DFSR populated."""
         if not self.data_abort_delivery:
             return False
+        if (cpsr & 0x1F) == 0x10 and self._symbol_address('__dabt_usr') is not None:
+            if not self._set_cp15_fault(address, 0x5 | (0x800 if write else 0)):
+                return False
+            self._pending_exception = 'dabt'
+            if self._deliver_user_exception(pc, cpsr):
+                return True
         if self.data_aborts_delivered >= self.data_abort_limit:
             return False
         if self._abort_last_pc == pc:
@@ -911,20 +1154,53 @@ class UnicornMachine:
                                           count=slice_size)
                     except Exception as error:
                         message = str(error)
-                        if ('UNMAPPED' in message or 'UC_ERR_EXCEPTION' in message):
+                        if ('UNMAPPED' in message or 'UC_ERR_EXCEPTION' in message
+                                or 'FETCH' in message or 'INSN' in message):
                             pc = self.uc.reg_read(UC_ARM_REG_PC)
                             cpsr = self.uc.reg_read(UC_ARM_REG_CPSR)
+                            info = self._fault_state()
+                            effective = info.get('effective_address')
+                            mnemonic = info.get('mnemonic', '')
+                            fault_va = int(effective, 16) if effective else None
+                            user_mode_cpsr = (cpsr & 0x1F) == 0x10
+                            prefetch = ('FETCH' in message
+                                        or (fault_va is not None and fault_va == pc)
+                                        or (user_mode_cpsr
+                                            and (fault_va is None or mnemonic == '')))
+                            user_mode = (cpsr & 0x1F) == 0x10
+                            if prefetch:
+                                address = fault_va if fault_va is not None else pc
+                                if self._deliver_prefetch_abort(pc, cpsr, address):
+                                    executed += 1
+                                    remaining = max(0, remaining - 1)
+                                    continue
+                            # Demand-paged user VAs (stack/BSS/args) must be reported
+                            # to the kernel's do_DataAbort so handle_mm_fault can
+                            # allocate the anonymous page; only genuine invalid
+                            # accesses (e.g. the futex probe at VA 0) fall back to the
+                            # __ex_table fixup.  E0428 fix.
+                            user_fault = (self.data_abort_delivery
+                                          and fault_va is not None
+                                          and 0x1000 <= fault_va < 0x60000000
+                                          and (user_mode
+                                               or (pc >= 0x60000000
+                                                   and self._in_demand_page_helper(pc))))
+                            if user_fault:
+                                write = mnemonic.startswith(('str', 'stm', 'push'))
+                                if self._deliver_data_abort(pc, cpsr, fault_va, write):
+                                    executed += 1
+                                    remaining = max(0, remaining - 1)
+                                    continue
                             if self._try_ex_table_fixup(pc) is not None:
                                 executed += 1
                                 remaining = max(0, remaining - 1)
                                 continue
-                            info = self._fault_state()
-                            effective = info.get('effective_address')
-                            mnemonic = info.get('mnemonic', '')
-                            if effective and mnemonic:
+                            if (not user_fault and fault_va is not None and mnemonic
+                                    and 0x1000 <= fault_va < 0x60000000):
+                                # Non-user-mapped fault that still looks like user VA:
+                                # let do_DataAbort process it (e.g. vmalloc probes).
                                 write = mnemonic.startswith(('str', 'stm', 'push'))
-                                if self._deliver_data_abort(
-                                        pc, cpsr, int(effective, 16), write):
+                                if self._deliver_data_abort(pc, cpsr, fault_va, write):
                                     executed += 1
                                     remaining = max(0, remaining - 1)
                                     continue
@@ -988,6 +1264,15 @@ class UnicornMachine:
             'stop_error': stop_error,
             'stop_pc': pc,
             'stop_symbol': self.nearest_symbol(pc),
+            'user_mode_entries': list(self.user_mode_entries),
+            'prefetch_aborts_delivered': self.prefetch_aborts_delivered,
+            'prefetch_abort_trace': list(self.prefetch_abort_trace),
+            'mode_lr': {key: (hex(value) if value is not None else None)
+                        for key, value in self.mode_lr.items()},
+            'mode_sp': {key: (hex(value) if value is not None else None)
+                        for key, value in self.mode_sp.items()},
+            'trace_reg_values': {hex(pc): values
+                                 for pc, values in self.trace_reg_values.items()},
             'serial_bytes': len(serial),
             'serial_text': serial.decode('latin1', errors='replace'),
             'mmio_reads': mmio_reads,

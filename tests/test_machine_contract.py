@@ -89,6 +89,14 @@ class RealMachineContractTests(unittest.TestCase):
         self.assertNotIn('init=/sbin/init', contract.cmdline)
         self.assertIn(b'init=/bin/ash', contract.atags)
 
+    def test_sony_override_payload_keeps_kemco_magic(self):
+        boot_set = NflashaBootSet.from_evidence(ROOT, 'nflasha1')
+        contract = UpdaterBootContract(boot_set, cmdline_extra='init=/bin/ash')
+        self.assertTrue(contract.sony_payload.startswith(b'kemco '))
+        self.assertIn(b'init=/bin/ash', contract.sony_payload)
+        self.assertNotIn(b'init=/sbin/init', contract.sony_payload)
+        self.assertEqual(contract.sony_payload[-1], 0)
+
     def test_main_kernel_carries_the_same_machine_id(self):
         boot_set = NflashaBootSet.from_evidence(ROOT, 'nflasha3')
         raw = boot_set.raw_kernel_image()

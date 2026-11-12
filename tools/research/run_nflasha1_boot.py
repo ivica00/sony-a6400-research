@@ -49,6 +49,9 @@ def main():
     parser.add_argument('--no-data-abort-delivery', action='store_true')
     parser.add_argument('--patch-config-cmdline', action='store_true')
     parser.add_argument('--serial-input', default='')
+    parser.add_argument('--trace-user-mode', action='store_true')
+    parser.add_argument('--trace-reg', action='append', default=[],
+                        metavar='PC:REGS')
     parser.add_argument('--cmdline-bootparams', action='store_true')
     parser.add_argument('--sony-override', action='store_true')
     parser.add_argument('--stub', action='append', default=[],
@@ -158,6 +161,10 @@ def main():
         data_abort_delivery=not args.no_data_abort_delivery,
         uart_base=args.uart_base,
         serial_input=args.serial_input.encode('latin1'),
+        trace_user_mode=args.trace_user_mode,
+        trace_regs={int(item.split(':')[0], 0):
+                    item.split(':')[1].split(',')
+                    for item in args.trace_reg},
         boot_params_payload=((contract.sony_payload
                               if args.sony_override else
                               (contract.cmdline.encode('latin1') + b'\x00'

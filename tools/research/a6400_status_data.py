@@ -220,27 +220,27 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-12",
     latest=EvidenceRef(
-        evidence_id="E0424",
-        path="docs/evidence/0424-cxd90045-pl011-primecell-and-ash-shell.md",
+        evidence_id="E0430",
+        path="docs/evidence/0430-cxd90045-abt-sp-isolation-and-live-ash.md",
         date="2026-11-12",
-        title="PL011 PrimeCell IDs, live ttyAM0 console and cmdline-override discovery",
+        title="SP_abt/SP_svc isolation on abort entry and the remaining user-resume blocker",
         demonstrated=(
-            "Added ARM PL011 PrimeCell identification registers at 0xF2000000+0xFE0..0xFFC "
-            "(PeriphID 0x00141011, PCellID 0xB105F00D); the kernel then registered the console: "
-            "uart0 ttyAM0 at MMIO 0xf2000000 (irq 150) is AMBA/PL011, console [ttyAM0] enabled. Live "
-            "serial capture works (52,976 bytes) and scripted RX injection is read by the guest "
-            "(help -> monitor help, shell -> 'shell is disabled', commands parsed). The live log also "
-            "reveals setup_arch(): invalid cmdline override @ 0x60103000. Using default cmdline."
+            "Fixed the abort-entry SP collision: user faults now emulate the ARM Linux "
+            "vector_stub (12-byte frame {r0, pc, spsr} in a dedicated scratch page, SVC mode, "
+            "SP_svc captured at ret_to_user, direct jump to __pabt_usr 0x6010DE20 / __dabt_usr "
+            "0x6010DC20) so SP_abt never overwrites the PID-1 SVC stack. Handler ABI verified by "
+            "disassembly. Live boot still delivers the 0x0402e790 prefetch abort (IFSR 5, user) "
+            "without a hard Unicorn stop, and the monitor dump no longer shows the SVC stack top."
         ),
         boundary=(
-            "init=/bin/ash still cannot be applied: Sony's setup_arch rejects the boot-params content "
-            "at 0x103000 and uses the built-in kemco CONFIG_CMDLINE (init=/sbin/init), so boot panics "
-            "with 'No init found' before userspace; the Sony override object format is still undecoded. "
-            "The updater monitor's own shell is compiled out (EM_DEBUG). No /bin/ash shell claim."
+            "do_PrefetchAbort/handle_mm_fault still does not resume 0x0402e790: user_mode_entries "
+            "stays [] and the kernel ends in the Sony exception monitor (PC 0x0402e790, CPSR 0x70, "
+            "SP 0x5e864f10). Remaining suspects: the handler's banked-user 'stmdb ^' store, TLS/"
+            "context writes and TLB maintenance in __pabt_usr under Unicorn. No interactive ash."
         ),
         tier="OFFLINE BOUNDED UNICORN BRING-UP",
     ),
-    headline="1476 tests recorded passing | No verified emulator GUI frame",
+    headline="1486 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0406",
@@ -427,9 +427,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1476,
+        test_count=1486,
         recorded_at="2026-11-12",
-        evidence_id="E0424",
+        evidence_id="E0430",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(
