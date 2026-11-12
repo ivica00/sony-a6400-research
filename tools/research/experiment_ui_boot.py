@@ -466,13 +466,15 @@ def main():
     report['watched_words'] = {hex(word): (bytes(probe.mu.mem_read(word, 4)).hex()
                                            if accessible(probe.mu, word, 4, unicorn.UC_PROT_READ) else 'unreadable')
                                for word in args.watch_word}
-    report['im_state_observation'] = {
-        'scope': 'post-stop diagnostic of im.elf globals; not a camera-state snapshot',
-        'flags_address': 0x14ee8,
-        'flags': int.from_bytes(probe.mu.mem_read(0x14ee8, 4), 'little'),
-        'target_pointer_address': 0x14eec,
-        'target_pointer': int.from_bytes(probe.mu.mem_read(0x14eec, 4), 'little'),
-    }
+    # The global addresses below belong to the a6400 V2.00 im.elf only.
+    if report.get('application_mapping', {}).get('sha256') == '866729eb0bc1e6f5aba04d8bf8e45491985afe89a078ccb106a1ce2476865225':
+        report['im_state_observation'] = {
+            'scope': 'post-stop diagnostic of im.elf globals; not a camera-state snapshot',
+            'flags_address': 0x14ee8,
+            'flags': int.from_bytes(probe.mu.mem_read(0x14ee8, 4), 'little'),
+            'target_pointer_address': 0x14eec,
+            'target_pointer': int.from_bytes(probe.mu.mem_read(0x14eec, 4), 'little'),
+        }
     report['stdout'] = b''.join(probe.stdio.stdout_log).decode('latin1')
     report['stderr'] = b''.join(probe.stdio.stderr_log).decode('latin1')
     if probe.display is None:

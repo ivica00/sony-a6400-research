@@ -19,7 +19,7 @@ import elftools.elf.elffile as elffile
 ROOT = Path(__file__).resolve().parents[2]
 DEVNO_KO = ROOT / "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/initrd.img_unpacked/kmod/devno.ko"
 INIT_BIN = ROOT / "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/initrd.img_unpacked/sbin/init"
-# (mnts, drivers1, drivers2) addresses keyed by init SHA-256 (a6100 ledger F-0007).
+# (mnts, drivers1, drivers2) addresses keyed by init SHA-256.
 INIT_TABLES = {
     "0af5724ece7f60db2831b7a4e61829be369868027877cca0f921f981ae8dc7ad": (0x13308, 0x131EC, 0x13210),  # a6400 V2.00
     "2258c8d964e6e3019c5c06fa90b0d01a9c60ad50ea2bbf4a1c35951d7a43d63a": (0x136B4, 0x1359C, 0x135BC),  # ILCE-6100A V1.01
