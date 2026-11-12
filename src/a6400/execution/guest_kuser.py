@@ -21,7 +21,7 @@ KUSER_VERSION_SLOT = 0xffff0ffc
 EXPECTED_KUSER_SHA256 = 'f9e6a6128970c915c1b372dbeb16ebed77e032b9be042e21f1540c466d5f4297'
 VMLINUX_KUSER_OFFSET = 0x388fe0
 # Per-kernel template offsets, keyed by vmlinux.bin SHA-256. The template bytes are still
-# checked against EXPECTED_KUSER_SHA256 (a6100 ledger F-0006: byte-identical in the ILCE-6100A V1.01 kernel).
+# checked against EXPECTED_KUSER_SHA256 (byte-identical in the ILCE-6100A V1.01 kernel).
 VMLINUX_KUSER_OFFSETS = {
     '12eeec829407595e28265f7d0db3b88c56f63a9f0fdd725c9c53c66a49643707': 0x388fe0,  # a6400 V2.00
     '51c1289c9cd698aa570935aa824fe2ebe67230a79ae34c2b413aaef9b3649b87': 0x390fc0,  # ILCE-6100A V1.01
