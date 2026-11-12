@@ -194,6 +194,8 @@ def build_parser():
     parser.add_argument('--load-checkpoint', type=Path, default=None, help='load emulator snapshot from file before execution')
     parser.add_argument('--display-contract', choices=('none', 'camera-e0074-e0044'), default='none',
                         help='opt-in read-only display surface extraction; camera-e0074-e0044 registers the evidence-backed OSD/Sugilite contract')
+    parser.add_argument('--mmap-eof', choices=('zero-fill', 'sigbus'), default='zero-fill',
+                        help='file mappings past EOF: zero-fill (historical) or sigbus (Linux: access to a page wholly past EOF faults)')
     parser.add_argument('--report', type=Path, default=PROJECT_ROOT / 'artifacts/execution/interpreter-ui-boot-test.json')
     return parser
 
@@ -220,6 +222,9 @@ def main():
 
     session = build_boot_session(args, parser)
     probe = session.probe
+    if hasattr(probe, 'mmap'):
+        probe.mmap.eof_policy = args.mmap_eof
+    probe.report['mmap_eof_policy'] = args.mmap_eof
     probe.gles_bar_trace = bool(getattr(args, 'trace_gles_bar', False))
     if getattr(args, 'trace_usbcontrol_dispatch', False):
         probe.trace_usbcontrol_dispatch = True
