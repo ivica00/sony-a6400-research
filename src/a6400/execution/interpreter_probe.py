@@ -575,6 +575,37 @@ class InterpreterProbe:
                 uc.reg_write(arm.UC_ARM_REG_R2, literal)
                 self.report['live_libobj_it_repair_hits'] = self.report.get('live_libobj_it_repair_hits', 0) + 1
 
+    def _arm_relocated_libc_repair(self, event):
+        """Arm the libc top-split IT-latch repair at whatever base libc was mapped.
+
+        The fixed-address repair in _it_workaround only covers base 0x50200000. Same byte
+        signature guard; the hook sits on the instruction AFTER the literal load and only
+        writes r2 when it differs from the literal, counting every such skip.
+        """
+        mapping = event.get('mapping') or {}
+        base = event.get('returned')
+        if (self.hook_mode != 'fast' or mapping.get('offset') != 0 or base == 0x50200000
+                or not str(mapping.get('path', '')).endswith('/libc-2.11.2.so')):
+            return
+        try:
+            if bytes(self.mu.mem_read(base + 0x59bfc, 4)) != bytes.fromhex('dff89424'):
+                return
+            literal = int.from_bytes(bytes(self.mu.mem_read(base + 0x5a094, 4)), 'little')
+        except unicorn.UcError:
+            return
+
+        def repair(uc, address, size, user_data):
+            cpsr = uc.reg_read(arm.UC_ARM_REG_CPSR)
+            if cpsr & ((3 << 25) | (0x3f << 10)):
+                uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr & ~((3 << 25) | (0x3f << 10)))
+            if uc.reg_read(arm.UC_ARM_REG_R2) != literal:
+                uc.reg_write(arm.UC_ARM_REG_R2, literal)
+                self.report['relocated_libc_it_repair_skips'] = self.report.get('relocated_libc_it_repair_skips', 0) + 1
+            self.report['relocated_libc_it_repair_hits'] = self.report.get('relocated_libc_it_repair_hits', 0) + 1
+
+        self.mu.hook_add(unicorn.UC_HOOK_CODE, repair, begin=base + 0x59c00, end=base + 0x59c00)
+        self.report['relocated_libc_it_repair'] = {'base': base, 'hook': base + 0x59c00, 'literal': literal}
+
     def _ld_fixup_workaround(self, uc, address, size, user_data):
         """Make _dl_fixup's unconditional `mov r4,r0` explicit.
 
@@ -3177,6 +3208,7 @@ class InterpreterProbe:
                                        boundary={**error.details, 'pc': pc, 'r7': number, 'arguments': args})
                     uc.emu_stop()
                     return
+                self._arm_relocated_libc_repair(event)
                 event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
