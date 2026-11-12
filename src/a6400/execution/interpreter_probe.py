@@ -3904,9 +3904,17 @@ class InterpreterProbe:
     def _memory(self, uc, access, address, size, value, user_data):
         if getattr(self, 'null_page_policy', None) == 'read-zero' and 0 <= address < 4096:
             return True
-        self.report.update(status='memory_boundary',
-                           boundary={'access': access, 'address': address, 'size': size,
-                                     'value': value, 'pc': uc.reg_read(arm.UC_ARM_REG_PC)})
+        boundary = {'access': access, 'address': address, 'size': size,
+                    'value': value, 'pc': uc.reg_read(arm.UC_ARM_REG_PC)}
+        page = address & ~0xfff
+        if page in getattr(getattr(self, 'mmap', None), 'beyond_eof_pages', ()):
+            # Linux delivers SIGBUS here; the signal itself is not delivered by this model.
+            owner = next((m for m in reversed(self.mmap.mappings)
+                          if m['address'] <= page < m['address'] + m['length'] and 'beyond_eof' in m), {})
+            boundary.update(signal='SIGBUS', reason='file_mapping_access_beyond_eof',
+                            path=owner.get('path'), mapping_address=owner.get('address'),
+                            file_offset=owner.get('offset', 0) + (address - owner['address']) if owner else None)
+        self.report.update(status='memory_boundary', boundary=boundary)
         uc.emu_stop()
         return False
 

@@ -51,6 +51,10 @@ class GuestMmap:
         self.mapped_pages = set()
         self.page_backing = {}
         self.mappings = []
+        # 'zero-fill' (historical default) or 'sigbus': pages of a file mapping wholly past EOF stay
+        # reserved but unmapped in Unicorn, so an access faults as Linux raises SIGBUS.
+        self.eof_policy = 'zero-fill'
+        self.beyond_eof_pages = set()
 
     def register_range(self, start, size):
         """Record pre-existing guest mappings (such as initial ELF segments and stack) in mapped_pages."""
@@ -121,7 +125,9 @@ class GuestMmap:
             self.next_address = (end_addr + CHUNK_ALIGN - 1) & CHUNK_MASK
 
         # Map pages into Unicorn if not already mapped
-        pages_to_map = [p for p in range(chosen_addr, end_addr, PAGE_SIZE) if p not in self.mapped_pages]
+        pages_to_map = [p for p in range(chosen_addr, end_addr, PAGE_SIZE)
+                        if p not in self.mapped_pages or p in self.beyond_eof_pages]
+        self.beyond_eof_pages.difference_update(pages_to_map)
         # Group contiguous runs of pages
         if pages_to_map:
             run_start = pages_to_map[0]
@@ -161,14 +167,22 @@ class GuestMmap:
             self.mu.mem_write(chosen_addr, raw)
             if self.after_write:
                 self.after_write(chosen_addr, len(raw))
-            # Zero-fill remaining portion of the allocated page(s)
-            if aligned_len > len(raw):
-                remainder = aligned_len - len(raw)
+            # Zero-fill remaining portion of the allocated page(s); under 'sigbus' only up to
+            # the page holding EOF, and the pages wholly past EOF are left unmapped.
+            fill_end = aligned_len
+            if self.eof_policy == 'sigbus':
+                fill_end = min(aligned_len, (len(raw) + PAGE_SIZE - 1) & PAGE_MASK)
+            if fill_end > len(raw):
+                remainder = fill_end - len(raw)
                 self.mu.mem_write(chosen_addr + len(raw), bytes(remainder))
                 if self.after_write:
                     self.after_write(chosen_addr + len(raw), remainder)
             mapping_info = {'path': desc['path'], 'offset': file_offset, 'size': len(raw),
                             'sha256': hashlib.sha256(raw).hexdigest()}
+            if fill_end < aligned_len:
+                self.mu.mem_unmap(chosen_addr + fill_end, aligned_len - fill_end)
+                self.beyond_eof_pages.update(range(chosen_addr + fill_end, end_addr, PAGE_SIZE))
+                mapping_info['beyond_eof'] = {'address': chosen_addr + fill_end, 'length': aligned_len - fill_end}
         else:
             self.mu.mem_write(chosen_addr, bytes(aligned_len))
             if self.after_write:
@@ -233,7 +247,13 @@ class GuestMmap:
         for p in range(addr, end_addr, PAGE_SIZE):
             if p not in self.mapped_pages:
                 return {**event, 'returned': 0xfffffff4, 'reason': 'ENOMEM_unmapped_page'}
-        self.mu.mem_protect(addr, aligned_len, prot if prot != 0 else unicorn.UC_PROT_READ)
+        host_prot = prot if prot != 0 else unicorn.UC_PROT_READ
+        if self.beyond_eof_pages.isdisjoint(range(addr, end_addr, PAGE_SIZE)):
+            self.mu.mem_protect(addr, aligned_len, host_prot)
+        else:  # past-EOF pages stay faulting whatever their protection
+            for p in range(addr, end_addr, PAGE_SIZE):
+                if p not in self.beyond_eof_pages:
+                    self.mu.mem_protect(p, PAGE_SIZE, host_prot)
         return {**event, 'returned': 0, 'reason': 'mprotect_applied'}
 
     def request_munmap(self, addr, length):
@@ -243,6 +263,10 @@ class GuestMmap:
         aligned_len = (length + PAGE_SIZE - 1) & PAGE_MASK
         end_addr = addr + aligned_len
         pages_to_unmap = [p for p in range(addr, end_addr, PAGE_SIZE) if p in self.mapped_pages]
+        reserved_only = [p for p in pages_to_unmap if p in self.beyond_eof_pages]
+        self.beyond_eof_pages.difference_update(reserved_only)
+        self.mapped_pages.difference_update(reserved_only)
+        pages_to_unmap = [p for p in pages_to_unmap if p not in reserved_only]
         if pages_to_unmap:
             run_start = pages_to_unmap[0]
             run_len = PAGE_SIZE
