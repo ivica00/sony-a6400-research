@@ -1716,6 +1716,7 @@ class InterpreterProbe:
                                                            device='/dev/stream2'), pc, number)
                     return
             if number == 3:
+                fd = uc.reg_read(arm.UC_ARM_REG_R0)
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'tty':
                     self.report.update(status='unsupported_tty_contract', boundary={
                         'reason': 'tty_read_not_supplied', 'path': '/dev/tty',
