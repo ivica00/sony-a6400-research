@@ -218,29 +218,33 @@ class StatusSnapshot:
 
 STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
-    as_of="2026-11-12",
+    as_of="2026-11-13",
     latest=EvidenceRef(
-        evidence_id="E0430",
-        path="docs/evidence/0430-cxd90045-abt-sp-isolation-and-live-ash.md",
-        date="2026-11-12",
-        title="SP_abt/SP_svc isolation on abort entry and the remaining user-resume blocker",
+        evidence_id="E0461",
+        path="docs/evidence/0461-cxd90045-pt-regs-scan-and-live-ash.md",
+        date="2026-11-13",
+        title="pt_regs base located: ARM_pc is correct in the frame; PC=0 is a restore-path issue",
         demonstrated=(
-            "Fixed the abort-entry SP collision: user faults now emulate the ARM Linux "
-            "vector_stub (12-byte frame {r0, pc, spsr} in a dedicated scratch page, SVC mode, "
-            "SP_svc captured at ret_to_user, direct jump to __pabt_usr 0x6010DE20 / __dabt_usr "
-            "0x6010DC20) so SP_abt never overwrites the PID-1 SVC stack. Handler ABI verified by "
-            "disassembly. Live boot still delivers the 0x0402e790 prefetch abort (IFSR 5, user) "
-            "without a hard Unicorn stop, and the monitor dump no longer shows the SVC stack top."
+            "Added _find_pt_regs_base(sp) (probes ti+0x1FB0/+0x1FB8/+0x1FA8 plus a SP-0x100..SP+0x100 sweep, "
+            "accepting a frame whose cpsr slot has USR mode bits and whose pc slot is a userspace address, "
+            "rejecting pc=0) and _record_user_frame() at do_PrefetchAbort (0x601085EC), do_page_fault "
+            "(0x60116D94) and ret_to_user (0x6010DF34). Live probes: base is SP itself (ti+0x1FB0 = 0x7DC0FFB0); "
+            "at abort entry ARM_pc=0x0402E790, ARM_cpsr=0x70 (USR+Thumb), and for the data fault "
+            "ARM_pc=0x0404E85C; at ret_to_user ARM_pc is still 0x0402E790 (ARM_lr slot 0, expected at the ld.so "
+            "entry point). So the abort delivery does not zero ARM_pc - the PC=0 stop must arise at/after the "
+            "final user restore (ldmia sp,{r0-pc}^ / movs pc, lr) or from Unicorn's T-bit<->PC-LSB coupling. "
+            "No behavioural change: run still stops at VA-0 fetch PC=0x0, svc_hits=0, kuser_hits=1, serial 0 B, "
+            "no shell."
         ),
         boundary=(
-            "do_PrefetchAbort/handle_mm_fault still does not resume 0x0402e790: user_mode_entries "
-            "stays [] and the kernel ends in the Sony exception monitor (PC 0x0402e790, CPSR 0x70, "
-            "SP 0x5e864f10). Remaining suspects: the handler's banked-user 'stmdb ^' store, TLS/"
-            "context writes and TLB maintenance in __pabt_usr under Unicorn. No interactive ash."
+            "No shell: serial 0 B, svc_hits=0. Next: hook/disassemble the tail of ret_to_user, capture the "
+            "frame just before the final restore, single-step the restore to check CPSR/PC ordering (T=1 with an "
+            "even PC may make Unicorn decode ARM at 0x0402E790), and emulate the restore if needed; then verify "
+            "0x0402F666/0x04031AF0, svc_hits and live ash."
         ),
         tier="OFFLINE BOUNDED UNICORN BRING-UP",
     ),
-    headline="1486 tests recorded passing | No verified emulator GUI frame",
+    headline="1531 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0406",
@@ -427,9 +431,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1486,
-        recorded_at="2026-11-12",
-        evidence_id="E0430",
+        test_count=1531,
+        recorded_at="2026-11-13",
+        evidence_id="E0461",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(

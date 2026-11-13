@@ -20,7 +20,7 @@ of "full firmware compatibility."
 
 ## Latest progress
 
-- **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0430](docs/evidence/0430-cxd90045-abt-sp-isolation-and-live-ash.md)):**
+- **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0461](docs/evidence/0461-cxd90045-pt-regs-scan-and-live-ash.md)):**
   Decoded the camera's first-stage bootloader and updater boot images, and emulated the
   interrupt controller, system timers, clock hardware, and serial console. The updater
   Linux kernel now boots through delay calibration, mounts its compressed root filesystem,
@@ -44,10 +44,10 @@ of "full firmware compatibility."
 
 ## Status overview
 
-Recorded suite: 1486 tests. Each result is bounded by its own dated evidence record; no
+Recorded suite: 1531 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=4a3748316b27)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=44f186823f43)
 
 ### Subsystem status
 
@@ -62,7 +62,7 @@ UVC video frame, no flash write, and no full firmware boot is claimed.
 | **USB Debugger v2** | Persistent Mass Storage debugger for reading live/warm-reboot kernel logs and USB state | Deploying the always-on WinUSB vendor interface | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
 | **Test UVC video pattern** | Streams a synthetic 720p MJPEG pattern at ~30 FPS; ZV-E10 USB video stack cataloged as reference | Wiring the live camera sensor feed | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
 | **Multi-camera profiles** | Verified a6400 profile and ZV-E10 reference chain | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
-| **Automated checks** | 1486 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
+| **Automated checks** | 1531 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
 
 ## How to help (no camera needed)
 
