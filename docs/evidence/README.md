@@ -10,6 +10,7 @@ Current consolidated state: [README research status](../../README.md) and
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0485](0485-command-table-predicts-held-out-body.md) | 2026-11-13 | A command-id rule fitted on four bodies recalls 0.997 / 0.885 / 0.973 of three bodies it never saw; no USB or device-node rule exists, and those columns stay 0 rather than being made to look better |
 | [E0484](0484-display-entry-points-are-indirect.md) | 2026-11-13 | No `ObjDisplay_Start` exists on four bodies (four other `ObjDisplay_*` names do); the display entry points have zero direct callers and their addresses appear as data, so the route is a function pointer a direct-call graph cannot follow |
 | [E0483](0483-ipc-edge-inventory-libobj.md) | 2026-11-13 | 29 direct IPC call sites in the a6400 `libObj.so`, each disassembled; 17 pass a constant argument, matched to its `mov`/`movw` immediate, and 12 stay empty rather than becoming a fabricated `0x0` |
 | [E0489](0489-update-chain-integrity-is-crc32-and-md5.md) | 2026-11-13 | The update chain verifies CRC32 (`uc_crc32sum.elf`, no crypto imports) and MD5 (`md5sum -c`), never a signature; the only AES helper uses `sha256("")[:16]` in ECB, identical on all 13 bodies; 484 files extract as plain ELF without decryption |

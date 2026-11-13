@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="920" height="966" viewBox="0 0 920 966" role="img" aria-labelledby="title desc">
 <title id="title">Status &amp; Bounded Telemetry — 2026-11-13 | E0489</title>
-<desc id="desc">Status &amp; Bounded Telemetry: 1,595 tests recorded passing, 488 evidence receipts through E0489. Bounded telemetry, not a firmware compatibility percentage.</desc>
+<desc id="desc">Status &amp; Bounded Telemetry: 1,595 tests recorded passing, 489 evidence receipts through E0489. Bounded telemetry, not a firmware compatibility percentage.</desc>
 <rect width="920" height="966" rx="16" fill="#0d1117" />
 <g>
 <text x="24" y="38" fill="#f0f6fc" font-size="21" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Status &amp; Bounded Telemetry</text>
@@ -14,7 +14,7 @@
 <rect x="229.818" y="68" width="209.342" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
 <rect x="347.778" y="68" width="91.3824" height="26" rx="5" fill="#1f6feb" />
 <text x="238.818" y="85" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">evidence receipts</text>
-<text x="356.778" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">488 recorded</text>
+<text x="356.778" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">489 recorded</text>
 <rect x="447.16" y="68" width="251.914" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
 <rect x="571" y="68" width="128.074" height="26" rx="5" fill="#2ea043" />
 <text x="456.16" y="85" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">teardown sequencer</text>
