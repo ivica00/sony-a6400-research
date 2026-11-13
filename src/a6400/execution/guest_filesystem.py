@@ -354,7 +354,7 @@ class GuestFilesystem:
                 'entries': emitted, 'reason': 'getdents64_readonly_directory'}
 
     def request(self, number, args):
-        names = {3: 'read', 5: 'open', 6: 'close', 19: 'lseek', 33: 'access', 39: 'mkdir',
+        names = {3: 'read', 5: 'open', 6: 'close', 12: 'chdir', 19: 'lseek', 33: 'access', 39: 'mkdir',
                  195: 'stat64', 197: 'fstat64', 217: 'getdents64'}
         if number not in names:
             raise UnsupportedFilesystem('unimplemented_file_syscall', number=number)
@@ -377,6 +377,16 @@ class GuestFilesystem:
                             'experimental': ('observed camera /setting/gps directory; '
                                              'not a writable camera filesystem')}
                 raise UnsupportedFilesystem('mkdir_path_not_in_observed_setting', path=path)
+            if number == 12:
+                path = self._path(args[0])
+                event['path'] = path
+                resolved, node = self._resolve(path)
+                if node['kind'] != 'directory':
+                    raise PathError(20, 'ENOTDIR_chdir')
+                self._permission(node, 1)
+                # relative paths still stop in _path (relative_path_requires_cwd); only stored for now
+                self.cwd = resolved
+                return {**event, 'returned': 0, 'reason': 'chdir_image_directory', 'resolved_path': resolved}
             if number in (5, 33, 195):
                 path = self._path(args[0])
                 event['path'] = path
