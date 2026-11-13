@@ -10,6 +10,7 @@ Current consolidated state: [README research status](../../README.md) and
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0488](0488-no-framebuffer-node-on-any-body.md) | 2026-11-13 | None of thirteen packaged bodies registers an `fb*` device node and every one publishes `dmpgles2`; a program opening `/dev/fb0` by name cannot succeed on a stock body, though a live `/dev` was not read |
 | [E0490](0490-platform-model-and-flash-boundary.md) | 2026-11-13 | The platform model document: nine kernels, 0.997/0.885/0.973 held-out prediction, 29 IPC sites, indirect display entry points, and the flash boundary stated as unknown rather than closed |
 | [E0486](0486-writable-mounts-versus-the-flash-boundary.md) | 2026-11-13 | Six mount points are writable at runtime while `/`, `/usr` and `/android/system` are read-only flash; a writable mount is not a modified image, and the parser treats an option list without `rw` as not writable |
 | [E0485](0485-command-table-predicts-held-out-body.md) | 2026-11-13 | A command-id rule fitted on four bodies recalls 0.997 / 0.885 / 0.973 of three bodies it never saw; no USB or device-node rule exists, and those columns stay 0 rather than being made to look better |
