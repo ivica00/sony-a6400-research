@@ -4,12 +4,16 @@ One record per hardware or software claim. Records are dated and are **not** rew
 when a later result supersedes them: the newer record says what changed.
 
 Current consolidated state: [README research status](../../README.md) and
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0490**, 2026-11-13).
+[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0494**, 2026-11-13).
 
 ## Latest records
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0494](0494-a6400a-msc-reply-lifetime-and-verified-native-identity.md) | 2026-11-13 | One uninterrupted normal-mode model query returns ILCE-6400A in 2.727 ms through unchanged Windows USBSTOR; finite reply-lifetime controls explain why delayed continuation was not a compatibility test; debugger and dump access remain unverified |
+| [E0493](0493-a6400a-native-readonly-transport-and-model-info-busy.md) | 2026-11-13 | Historical inquiry success and bounded model-info BUSY receipts, without driver, mode or storage changes; the delayed completion procedure is superseded by E0494 |
+| [E0492](0492-a6400a-kernel-partition-mmio-and-hook-map.md) | 2026-11-13 | Separate a6400A main/updater kernel, rootfs and hook maps; 30 static partition rows and eight MMIO mappings match the reference package; bounded updater execution stops at unsupported timer MMIO, not a full boot |
+| [E0491](0491-a6400a-offline-qualification-and-debugger-boundary.md) | 2026-11-13 | Signed a6400A 1.01 package, original USB packing controls and host-only Mass Storage identity support a separately sourced reference profile, not a qualified debugger installation or runnable machine |
 | [E0488](0488-no-framebuffer-node-on-any-body.md) | 2026-11-13 | None of thirteen packaged bodies registers an `fb*` device node and every one publishes `dmpgles2`; a program opening `/dev/fb0` by name cannot succeed on a stock body, though a live `/dev` was not read |
 | [E0490](0490-platform-model-and-flash-boundary.md) | 2026-11-13 | The platform model document: nine kernels, 0.997/0.885/0.973 held-out prediction, 29 IPC sites, indirect display entry points, and the flash boundary stated as unknown rather than closed |
 | [E0486](0486-writable-mounts-versus-the-flash-boundary.md) | 2026-11-13 | Six mount points are writable at runtime while `/`, `/usr` and `/android/system` are read-only flash; a writable mount is not a modified image, and the parser treats an option list without `rw` as not writable |

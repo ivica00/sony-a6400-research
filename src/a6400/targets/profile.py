@@ -121,6 +121,7 @@ class TargetProfile:
     status: str
     soc_verified: bool
     soc: str = SOC_BIONZ_X
+    #: Opaque Sony GetModelInfo wire code, not the updater container's model id.
     product_code: str | None = None
     firmware_version: str | None = None
     live_build_version: str | None = None
