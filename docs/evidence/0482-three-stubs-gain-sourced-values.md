@@ -1,4 +1,4 @@
-# E0467 — Three declared stubs gain sourced values: ILCE-6100A, ILCE-6600, ILCE-7M3
+# E0482 — Three declared stubs gain sourced values: ILCE-6100A, ILCE-6600, ILCE-7M3
 
 Date: 2026-11-13. Offline packaged firmware only: no camera, no USB, no updater execution.
 This record exists because `docs/ADDING_A_BIONZX_CAMERA.md` asks for exactly this and
@@ -89,7 +89,7 @@ The 17 shared nodes are `adb`, `buspwr`, `buspwric`, `cur`, `kikilog`, `massstor
 **Why this matters for an open boundary.** E0321 recorded "kernel-side UVC support unknown" for
 bodies without the module package. For these three the question is not unknown: the kernel-side
 node table does not publish a video or audio node, so a UVC function could not appear at a
-`/dev/usb/video` path even if a module were loaded. The module package (E0464) and the node
+`/dev/usb/video` path even if a module were loaded. The module package (E0479) and the node
 table are two independent halves of the same answer, and both say no on these bodies.
 
 ## 4. USB identity sets, from the package's own config
@@ -128,7 +128,7 @@ the updater presents, not the camera's operating identity, and it is not a profi
   the updater's own statement that the payload is for that SoC family; it is stronger than a
   model name and weaker than reading `/proc/cpuinfo` on the body.
 - **Not claimed:** the two identical-address groups mean the bodies share an execution target.
-  They have different device tables, different command tables (E0462: 285, 286 and 322) and
+  They have different device tables, different command tables (E0477: 285, 286 and 322) and
   different USB id sets, so a target still needs its own profile.
 - **Version risk:** the a7 III package is `4.04`, the newest of the three. A camera in the field
   may run an older build whose USB region sits elsewhere; the addresses are exact for the

@@ -1,7 +1,7 @@
-# E0465 — Ten bodies gain evidence-backed kernel symbols offline, without a camera
+# E0480 — Ten bodies gain evidence-backed kernel symbols offline, without a camera
 
 Date: 2026-11-13. **Strictly offline.** No camera, no USB, no `/proc` read, no firmware write.
-Inputs: the thirteen official updaters of E0462. This record exists to move bodies out of
+Inputs: the thirteen official updaters of E0477. This record exists to move bodies out of
 `STATUS_UNVERIFIED` stub without a physical probe, which is the one step
 `docs/ADDING_A_BIONZX_CAMERA.md` currently requires a camera for.
 
@@ -20,7 +20,7 @@ Inputs: the thirteen official updaters of E0462. This record exists to move bodi
    layer each symbol belongs to.
 4. **Addresses are per-build, and symbol-set equality does not carry them.** `ILCE-6100A`,
    `ILCE-7M3` and `ILCE-7RM4A` share one symbol set, yet 4,033 of the 4,042 addresses that
-   differ between them are function symbols (E0462), so their values cannot be derived from
+   differ between them are function symbols (E0477), so their values cannot be derived from
    one another by an offset. A copied address is wrong; a transcribed one from the same image
    is right.
 
@@ -41,7 +41,7 @@ repository already records (E0348):
 
 7 of 7. The three remaining symbols in the schema's list (`osal_snd_msg`,
 `osal_rcv_msg_tmo`, `dma330_mem_transfer_async`) are **absent from the kernel symbol table of
-every body** and are exported by `osal_uipc.ko` and `dma330.ko` instead — see E0464's
+every body** and are exported by `osal_uipc.ko` and `dma330.ko` instead — see E0479's
 import-attribution table. Their live values are module addresses, which is why they look like
 `0x5f04916c` in the catalogue rather than `0x602b…`.
 
@@ -60,7 +60,7 @@ import-attribution table. Their live values are module addresses, which is why t
 | `ZV-1` | 8.2.6.0 | `0x602bca2c` | `0x602bc7e0` | `0x602c1b80` | `0x602c1bbc` | `0x602bd70c` | `0x602bff38` |
 | `DSC-RX0M2` | 8.2.6.0 | `0x602b8cd8` | `0x602b8a8c` | `0x602bde2c` | `0x602bde68` | `0x602b99b8` | `0x602bc1e4` |
 
-`ILCE-6600`'s six values are *identical* to `ILCE-6400`'s, which is consistent with E0462's
+`ILCE-6600`'s six values are *identical* to `ILCE-6400`'s, which is consistent with E0477's
 finding that the two kernels are one symbol set.
 
 Note the near-misses that make a copied address dangerous: `ILCE-7RM4A` sits exactly

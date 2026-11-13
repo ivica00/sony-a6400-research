@@ -40,9 +40,9 @@ E0321 = "docs/evidence/0321-zve10-uvc-enablement-manifest.md"
 E0334 = "docs/evidence/0334-sync-callback-lane-is-usb-adjustment.md"
 E0347 = "docs/evidence/0347-host-bindable-composite-pid0322.md"
 E0348 = "docs/evidence/0348-uvc-monitor-architecture-probe-and-reference-client.md"
-E0462 = "docs/evidence/0462-bionz-x-platform-map-13-updaters.md"
-E0464 = "docs/evidence/0464-uvc-is-a-module-package-delta.md"
-E0467 = "docs/evidence/0467-three-stubs-gain-sourced-values.md"
+E0477 = "docs/evidence/0477-bionz-x-platform-map-13-updaters.md"
+E0479 = "docs/evidence/0479-uvc-is-a-module-package-delta.md"
+E0482 = "docs/evidence/0482-three-stubs-gain-sourced-values.md"
 ZVE10_ENABLEMENT = "src/a6400/execution/zve10_uvc_enablement.py"
 
 
@@ -254,9 +254,9 @@ def _stub(target_id: str, model_name: str) -> TargetProfile:
 
 
 # ---------------------------------------------------------------------------------
-# Offline-sourced ILCE-6xxx / a7 III bodies (E0467)
+# Offline-sourced ILCE-6xxx / a7 III bodies (E0482)
 #
-# These three carried no claims until E0467. Each value below was read from that body's own
+# These three carried no claims until E0482. Each value below was read from that body's own
 # packaged updater: the symbols from its decoded vmlinux.bin, the device-node absence from its
 # devno.ko, the USB id set from its config.yaml. No a6400 value was transcribed into them.
 #
@@ -268,7 +268,7 @@ def _stub(target_id: str, model_name: str) -> TargetProfile:
 # ---------------------------------------------------------------------------------
 _ILCE_6XXX_BOUNDARIES = (
     "Offline packaged firmware only: a camera in the field may run a different build, and these "
-    "addresses are exact for the packaged image named in E0467 table 1, not for an arbitrary boot.",
+    "addresses are exact for the packaged image named in E0482 table 1, not for an arbitrary boot.",
     "A resolved kallsyms symbol is presence evidence, not loadability or callability proof.",
     "uipc_queues is empty: the queue handles the a6400 profile records come from a live "
     "/proc/osal/uipc read and are per-boot, so no offline value is claimed here.",
@@ -276,7 +276,7 @@ _ILCE_6XXX_BOUNDARIES = (
     "than a model name and weaker than reading /proc/cpuinfo on the body.",
     "The kernel symbols match the a6400's on the USB gadget-core region; that is a measured "
     "region equality on distinct images, not evidence that these bodies share an execution target. "
-    "Their device tables and command tables differ (E0462).",
+    "Their device tables and command tables differ (E0477).",
 )
 
 ILCE_6100 = TargetProfile(
@@ -315,20 +315,20 @@ ILCE_6100 = TargetProfile(
     ),
     modules={},
     sources={
-        "firmware_version": _ref(E0467, "packaged updater 1.01; config.yaml model 0x81030018"),
-        "kernel_version": _ref(E0467, "vermagic in this body's own vmlinux.bin (build 8.2.7.6, 2026-05-02)"),
-        "kallsyms.usb_gadgetcore_ioctl": _ref(E0467, "decoded from this body's vmlinux.bin 51c1289c..."),
-        "kallsyms.usb_gadgetcore_register_driver": _ref(E0467, "decoded from this body's vmlinux.bin 51c1289c..."),
-        "kallsyms.usb_gadgetcore_unregister_driver": _ref(E0467, "decoded from this body's vmlinux.bin 51c1289c..."),
-        "kallsyms.usb_gcw_start": _ref(E0467, "decoded from this body's vmlinux.bin 51c1289c..."),
-        "kallsyms.usb_gcw_stop": _ref(E0467, "decoded from this body's vmlinux.bin 51c1289c..."),
-        "kallsyms.setup_req": _ref(E0467, "decoded from this body's vmlinux.bin 51c1289c..."),
-        "kallsyms.make_config_desc": _ref(E0467, "decoded from this body's vmlinux.bin 51c1289c..."),
-        "usb": _ref(E0467, "normalUsbDescriptors in this body's config.yaml; 12 pairs, vid 0x54C"),
+        "firmware_version": _ref(E0482, "packaged updater 1.01; config.yaml model 0x81030018"),
+        "kernel_version": _ref(E0482, "vermagic in this body's own vmlinux.bin (build 8.2.7.6, 2026-05-02)"),
+        "kallsyms.usb_gadgetcore_ioctl": _ref(E0482, "decoded from this body's vmlinux.bin 51c1289c..."),
+        "kallsyms.usb_gadgetcore_register_driver": _ref(E0482, "decoded from this body's vmlinux.bin 51c1289c..."),
+        "kallsyms.usb_gadgetcore_unregister_driver": _ref(E0482, "decoded from this body's vmlinux.bin 51c1289c..."),
+        "kallsyms.usb_gcw_start": _ref(E0482, "decoded from this body's vmlinux.bin 51c1289c..."),
+        "kallsyms.usb_gcw_stop": _ref(E0482, "decoded from this body's vmlinux.bin 51c1289c..."),
+        "kallsyms.setup_req": _ref(E0482, "decoded from this body's vmlinux.bin 51c1289c..."),
+        "kallsyms.make_config_desc": _ref(E0482, "decoded from this body's vmlinux.bin 51c1289c..."),
+        "usb": _ref(E0482, "normalUsbDescriptors in this body's config.yaml; 12 pairs, vid 0x54C"),
     },
     boundaries=_ILCE_6XXX_BOUNDARIES + (
         "devno.ko (4,308 B, 74096566...) publishes 17 /dev/usb nodes and no video/audio row, so a "
-        "kernel-side UVC node does not exist on this body (E0467 section 3, E0464).",
+        "kernel-side UVC node does not exist on this body (E0482 section 3, E0479).",
     ),
     notes="Offline-sourced from its own packaged updater; no live probe has been run on this body.",
 )
@@ -367,24 +367,24 @@ ILCE_6600 = TargetProfile(
     ),
     modules={},
     sources={
-        "firmware_version": _ref(E0467, "packaged updater 1.10; config.yaml model 0x81030014"),
-        "kernel_version": _ref(E0467, "vermagic in this body's own vmlinux.bin (build 8.2.6.0, 2020-07-15)"),
-        "kallsyms.usb_gadgetcore_ioctl": _ref(E0467, "decoded from this body's vmlinux.bin 0df851b6..."),
-        "kallsyms.usb_gadgetcore_register_driver": _ref(E0467, "decoded from this body's vmlinux.bin 0df851b6..."),
-        "kallsyms.usb_gadgetcore_unregister_driver": _ref(E0467, "decoded from this body's vmlinux.bin 0df851b6..."),
-        "kallsyms.usb_gcw_start": _ref(E0467, "decoded from this body's vmlinux.bin 0df851b6..."),
-        "kallsyms.usb_gcw_stop": _ref(E0467, "decoded from this body's vmlinux.bin 0df851b6..."),
-        "kallsyms.setup_req": _ref(E0467, "decoded from this body's vmlinux.bin 0df851b6..."),
-        "kallsyms.make_config_desc": _ref(E0467, "decoded from this body's vmlinux.bin 0df851b6..."),
-        "usb": _ref(E0467, "normalUsbDescriptors in this body's config.yaml; 10 pairs, vid 0x54C"),
+        "firmware_version": _ref(E0482, "packaged updater 1.10; config.yaml model 0x81030014"),
+        "kernel_version": _ref(E0482, "vermagic in this body's own vmlinux.bin (build 8.2.6.0, 2020-07-15)"),
+        "kallsyms.usb_gadgetcore_ioctl": _ref(E0482, "decoded from this body's vmlinux.bin 0df851b6..."),
+        "kallsyms.usb_gadgetcore_register_driver": _ref(E0482, "decoded from this body's vmlinux.bin 0df851b6..."),
+        "kallsyms.usb_gadgetcore_unregister_driver": _ref(E0482, "decoded from this body's vmlinux.bin 0df851b6..."),
+        "kallsyms.usb_gcw_start": _ref(E0482, "decoded from this body's vmlinux.bin 0df851b6..."),
+        "kallsyms.usb_gcw_stop": _ref(E0482, "decoded from this body's vmlinux.bin 0df851b6..."),
+        "kallsyms.setup_req": _ref(E0482, "decoded from this body's vmlinux.bin 0df851b6..."),
+        "kallsyms.make_config_desc": _ref(E0482, "decoded from this body's vmlinux.bin 0df851b6..."),
+        "usb": _ref(E0482, "normalUsbDescriptors in this body's config.yaml; 10 pairs, vid 0x54C"),
     },
     boundaries=_ILCE_6XXX_BOUNDARIES + (
         "devno.ko (4,308 B, d8115717...) publishes 17 /dev/usb nodes and no video/audio row, so a "
-        "kernel-side UVC node does not exist on this body (E0467 section 3, E0464).",
+        "kernel-side UVC node does not exist on this body (E0482 section 3, E0479).",
     ),
     notes=(
         "Offline-sourced from its own packaged updater. The av-cam command table adds exactly "
-        "0x413b over the a6400's 285 records (E0462)."
+        "0x413b over the a6400's 285 records (E0477)."
     ),
 )
 
@@ -422,26 +422,26 @@ ILCE_7M3 = TargetProfile(
     ),
     modules={},
     sources={
-        "firmware_version": _ref(E0467, "packaged updater 4.04; config.yaml model 0x71030014"),
-        "kernel_version": _ref(E0467, "vermagic in this body's own vmlinux.bin (build 8.2.7.6, 2026-05-02)"),
-        "kallsyms.usb_gadgetcore_ioctl": _ref(E0467, "decoded from this body's vmlinux.bin 175df4fc..."),
-        "kallsyms.usb_gadgetcore_register_driver": _ref(E0467, "decoded from this body's vmlinux.bin 175df4fc..."),
-        "kallsyms.usb_gadgetcore_unregister_driver": _ref(E0467, "decoded from this body's vmlinux.bin 175df4fc..."),
-        "kallsyms.usb_gcw_start": _ref(E0467, "decoded from this body's vmlinux.bin 175df4fc..."),
-        "kallsyms.usb_gcw_stop": _ref(E0467, "decoded from this body's vmlinux.bin 175df4fc..."),
-        "kallsyms.setup_req": _ref(E0467, "decoded from this body's vmlinux.bin 175df4fc..."),
-        "kallsyms.make_config_desc": _ref(E0467, "decoded from this body's vmlinux.bin 175df4fc..."),
-        "usb": _ref(E0467, "normalUsbDescriptors in this body's config.yaml; 10 pairs, vid 0x54C"),
+        "firmware_version": _ref(E0482, "packaged updater 4.04; config.yaml model 0x71030014"),
+        "kernel_version": _ref(E0482, "vermagic in this body's own vmlinux.bin (build 8.2.7.6, 2026-05-02)"),
+        "kallsyms.usb_gadgetcore_ioctl": _ref(E0482, "decoded from this body's vmlinux.bin 175df4fc..."),
+        "kallsyms.usb_gadgetcore_register_driver": _ref(E0482, "decoded from this body's vmlinux.bin 175df4fc..."),
+        "kallsyms.usb_gadgetcore_unregister_driver": _ref(E0482, "decoded from this body's vmlinux.bin 175df4fc..."),
+        "kallsyms.usb_gcw_start": _ref(E0482, "decoded from this body's vmlinux.bin 175df4fc..."),
+        "kallsyms.usb_gcw_stop": _ref(E0482, "decoded from this body's vmlinux.bin 175df4fc..."),
+        "kallsyms.setup_req": _ref(E0482, "decoded from this body's vmlinux.bin 175df4fc..."),
+        "kallsyms.make_config_desc": _ref(E0482, "decoded from this body's vmlinux.bin 175df4fc..."),
+        "usb": _ref(E0482, "normalUsbDescriptors in this body's config.yaml; 10 pairs, vid 0x54C"),
     },
     boundaries=_ILCE_6XXX_BOUNDARIES + (
         "devno.ko (3,988 B, 65933cda...) publishes 17 /dev/usb nodes and no video/audio row, so a "
-        "kernel-side UVC node does not exist on this body (E0467 section 3, E0464).",
+        "kernel-side UVC node does not exist on this body (E0482 section 3, E0479).",
         "The stock id set does not include 0x0CA8, which the a6400 records as its mass-storage "
         "identity; do not assume one mass-storage pid across the family.",
     ),
     notes=(
         "Offline-sourced from its own packaged updater. This is the model the owner's issue #7 "
-        "named; the a7 III page exposes ten per-version changelog entries (E0466)."
+        "named; the a7 III page exposes ten per-version changelog entries (E0481)."
     ),
 )
 

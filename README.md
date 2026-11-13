@@ -20,7 +20,7 @@ of "full firmware compatibility."
 
 ## Latest progress
 
-- **Cross-Model BIONZ X Platform Map ([E0462](docs/evidence/0462-bionz-x-platform-map-13-updaters.md)–[E0467](docs/evidence/0467-three-stubs-gain-sourced-values.md)):**
+- **Cross-Model BIONZ X Platform Map ([E0477](docs/evidence/0477-bionz-x-platform-map-13-updaters.md)–[E0482](docs/evidence/0482-three-stubs-gain-sourced-values.md)):**
   Thirteen official updaters unpacked offline: a6400, a6600, a6100A, ZV-E10, A7 III, A7C,
   A7R III, A7R IV, A7R IVA, A9, A9 II, ZV-1 and RX0 II. They run **nine kernels**, not thirteen:
   ZV-E10 and A7C put all 14,460 function symbols at the same address and differ in 9 data

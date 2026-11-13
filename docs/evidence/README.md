@@ -4,18 +4,18 @@ One record per hardware or software claim. Records are dated and are **not** rew
 when a later result supersedes them: the newer record says what changed.
 
 Current consolidated state: [README research status](../../README.md) and
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0467**, 2026-11-13).
+[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0482**, 2026-11-13).
 
 ## Latest records
 
 | ID | Date | Claim |
 | --- | --- | --- |
-| [E0467](0467-three-stubs-gain-sourced-values.md) | 2026-11-13 | The ILCE-6100A, ILCE-6600 and ILCE-7M3 stubs gain seven kernel symbols each from their own decoded images, their full stock USB id sets, and a confirmed CXD90045 identity; none of the three publishes a video or audio device node |
-| [E0466](0466-published-changelogs-as-diff-targets.md) | 2026-11-13 | Published firmware changelogs: a7 III exposes 10 per-version entries with dates, a7R IVA 3, the other seven pages a flat undated list; older files are 404 so a within-model version diff is not obtainable |
-| [E0465](0465-ten-bodies-gain-kernel-symbols-offline.md) | 2026-11-13 | The six USB-side kernel symbols resolve for every body from packaged firmware alone; the a6400 offline decode matches the live `/proc/kallsyms` read 7/7; three schema symbols are module exports, not kernel |
-| [E0464](0464-uvc-is-a-module-package-delta.md) | 2026-11-13 | `usbg_video.ko`/`usbg_audio.ko` present on 4 of 13 bodies, byte-identical on ZV-E10 and ILCE-7C; the UVC delta is a module package, not a kernel capability |
-| [E0463](0463-movie-eye-af-stored-never-read-platform-wide.md) | 2026-11-13 | `0x413b` stores its value into a settings-cache field on all ten bodies that carry it, and no instruction in any of those images reads it back; neither proposed mechanism is supported |
-| [E0462](0462-bionz-x-platform-map-13-updaters.md) | 2026-11-13 | Thirteen official updaters, nine kernels: ZV-E10/ILCE-7C are one code object, ILCE-6100A/ILCE-7M3/ILCE-7RM4A and ILCE-6400/ILCE-6600 share one symbol set each; command tables form a monotone ladder 285→337 |
+| [E0482](0482-three-stubs-gain-sourced-values.md) | 2026-11-13 | The ILCE-6100A, ILCE-6600 and ILCE-7M3 stubs gain seven kernel symbols each from their own decoded images, their full stock USB id sets, and a confirmed CXD90045 identity; none of the three publishes a video or audio device node |
+| [E0481](0481-published-changelogs-as-diff-targets.md) | 2026-11-13 | Published firmware changelogs: a7 III exposes 10 per-version entries with dates, a7R IVA 3, the other seven pages a flat undated list; older files are 404 so a within-model version diff is not obtainable |
+| [E0480](0480-ten-bodies-gain-kernel-symbols-offline.md) | 2026-11-13 | The six USB-side kernel symbols resolve for every body from packaged firmware alone; the a6400 offline decode matches the live `/proc/kallsyms` read 7/7; three schema symbols are module exports, not kernel |
+| [E0479](0479-uvc-is-a-module-package-delta.md) | 2026-11-13 | `usbg_video.ko`/`usbg_audio.ko` present on 4 of 13 bodies, byte-identical on ZV-E10 and ILCE-7C; the UVC delta is a module package, not a kernel capability |
+| [E0478](0478-movie-eye-af-stored-never-read-platform-wide.md) | 2026-11-13 | `0x413b` stores its value into a settings-cache field on all ten bodies that carry it, and no instruction in any of those images reads it back; neither proposed mechanism is supported |
+| [E0477](0477-bionz-x-platform-map-13-updaters.md) | 2026-11-13 | Thirteen official updaters, nine kernels: ZV-E10/ILCE-7C are one code object, ILCE-6100A/ILCE-7M3/ILCE-7RM4A and ILCE-6400/ILCE-6600 share one symbol set each; command tables form a monotone ladder 285→337 |
 | [E0461](0461-cxd90045-pt-regs-scan-and-live-ash.md) | 2026-11-13 | `_find_pt_regs_base` + `_record_user_frame` at `do_PrefetchAbort`/`do_page_fault`/`ret_to_user`: base is `SP` (`ti+0x1FB0 = 0x7DC0FFB0`), frame at abort entry has `ARM_pc=0x0402E790`, `cpsr=0x70` and at `ret_to_user` still `ARM_pc=0x0402E790` -> the abort delivery does **not** zero `ARM_pc`; `PC=0` arises at/after the final user restore (T-bit/PC-LSB coupling suspect). No shell |
 | [E0460](0460-cxd90045-pt-regs-frame-and-live-ash.md) | 2026-11-13 | Physical `pt_regs` capture at `ret_to_user` (`[SP+0x00..0x44]`, `pt_regs_frames`): 24 frames show kernel-context slots (`sp/lr 0`, `pc 0x6010EB84`, `cpsr 0x93`) -> assumed base misaligned; run still stops at `PC=0x0`, no shell |
 | [E0459](0459-cxd90045-zero-pc-resume-and-live-ash.md) | 2026-11-13 | First user entry after the real-user gate: `0x0402E790` prefetch delivered + `0x0404E85C` data fault, then VA-0 fetch with `PC=0x0`. Single kuser hit `0xFFFF0FA0` has `sp=0x60472800`, `lr=0x6010DF38` (`ret_to_user+4`, kernel context); `--trace-reg` at `0x0402E790` returned empty dicts -> dedicated `pt_regs` frame dump is next. No shell |
