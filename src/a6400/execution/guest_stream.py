@@ -2,6 +2,7 @@
 
 No physical memory, DMA engine or display processor is emulated here.
 """
+import ctypes
 import struct
 
 import unicorn
@@ -34,6 +35,7 @@ class GuestStream:
         self.mapping = None
         self.mappings = []
         self.unknown = []
+        self._alias_buffers = {}  # root virtual_start -> host buffer; must outlive the probe
 
     def open(self, flags):
         # O_RDWR | O_DSYNC (0x1002) is the original DDS request; mcmn_mmap_init
@@ -64,8 +66,11 @@ class GuestStream:
             raise UnsupportedStream('stream_physical_range_not_supported', pgoff=pgoff, length=length)
         if flags not in (1, 0x11) or prot not in (1, 2, 3):
             raise UnsupportedStream('stream_mapping_flags_not_supported', flags=flags, prot=prot)
-        if any(physical < m['physical_start'] + m['length'] and m['physical_start'] < physical + rounded
-               for m in self.mappings):
+        # Exact duplicate = alias (real stream.ko remap_pfn_range does not check prior mappings).
+        twin = next((m for m in self.mappings if m['physical_start'] == physical and m['length'] == rounded
+                     and 'alias_of' not in m), None)
+        if twin is None and any(physical < m['physical_start'] + m['length'] and m['physical_start'] < physical + rounded
+                                for m in self.mappings):
             raise UnsupportedStream('stream_multiple_mapping_requires_physical_alias_contract')
         if addr and addr % PAGE_SIZE:
             raise UnsupportedStream('stream_unaligned_address_hint', address=addr)
@@ -90,6 +95,10 @@ class GuestStream:
                         'pgoff': pgoff, 'prot': prot}
         self.mappings.append(self.mapping)
         self.offset = abs(virtual - physical)
+        if twin is not None:
+            self._alias(twin, self.mapping, event)
+            self.transactions.append({'operation': 'mmap_alias', **self.mapping, 'offset': self.offset})
+            return event
         backed_data = self.backed_physical_ranges.get((physical, rounded))
         if backed_data is not None:
             self.mu.mem_write(virtual, backed_data)
@@ -102,6 +111,29 @@ class GuestStream:
             self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write, begin=virtual, end=virtual + rounded - 1)
         self.transactions.append({'operation': 'mmap', **self.mapping, 'offset': self.offset})
         return event
+
+    def _alias(self, root, new, event):
+        """Back both VAs with one host buffer so writes through either are visible through the other."""
+        size, a, b = root['length'], root['virtual_start'], new['virtual_start']
+        buf = self._alias_buffers.get(a)
+        if buf is None:
+            perms = [(max(begin, a), min(end + 1, a + size), p) for begin, end, p in self.mu.mem_regions()
+                     if begin < a + size and a <= end]
+            buf = ctypes.create_string_buffer(bytes(self.mu.mem_read(a, size)), size)
+            self.mu.mem_unmap(a, size)
+            self.mu.mem_map_ptr(a, size, unicorn.UC_PROT_ALL, ctypes.addressof(buf))
+            for begin, end, p in perms:
+                self.mu.mem_protect(begin, end - begin, p)
+            self._alias_buffers[a] = buf
+        self.mu.mem_unmap(b, size)
+        self.mu.mem_map_ptr(b, size, unicorn.UC_PROT_ALL, ctypes.addressof(buf))
+        self.mu.mem_protect(b, size, root['prot'])
+        new['alias_of'] = a
+        event['alias_of'] = a
+        # Unknown-byte state is shared: copy the root's, hook the alias; forget_range clears both.
+        self.unknown += [(begin - a + b, end - a + b) for begin, end in self.unknown if a <= begin < a + size]
+        self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read, begin=b, end=b + size - 1)
+        self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write, begin=b, end=b + size - 1)
 
     def details(self, address, size):
         if any(address < end and begin < address + size for begin, end in self.unknown):
@@ -124,6 +156,17 @@ class GuestStream:
             self.forget_range(address, size)
 
     def forget_range(self, address, size):
+        owner = next((m for m in self.mappings
+                      if m['virtual_start'] <= address < m['virtual_start'] + m['length']), None)
+        root = owner and owner.get('alias_of', owner['virtual_start'])
+        group = [m for m in self.mappings if root is not None and root in (m['virtual_start'], m.get('alias_of'))]
+        if len(group) < 2:
+            return self._forget(address, size)
+        for m in group:  # same bytes seen through every alias VA
+            delta = m['virtual_start'] - owner['virtual_start']
+            self._forget(address + delta, size)
+
+    def _forget(self, address, size):
         end = address + size
         remaining = []
         for begin, last in self.unknown:
@@ -165,4 +208,4 @@ class GuestStream:
         return {'profile': self.profile, 'offset': self.offset, 'mapping': self.mapping,
                 'unknown_bytes': sum(end - start for start, end in self.unknown),
                 'transactions': self.transactions,
-                'limits': 'single mapping; physical contents, aliases, DMA and synchronization not supplied'}
+                'limits': 'exact-duplicate physical ranges alias one host buffer (partial overlaps stop); aliases are not preserved across checkpoint restore; physical contents, DMA and synchronization not supplied'}
