@@ -15,6 +15,8 @@ UIPC_CMD_SND_SYNC_MSG = 0x80000005
 UIPC_CMD_SND_SYNC_DIRECT = 0x80000006
 TIMER_COUNTER_QUEUE = 0x910042  # utimer_kif_counter: u64 microsecond counter
 TIMER_DELAY_QUEUE = 0x910041    # utimer delay queue: wait until absolute u64 deadline at message +24
+TIMER_OBJECT_QUEUE = 0x910040  # osal timer objects: op0 create .. op5 free (libObj 0x851a4c-0x851d38)
+TIMER_OBJECT_EVENT_QUEUE_BASE = 0x00EE0000  # shortcut: synthetic per-object queue ids; real ids unknown
 UIPC_CMD_RCV_MSG_TMO = 0x80000007
 UIPC_CMD_REG_MSG_QUEUE_CB = 0x80000008
 UIPC_CMD_UNREG_MSG_QUEUE_CB = 0x80000009
@@ -429,6 +431,9 @@ class GuestUipc:
             'payload_hex': payload.hex(),
             'payload_ascii': payload.decode('latin1', errors='replace')
         })
+        if self.timer_service == 'emulated' and queue == TIMER_OBJECT_QUEUE and total_size >= 48 and memory_writer is not None:
+            self._timer_object_op(buf_ptr, payload, memory_writer)
+            return 0
         if self.timer_service == 'emulated' and queue in (TIMER_COUNTER_QUEUE, TIMER_DELAY_QUEUE):
             # Body = message +16 (evidence 0041); libObj 0x862c92 reads the u64 at message +24.
             if queue == TIMER_COUNTER_QUEUE and total_size >= 32 and memory_writer is not None:
@@ -443,6 +448,35 @@ class GuestUipc:
         # Only the interpreter owns the thread switch; it consumes this after the ioctl returns.
         self.yield_requested = self.sync_direct_mode == 'yield'
         return 0
+
+    def _timer_object_op(self, buf_ptr: int, payload: bytes, memory_writer) -> None:
+        """Message +0x10 op, +0x14 reply status, +0x18 key, +0x20.. op args/replies."""
+        # shortcut: bookkeeping only; armed timers never fire (the real server posts a 0x18-byte
+        # body {fn, arg, msg handle, key, period lo, hi} to the object's queue). Add firing when a run stalls on one.
+        op, _status, key, _pad, a, b, c = struct.unpack('<7I', payload[:28])
+        objs = self.__dict__.setdefault('timer_objects', {})
+        status = 0
+        if op == 0:
+            key = max(objs, default=0) + 1
+            objs[key] = {'queue': TIMER_OBJECT_EVENT_QUEUE_BASE + key, 'fn': 0, 'arg': 0, 'handle': 0, 'armed': None}
+            memory_writer(buf_ptr + 0x18, struct.pack('<I', key))
+            memory_writer(buf_ptr + 0x20, struct.pack('<I', objs[key]['queue']))
+        elif key not in objs:
+            status = 0xFFFFFC00  # -1024, the osal error code
+        elif op == 1:
+            objs[key].update(fn=a, arg=b, handle=c)
+        elif op == 2:
+            objs[key]['armed'] = (a | (b << 32), c)
+        elif op == 3:
+            objs[key]['armed'] = None
+        elif op == 4:
+            memory_writer(buf_ptr + 0x20, struct.pack('<II', objs[key]['queue'], objs[key]['handle']))
+        elif op == 5:
+            del objs[key]
+        else:
+            status = 0xFFFFFC00
+        memory_writer(buf_ptr + 0x14, struct.pack('<I', status))
+        self.transactions[-1].update(timer_object_op=op, key=key, status=status)
 
     def handle_wai_sem_tmo(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x80000001 (__k_4u_wai_sem_tmo).
