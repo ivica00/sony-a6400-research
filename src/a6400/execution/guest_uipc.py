@@ -363,7 +363,8 @@ class GuestUipc:
         raw_params = memory_reader(params_ptr, 16)
         out_handle_ptr, cb, user_data, flags = struct.unpack('<IIII', raw_params)
 
-        handle_id = 0x1000 + len(self.callbacks)
+        # max+1, not 0x1000+len: after an unregister, len-based ids collided with live handles.
+        handle_id = max(self.callbacks, default=0xFFF) + 1
         memory_writer(out_handle_ptr, struct.pack('<I', handle_id))
         self.callbacks[handle_id] = {
             'queue': queue,
