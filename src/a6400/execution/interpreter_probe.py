@@ -13,9 +13,11 @@ from src.a6400.execution.guest_uname import GuestUname, UnverifiedIdentityData
 from src.a6400.execution.guest_memory import cstring_preview, accessible
 from src.a6400.execution.guest_stat64 import GuestStat64
 from src.a6400.execution.guest_filesystem import GuestFilesystem, UnsupportedFilesystem
-from src.a6400.execution.guest_mmap import GuestMmap, UnsupportedMmap
+from src.a6400.execution.guest_mmap import (GuestMmap, UnsupportedMmap, PROT_READ, PROT_WRITE,
+                                            MAP_PRIVATE, MAP_ANONYMOUS)
 from src.a6400.execution.guest_kuser import GuestKuser
 from src.a6400.execution.guest_uipc import GuestUipc, UnsupportedUipc
+from src.a6400.execution.capped_log import CappedLog
 from src.a6400.execution.guarded_bytes import UnverifiedGuestData
 from src.a6400.execution.guest_stdio import GuestStdio
 from src.a6400.execution.guest_threads import GuestThreads, REGISTER_LIST, EXPECTED_PTHREAD_CLONE_FLAGS
@@ -250,6 +252,45 @@ def inspect_elf_load_and_symbols(elf_bytes, symbol_names):
     return segments, symbols
 
 
+MONDRV_OUTPUT_SYMBOLS = ('_ZN6MonDrv9mp_outputE', '_ZN6MonDrv10PutcharSubEi', '_ZN6MonDrv16IsEmptyOutputBufEv')
+MONDRV_QUEUE_CAPACITY = 0x7bf0
+MONDRV_REGION_SIZE = 0x8000
+
+
+def seed_mondrv_output(mu, mp_output_addr, region):
+    """Publish an empty MonQueue at ``region`` through MonDrv::mp_output; no-op if the pointer is set."""
+    if int.from_bytes(bytes(mu.mem_read(mp_output_addr, 4)), 'little'):
+        return False
+    mu.mem_write(region, struct.pack('<IIII', region + 0x10, region + 0x14, region + 0x20, MONDRV_QUEUE_CAPACITY))
+    mu.mem_write(region + 0x10, bytes(8))
+    mu.mem_write(mp_output_addr, struct.pack('<I', region))
+    return True
+
+
+MONDRV_TEXT_LIMIT = 0x10000
+
+
+def drain_mondrv_output(mu, region, entry):
+    """Stand in for the absent console reader: keep the bytes, then empty the seeded MonQueue.
+
+    Without a reader PutcharSub waits forever in IsEmptyOutputBuf/MprUtil::MSleep (deep9 THREAD_INFRA1).
+    """
+    read_index, write_index = struct.unpack('<II', bytes(mu.mem_read(region + 0x10, 8)))
+    if read_index == write_index:
+        return
+    capacity = MONDRV_QUEUE_CAPACITY
+    if read_index < capacity and write_index < capacity:
+        end = write_index if write_index > read_index else capacity
+        data = bytes(mu.mem_read(region + 0x20 + read_index, end - read_index))
+        if write_index < read_index:
+            data += bytes(mu.mem_read(region + 0x20, write_index))
+        text = entry.setdefault('text', '')
+        if len(text) < MONDRV_TEXT_LIMIT:
+            entry['text'] = text + data.decode('latin-1')[:MONDRV_TEXT_LIMIT - len(text)]
+    mu.mem_write(region + 0x10, bytes(8))
+    entry['drained'] = entry.get('drained', 0) + 1
+
+
 class InterpreterProbe:
     def __init__(self, syscall_policy='stop', uname_profile=None, filesystem=None, kuser_template=None,
                  madvise_policy='stop', backup_service_policy='unverified-ack',
@@ -440,7 +481,7 @@ class InterpreterProbe:
             if filesystem.get('stream_profile') is not None:
                 self.stream = GuestStream(self.mu, self.mmap, filesystem['stream_profile'],
                                           self._identity_boundary, self._after_host_write)
-                self.report['assumptions'].append('Optional image-driver /dev/stream: selected compiled 249:7 registration/reset; ioctl reports modeled mapping delta; physical contents remain unsupplied and guarded. Single mapping, no aliases or DMA.')
+                self.report['assumptions'].append('Optional image-driver /dev/stream: selected compiled 249:7 registration/reset; ioctl reports modeled mapping delta; physical contents remain unsupplied and guarded. Exact-duplicate physical mappings alias one host buffer (partial overlaps stop); no DMA.')
             self.report['assumptions'].append('/dev/uipc character device contract (commands connect, valloc, snd_sync_msg, free, reg_msg_queue_cb, snd_sync_direct), /dev/fb0 framebuffer contract (FBIOGET/PUT_VSCREENINFO, FBIOGET_FSCREENINFO, mmap), and standard I/O streams backed by /dev/console.')
         if syscall_policy == 'threads':
             self.threads = GuestThreads(initial_tid=1000)
@@ -611,6 +652,95 @@ class InterpreterProbe:
         self.mu.hook_add(unicorn.UC_HOOK_CODE, repair, begin=base + 0x59c00, end=base + 0x59c00)
         self.report['relocated_libc_it_repair'] = {'base': base, 'hook': base + 0x59c00, 'literal': literal}
 
+    def rearm_checkpoint_hooks(self):
+        """Re-arm the mmap-time probe hooks from the restored mmap records after a checkpoint load."""
+        mappings = list(getattr(getattr(self, 'mmap', None), 'mappings', []))
+        for m in mappings:
+            if m.get('offset') != 0 or not m.get('path'):
+                continue
+            event = {'mapping': m, 'returned': m['address']}
+            self._arm_relocated_libc_repair(event)
+            if str(m['path']).endswith('/libMWF.so'):
+                # The fd is usually closed by now: take the ELF bytes from the image cache or a live fd.
+                data = self.filesystem.cache.get(m['path']) or next(
+                    (d.get('data') for d in self.filesystem.fds.values() if d.get('path') == m['path']), None)
+                self._arm_mondrv_output_seed(event, elf_bytes=data or b'', adopt_queue=True)
+
+    def _arm_mondrv_output_seed(self, event, elf_bytes=None, adopt_queue=False):
+        """Seed MonDrv::mp_output once libMWF.so is mapped (replaces the fixed-address checkpoint seed).
+
+        Symbols come from the ELF bytes the guest opened. Hooks on PutcharSub and
+        IsEmptyOutputBuf publish an empty queue in a probe-allocated region the first time
+        the pointer is still NULL; a nonzero pointer is never overwritten.
+        """
+        mapping = event.get('mapping') or {}
+        base = event.get('returned')
+        if (self.hook_mode != 'fast' or mapping.get('offset') != 0 or 'mondrv_output_seed' in self.report
+                or not str(mapping.get('path', '')).endswith('/libMWF.so')):
+            return
+        entry = {'armed': False, 'base': base, 'mp_output': None, 'queue': None,
+                 'capacity': MONDRV_QUEUE_CAPACITY, 'seeded': 0, 'first_pc': None}
+        self.report['mondrv_output_seed'] = entry
+        if elf_bytes is None:
+            fd = (event.get('arguments') or [None] * 5)[4]
+            elf_bytes = self.filesystem.fds.get(fd, {}).get('data')
+        try:
+            segments, symbols = inspect_elf_load_and_symbols(elf_bytes or b'', MONDRV_OUTPUT_SYMBOLS)
+        except Exception as error:
+            entry['reason'] = 'elf_unreadable: %s' % (error,)
+            return
+        missing = [name for name in MONDRV_OUTPUT_SYMBOLS
+                   if not symbols.get(name, {}).get('defined') or not symbols[name]['value']]
+        if missing or segments[0]['file_offset'] or segments[0]['vaddr']:
+            entry['reason'] = 'symbols_missing: %s' % (missing,) if missing else 'first_load_not_at_base'
+            return
+        mp_output = base + symbols[MONDRV_OUTPUT_SYMBOLS[0]]['value']
+        entry.update(armed=True, mp_output=mp_output)
+        if adopt_queue:
+            # Restored mp_output may already point at the seeded queue (a probe-allocated anonymous
+            # region): keep it so draining works and no second queue is allocated.
+            try:
+                current = int.from_bytes(bytes(self.mu.mem_read(mp_output, 4)), 'little')
+            except unicorn.UcError:
+                current = 0
+            if any(m.get('anonymous') and m['address'] == current and m['length'] == MONDRV_REGION_SIZE
+                   for m in self.mmap.mappings):
+                entry['queue'] = current
+
+        def seed_hook(uc, address, size, user_data):
+            if entry['first_pc'] is None:
+                entry['first_pc'] = address
+            try:
+                current = int.from_bytes(bytes(uc.mem_read(mp_output, 4)), 'little')
+                if current and current == entry['queue']:
+                    if address == drain_pc:
+                        drain_mondrv_output(uc, current, entry)
+                    return
+                if current:
+                    return
+                if entry['queue'] is None:
+                    cursor = self.mmap.next_address
+                    try:
+                        mapped = self.mmap.request_mmap2(0, MONDRV_REGION_SIZE, PROT_READ | PROT_WRITE,
+                                                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+                    except UnsupportedMmap as error:
+                        entry['reason'] = 'alloc_unsupported: %s' % (error,)
+                        return
+                    if mapped['returned'] >= 0xfffff000:
+                        entry['reason'] = 'alloc_failed: %s' % (mapped.get('reason'),)
+                        return
+                    entry['queue'] = mapped['returned']
+                    entry['cursor_shift'] = [cursor, self.mmap.next_address]
+                if seed_mondrv_output(uc, mp_output, entry['queue']):
+                    entry['seeded'] += 1
+            except unicorn.UcError as error:
+                entry['reason'] = 'ucerror: %s' % (error,)
+
+        drain_pc = base + (symbols[MONDRV_OUTPUT_SYMBOLS[2]]['value'] & ~1)
+        for name in MONDRV_OUTPUT_SYMBOLS[1:]:
+            entry_pc = base + (symbols[name]['value'] & ~1)
+            self.mu.hook_add(unicorn.UC_HOOK_CODE, seed_hook, begin=entry_pc, end=entry_pc)
+
     def _ld_fixup_workaround(self, uc, address, size, user_data):
         """Make _dl_fixup's unconditional `mov r4,r0` explicit.
 
@@ -622,6 +752,25 @@ class InterpreterProbe:
         """
         if self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
             uc.reg_write(arm.UC_ARM_REG_R4, uc.reg_read(arm.UC_ARM_REG_R0))
+
+    def _block_on_timer(self, uc):
+        """Parks the caller until guest time reaches uipc.timer_wait; time jumps ahead when all are idle."""
+        threads = self.threads
+        current = threads.threads[threads.current_tid]
+        threads.timer_waiters[current.tid] = self.uipc.timer_wait
+        self.uipc.timer_wait = None
+        current.state = 'blocked_timer'
+        next_tid = threads.get_next_runnable_tid()
+        self.instructions = max(self.instructions, getattr(threads, 'clock_floor', 0))
+        if next_tid is None:  # idle: advance the guest clock like a real idle CPU would
+            self.instructions = max(self.instructions, min(threads.timer_waiters.values(), default=self.instructions))
+            threads.wake_due(self.instructions)
+            next_tid = current.tid if current.state == 'runnable' else threads.get_next_runnable_tid()
+        if next_tid == current.tid:
+            current.state = 'running'
+            return
+        threads.save_context(uc)
+        threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
 
     def _maybe_preempt(self, uc):
         """Deterministic timer-preemption model for the cooperative scheduler.
@@ -1575,7 +1724,31 @@ class InterpreterProbe:
         self.mu.hook_add(unicorn.UC_HOOK_CODE, hook, begin=address, end=address + 4)
         return records
 
+    PROGRESS_SYSCALLS = (5, 192, 322)  # open, mmap2, openat: the boot-advance metric used in the ledger
+
+    def _run_guard(self, uc, number, svc_address):
+        """Stop when the boot stalls (no open/mmap2 for stall_syscalls syscalls) or guest time passes the budget.
+        Rewinds PC onto the svc so a saved checkpoint resumes with this syscall unserviced."""
+        stall_limit = getattr(self, 'stall_syscalls', 0)
+        since = 0 if number in self.PROGRESS_SYSCALLS else getattr(self, '_since_progress', 0) + 1
+        self._since_progress = since
+        budget = self.report.get('instruction_budget') or 0
+        if stall_limit and since >= stall_limit:
+            reason = 'stalled_no_progress'
+        elif budget and self.instructions >= budget:
+            reason = 'instruction_budget_exhausted'  # idle clock jumps count as guest time
+        else:
+            return False
+        self._since_progress = 0  # a resumed run gets a fresh stall window
+        self.report.update(status=reason, stall_syscalls=stall_limit)
+        uc.reg_write(arm.UC_ARM_REG_PC, svc_address)
+        uc.emu_stop()
+        return True
+
     def _interrupt(self, uc, interrupt, user_data):
+        clock_floor = getattr(getattr(self, 'threads', None), 'clock_floor', 0)
+        if clock_floor > self.instructions:  # idle fast-forward chosen by the scheduler
+            self.instructions = clock_floor
         pc = uc.reg_read(arm.UC_ARM_REG_PC)
         thumb = bool(uc.reg_read(arm.UC_ARM_REG_CPSR) & 0x20)
         size = 2 if thumb else 4
@@ -1585,6 +1758,8 @@ class InterpreterProbe:
                                   (not thumb and instruction & 0x0f000000 == 0x0f000000))
         immediate = instruction & (0xff if thumb else 0xffffff)
         number = uc.reg_read(arm.UC_ARM_REG_R7)
+        if svc and self._run_guard(uc, number, pc - size):
+            return
         if svc and (number == 0xf0005 or (not thumb and instruction == 0xef9f0005)) and self.syscall_policy in ('kuser', 'uipc', 'threads'):
             tls_val = uc.reg_read(arm.UC_ARM_REG_R0)
             self.kuser.set_tls(tls_val)
@@ -2948,6 +3123,11 @@ class InterpreterProbe:
                     try:
                         queue = (struct.unpack('<I', self._uipc_read(arg, 4))[0]
                                  if cmd in (0x80000007, 0x80000004) else None)
+                        if self.uipc.timer_service == 'emulated':
+                            self.uipc.now_us = self.instructions  # same clock as clock_gettime (1 insn = 1 us)
+                            self.threads.wake_due(self.instructions)
+                        self.uipc.clock_us = self.instructions
+                        self.uipc.rcv_wait = None
                         ret = self.uipc.handle_ioctl(self._uipc_read, self._uipc_write, cmd, arg,
                                                      tid=self.threads.current_tid if hasattr(self, 'threads') else None)
                     except UnverifiedGuestData as error:
@@ -2965,7 +3145,8 @@ class InterpreterProbe:
                             self.report['uipc_rcv_timeout_policy'] = 'block_until_message_no_virtual_deadline'
                         self.threads.save_context(uc)
                         self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
-                        next_tid, event = self.threads.handle_uipc_wait(queue, pc - size)
+                        next_tid, event = self.threads.handle_uipc_wait(queue, pc - size,
+                                                                        deadline=getattr(self.uipc, 'rcv_wait', None))
                         event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
                         if cmd == 0x8000000d:
                             event['cmd'] = 'UIPC_CMD_WAIT_CB'
@@ -3023,6 +3204,17 @@ class InterpreterProbe:
                         self.report['serviced_syscalls'].append(event)
                         self.report['syscall_responses_supplied'] += 1
                         uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                        if self.uipc.timer_wait is not None:
+                            self._block_on_timer(uc)
+                            return
+                        if self.uipc.yield_requested:
+                            # Same cooperative switch as sched_yield (158), after R0 is written so the saved context keeps the return value.
+                            self.uipc.yield_requested = False
+                            next_tid, _yield_event = self.threads.handle_sched_yield()
+                            event['yield_to'] = next_tid
+                            if next_tid is not None:
+                                self.threads.save_context(uc)
+                                self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
                         return
                 elif fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'fb0':
                     ret = self.fb.handle_ioctl(
@@ -3215,6 +3407,7 @@ class InterpreterProbe:
                     uc.emu_stop()
                     return
                 self._arm_relocated_libc_repair(event)
+                self._arm_mondrv_output_seed(event)
                 event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
@@ -3248,7 +3441,7 @@ class InterpreterProbe:
                 self.report['syscall_responses_supplied'] += 1
                 uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
                 return
-        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 19, 33, 39, 195, 197, 217) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 19, 33, 39, 195, 217)):
+        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 12, 19, 33, 39, 195, 197, 217) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 12, 19, 33, 39, 195, 217)):
             args = [uc.reg_read(r) for r in (arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2)]
             try:
                 event = self.filesystem.request(number, args)
@@ -3457,9 +3650,11 @@ class InterpreterProbe:
                 mask_ptr = uc.reg_read(arm.UC_ARM_REG_R2)
                 if len_ >= 4 and mask_ptr:
                     uc.mem_write(mask_ptr, (1).to_bytes(4, 'little'))
-                uc.reg_write(arm.UC_ARM_REG_R0, 0)
+                # Linux returns the cpumask byte count; glibc's sched_setaffinity uses it as the kernel mask size.
+                ret = 4 if len_ >= 4 else -22
+                uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xFFFFFFFF)
                 event = {'syscall': 'sched_getaffinity', 'r7': 242, 'pid': pid,
-                         'len': len_, 'mask': 1, 'returned': 0,
+                         'len': len_, 'mask': 1, 'returned': ret,
                          'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
@@ -3760,6 +3955,16 @@ class InterpreterProbe:
                 event = {'syscall': 'nanosleep', 'r7': 162, 'tv_sec': tv_sec, 'tv_nsec': tv_nsec,
                          'returned': ret, 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 if self.syscall_policy == 'threads' and hasattr(self, 'threads'):
+                    if getattr(self, 'thread_sleep_policy', 'immediate') == 'timed':
+                        # Park until guest time (instruction count, as clock_gettime) reaches the deadline.
+                        self.threads.__dict__.setdefault('timer_waiters', {})
+                        self.threads.wake_due(self.instructions)
+                        self.uipc.timer_wait = self.instructions + (tv_sec * 1_000_000_000 + tv_nsec) // 1000
+                        event['parked_until'] = self.uipc.timer_wait
+                        self.report['serviced_syscalls'].append(event)
+                        self.report['syscall_responses_supplied'] += 1
+                        self._block_on_timer(uc)
+                        return
                     if getattr(self, 'thread_sleep_policy', 'immediate') == 'block':
                         # Opt-in: no virtual clock exists, so a requested long sleep
                         # parks the caller instead of returning at once. Short sleeps
@@ -4121,6 +4326,33 @@ class InterpreterProbe:
             if self.report['status'] == 'running':
                 self.report['status'] = reason or 'instruction_budget_exhausted'
         return self._finalize_report()
+
+    def set_record_limit(self, limit):
+        """Opt-in (--syscall-record-limit): keep only the last `limit` syscall and UIPC records."""
+        if limit is None:
+            return
+        old = self.report['serviced_syscalls']
+        log = CappedLog.wrap(old, limit, 'syscall')
+        log.on_append = getattr(old, '_callback', None)  # BootLogger attaches before this runs; keep its live tail
+        self.report['serviced_syscalls'] = log
+        if getattr(self, 'uipc', None) is not None:
+            self.uipc.transactions = CappedLog.wrap(self.uipc.transactions, limit, 'type')
+
+    def finalize_record_logs(self, report):
+        """Turn capped logs into plain lists for JSON and add exact totals and drop counts."""
+        log = report['serviced_syscalls']
+        if isinstance(log, CappedLog):
+            report.update(syscall_record_limit=log.maxlen, syscalls_total=log.total,
+                          syscalls_dropped=log.total - len(log), syscall_name_counts=dict(log.counts))
+            report['serviced_syscalls'] = list(log)
+        uipc_log = getattr(getattr(self, 'uipc', None), 'transactions', None)
+        if isinstance(uipc_log, CappedLog):
+            report.update(uipc_transactions_total=uipc_log.total,
+                          uipc_transactions_dropped=uipc_log.total - len(uipc_log),
+                          uipc_op_counts=dict(uipc_log.counts))
+        uipc = report.get('uipc') or {}
+        if isinstance(uipc.get('transactions'), CappedLog):
+            uipc['transactions'] = list(uipc['transactions'])
 
     def run(self, instruction_budget=100000, timeout_us=2000000):
         self.begin(instruction_budget, timeout_us)

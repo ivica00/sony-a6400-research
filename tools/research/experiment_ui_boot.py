@@ -19,6 +19,8 @@ def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--instructions', type=int, default=15000000)
     parser.add_argument('--timeout-us', type=int, default=60000000)
+    parser.add_argument('--stall-syscalls', type=int, default=50000,
+                        help='stop after this many syscalls with no open/openat/mmap2 (0 disables)')
     parser.add_argument('--trace-library-activation', action='store_true', help='passively record original im.elf dlopen call/return arguments')
     parser.add_argument('--madvise-dontneed', action='store_true', help='discard verified private anonymous pages on MADV_DONTNEED')
     parser.add_argument('--fast-hooks', action='store_true', help='accelerate emulation using block hooks and address-filtered IT workarounds (~100x speedup)')
@@ -26,6 +28,8 @@ def build_parser():
     parser.add_argument('--watch-word', action='append', type=lambda value: int(value, 0), default=[], help='record bounded passive writes to a guest diagnostic word')
     parser.add_argument('--argument', action='append', default=[], help='explicit im.elf argument; bootin phase commands use s/g/r/u/l/i/a')
     parser.add_argument('--stimulus', choices=('experimental-events', 'none'), default='experimental-events', help='none lets original startup run without injected queue messages')
+    parser.add_argument('--stimulus-events', type=lambda value: [int(v, 0) for v in value.split(',')], default=None,
+                        help='with --stimulus experimental-events: comma-separated event ids replacing the default list')
     parser.add_argument('--urandom-open', action='store_true', help='open the image-backed 1:9 node; stop before unsupplied entropy bytes')
     parser.add_argument('--urandom-entropy', choices=('stop', 'deterministic'), default='stop',
                         help='stop before unsupplied entropy bytes (default); deterministic supplies explicit 4-byte stack canary entropy')
@@ -34,12 +38,12 @@ def build_parser():
                         help='image-driver selects verified 249:7 ABI; physical stream bytes remain guarded')
     parser.add_argument('--stream2-device', choices=('stop', 'open-only'), default='stop',
                         help='open-only accepts the observed /dev/stream2 (249:8) O_RDWR|O_DSYNC open and stops at the first ioctl/mmap')
-    parser.add_argument('--nflasha4-device', choices=('stop', 'open-only', 'observed-dump'), default='stop',
-                        help='stop on /dev/nflasha4 (default); open-only accepts the observed O_RDWR open and stops at the first data/ioctl/mmap; observed-dump serves reads from the hash-checked 12 MiB MPR dump and answers only the observed read-only ioctl 0x80014123 (writes/mmap/other ioctls stay boundaries)')
+    parser.add_argument('--nflasha4-device', choices=('stop', 'open-only', 'observed-dump', 'synthetic-erased'), default='stop',
+                        help='stop on /dev/nflasha4 (default); open-only accepts the observed O_RDWR open and stops at the first data/ioctl/mmap; observed-dump serves reads from the hash-checked 12 MiB MPR dump and answers only the observed read-only ioctl 0x80014123 (writes/mmap/other ioctls stay boundaries); synthetic-erased serves an all-zero (erased, E0305 B=00) image through the same paths')
     parser.add_argument('--mount-service', choices=('stop', 'observed-nflasha1'), default='stop',
                         help='stop on mount(2) (default); observed-nflasha1 serves only the observed read-only mount("/dev/nflasha1","/mnt","vfat",...,"posix_attr") and materializes the hash-checked nflasha1 vfat dump as read-only guest nodes')
-    parser.add_argument('--setting-service', choices=('stop', 'observed-nflasha2'), default='stop',
-                        help='stop on the /setting namespace (default); observed-nflasha2 materializes the hash-checked read-only nflasha2 vfat dump under /setting (boot-mounted partition; no write path)')
+    parser.add_argument('--setting-service', choices=('stop', 'observed-nflasha2', 'observed-dat4'), default='stop',
+                        help='stop on the /setting namespace (default); observed-nflasha2 materializes the hash-checked read-only nflasha2 vfat dump under /setting (boot-mounted partition; no write path); observed-dat4 mounts only gps/, updater/ and the E0307-recorded updater/dat4 (00 02), read-only')
     parser.add_argument('--regular-inode-rdev', action='store_true', help='supply the kernel-derived zero st_rdev for regular image files only')
     parser.add_argument('--readonly-image-times', action='store_true', help='select hash-checked ext2 image timestamps under original read-only mount records; not observed camera state')
     parser.add_argument('--backup-service', choices=('stop', 'unverified-ack', 'preset-backed'), default='stop',
@@ -116,6 +120,17 @@ def build_parser():
     parser.add_argument('--thread-poll-yield', action='store_true',
                         help='opt-in cooperative switch at a syscall boundary when a non-blocking '
                              'UIPC poll returns EAGAIN (lets runnable peers run safely)')
+    parser.add_argument('--uipc-sync-direct', choices=('return', 'yield'), default='return',
+                        help="'yield' switches to a runnable peer after each snd_sync_direct (ioctl 0x80000006), "
+                             'like sched_yield (threads syscall policy, which build_boot_session always uses)')
+    parser.add_argument('--uipc-rcv-timeout', choices=('blocking', 'modeled'), default='blocking',
+                        help='modeled: rcv_msg_tmo with a positive timeout returns OSAL timeout at its guest-time deadline')
+    parser.add_argument('--uipc-timer-service', choices=('off', 'emulated'), default='off',
+                        help="'emulated' answers the OSAL timer queues: 0x910042 returns guest microseconds, "
+                             '0x910041 blocks the caller until its deadline (idle time fast-forwards)')
+    parser.add_argument('--syscall-record-limit', type=int, default=None, metavar='N',
+                        help='keep only the last N serviced syscalls and UIPC transactions (deque); '
+                             'exact totals, per-name/per-op counts and drop counts go to the report')
     parser.add_argument('--gles-engine-model', choices=('none', 'command-completion'), default='none',
                         help='opt-in GPES device-work model: command submitted in BAR+0xE8 header '
                              'yields the physically observed IRQ status class 0x40000000 (decoded ack; '
@@ -181,9 +196,9 @@ def build_parser():
                         help='stop on /dev/dmpgles2 (default); kernel-bound binds /dev/dmpgles2 with verified '
                              'TASK_SIZE 0x5f000000; kernel-bound-decoded additionally uses the grm_gles.ko-decoded '
                              'GPES ioctl semantics (E0337/E0341: 0x8004820A suspend-status, 0xC004820D wait-completion)')
-    parser.add_argument('--nanosleep-policy', choices=('immediate', 'block'), default='immediate',
+    parser.add_argument('--nanosleep-policy', choices=('immediate', 'block', 'timed'), default='immediate',
                         help='threads policy sleep handling: immediate return (default baseline) or block the '
-                             'caller in blocked_sleep (no virtual deadline; opt-in for E0310/E0339 monitor loops)')
+                             'caller in blocked_sleep (no virtual deadline; opt-in for E0310/E0339 monitor loops), or timed: park until the guest clock reaches the deadline')
     parser.add_argument('--mmap-base', type=lambda x: int(x, 0), default=None,
                         help='explicit mmap allocation base; defaults to 0x04000000 when gles-device is kernel-bound')
     parser.add_argument('--log-interval', type=int, default=5000000,
@@ -220,8 +235,31 @@ def main():
         print(f'[*] Explicit emulated SETCONFIG envelope packet: {len(objmsg_packet)} '
               f'bytes (sha256 {hashlib.sha256(objmsg_packet).hexdigest()[:16]}...).')
 
+    if args.fast_hooks:
+        from src.a6400.execution import guarded_bytes
+        guarded_bytes.PAGE_HOOKS = True
     session = build_boot_session(args, parser)
     probe = session.probe
+    if args.syscall_record_limit is not None:
+        if args.syscall_record_limit <= 0:
+            parser.error('--syscall-record-limit must be positive')
+        probe.set_record_limit(args.syscall_record_limit)
+    if args.uipc_sync_direct == 'yield':
+        if probe.syscall_policy != 'threads' or not hasattr(probe, 'threads'):
+            parser.error('--uipc-sync-direct yield requires the threads syscall policy')
+        probe.uipc.sync_direct_mode = 'yield'
+        probe.report['uipc_sync_direct'] = 'yield'
+    if args.uipc_timer_service == 'emulated':
+        if probe.syscall_policy != 'threads' or not hasattr(probe, 'threads'):
+            parser.error('--uipc-timer-service emulated requires the threads syscall policy')
+        probe.uipc.timer_service = 'emulated'
+        probe.threads.__dict__.setdefault('timer_waiters', {})
+        probe.report['uipc_timer_service'] = 'emulated'
+    if args.uipc_rcv_timeout == 'modeled':
+        if probe.syscall_policy != 'threads' or not hasattr(probe, 'threads'):
+            parser.error('--uipc-rcv-timeout modeled requires the threads syscall policy')
+        probe.uipc.rcv_timeout_policy = 'modeled'
+        probe.report['uipc_rcv_timeout'] = 'modeled'
     if hasattr(probe, 'mmap'):
         probe.mmap.eof_policy = args.mmap_eof
     probe.report['mmap_eof_policy'] = args.mmap_eof
@@ -409,6 +447,7 @@ def main():
             probe.report['uipc_objmsg_injection_error'] = str(error)
             print(f'[!] SETCONFIG ObjMsg injection failed: {error}')
 
+    probe.stall_syscalls = args.stall_syscalls
     print(f"[*] Running probe (budget: {args.instructions} instructions)...")
     report = probe.run(instruction_budget=args.instructions, timeout_us=args.timeout_us)
     if args.save_checkpoint:
@@ -502,6 +541,12 @@ def main():
     tty = getattr(probe, 'tty', None)
     if tty is not None:
         probe.report.setdefault('tty_device', {}).update(tty.describe())
+    # Also covers a checkpoint saved under a cap and resumed without the flag; no-op on plain lists.
+    probe.finalize_record_logs(report)
+    if 'syscall_record_limit' in report:
+        print(f"[*] Record cap {report['syscall_record_limit']}: syscalls dropped "
+              f"{report['syscalls_dropped']:,}, UIPC transactions dropped "
+              f"{report.get('uipc_transactions_dropped', 0):,}.")
     out_file.write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(f"[*] Report saved to: {out_file}")
 

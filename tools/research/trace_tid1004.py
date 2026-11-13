@@ -124,5 +124,5 @@ if stderr:
     print(f'[*] Stderr:\n{stderr[-500:]}')
 
 # Check recent syscalls
-for s in probe.report.get('serviced_syscalls', [])[-15:]:
+for s in list(probe.report.get('serviced_syscalls', []))[-15:]:
     print('  ', s)

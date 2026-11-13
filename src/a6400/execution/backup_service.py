@@ -15,6 +15,11 @@ from src.a6400.execution.guest_uipc import BACKUP_SERVICE_QUEUE, UnsupportedUipc
 # Verified default preset packaging file
 DEFAULT_PRESET_REL = 'firmware/extracted_a6400/firmware.tar_unpacked/0110_backup/SYSASTRA-DSLR/DX2/CX62600_UC2.bin'
 DEFAULT_PRESET_SHA256 = '241c8521035bc9ff1edbe66cf3d42d81879a4bef8ff9e21cbfb84530a1446154'
+KNOWN_PRESETS = (
+    (DEFAULT_PRESET_REL, DEFAULT_PRESET_SHA256),
+    ('firmware/extracted_a6400/firmware.tar_unpacked/0110_backup/SYSASTRA-DSLR/PDC/CX77700_UC2.bin',
+     'f201df1d3e8d09c917ebd1af44dc4a8785c7adf270b6aa7154929ca9787cee1e'),  # ILCE-6100A: preset named by its MainDest.txt
+)
 
 
 def checked_bk4(raw: bytes) -> Dict[str, int]:
@@ -87,10 +92,13 @@ class BK4PresetState:
     @classmethod
     def load_default(cls, root: Optional[Path] = None) -> 'BK4PresetState':
         base = root or PROJECT_ROOT
-        path = base / DEFAULT_PRESET_REL
-        if not path.is_file():
-            raise FileNotFoundError(f'Default preset not found: {path}')
-        return cls(path.read_bytes(), DEFAULT_PRESET_SHA256)
+        tried = []
+        for rel, sha in KNOWN_PRESETS:
+            path = base / rel
+            tried.append(str(path))
+            if path.is_file():
+                return cls(path.read_bytes(), sha)
+        raise FileNotFoundError('Default preset not found: ' + ' ; '.join(tried))
 
     def search_id(self, unit: int) -> Optional[PropertyDescriptor]:
         """Resolves unit ID using the exact algorithm of original Data_SearchId."""

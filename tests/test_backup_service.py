@@ -1,6 +1,8 @@
 """Unit tests for BK4PresetState and PresetBackedBackupService."""
 import struct
+import tempfile
 import unittest
+from pathlib import Path
 
 from project_paths import PROJECT_ROOT
 from src.a6400.execution.backup_service import (
@@ -381,3 +383,17 @@ class BackupServiceTests(unittest.TestCase):
             )
             self.assertEqual(struct.unpack_from('<i', mem, 104)[0], 0)
 
+
+    def test_load_default_selects_pdc_preset_and_checks_sha(self):
+        rel = 'firmware/extracted_a6400/firmware.tar_unpacked/0110_backup/SYSASTRA-DSLR/PDC/CX77700_UC2.bin'
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(bytes(256))
+            with self.assertRaisesRegex(ValueError, 'Preset SHA-256 mismatch'):
+                BK4PresetState.load_default(Path(tmp))
+
+    def test_load_default_missing_raises_file_not_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                BK4PresetState.load_default(Path(tmp))
