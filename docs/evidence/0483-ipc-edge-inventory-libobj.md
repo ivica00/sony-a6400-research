@@ -28,7 +28,7 @@ rather than from a live read: every call site of `osal_snd_msg`, `osal_rcv_msg_t
 | body | `ILCE-6400` (a6400) |
 | library | `.../nflasha15_unpacked/lib/libObj.so`, 20,860,436 bytes, SHA-256 `60ffd2b0f31f4bc139a7c13a4f62c25cdeb6a531ad5ef35df48471e6e36e88b1` |
 | code section | `.text` at `0x104910`, 13,849,456 bytes |
-| defined code symbols | 1,852 (of 3,297 FUNC entries; the other 1,444 are imports with address 0) |
+| defined code symbols | 1,853 addresses among 3,297 FUNC entries (1,444 are imports with address 0); they collapse to 1,851 distinct addresses |
 | PLT stubs | 2,547, mapped to import names through `.rel.plt` |
 
 ## 2. The table

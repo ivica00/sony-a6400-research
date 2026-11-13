@@ -229,7 +229,7 @@ STATUS_SNAPSHOT = StatusSnapshot(
             "hold for the packaged files: 484 files under the a6400 tree are ELF objects readable "
             "as-is, integrity is CRC32 and MD5 rather than a signature, and the only AES helper "
             "uses sha256('')[:16] in ECB, identical on all thirteen bodies. The application "
-            "library then becomes legible: libObj.so defines 1,852 code symbols and holds 29 "
+            "library then becomes legible: libObj.so defines 1,853 code symbols at 1,851 distinct addresses and holds 29 "
             "direct IPC call sites, 17 of which pass a constant queue id matched to its mov/movw "
             "immediate (E0483). Two classes of fabricated result were found and removed while "
             "building that table: 28 bogus call sites from an unconfirmed branch decode, and "
