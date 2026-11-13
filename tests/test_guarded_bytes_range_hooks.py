@@ -4,6 +4,7 @@ import unittest
 import unicorn
 from unicorn import arm_const as arm
 
+from src.a6400.execution import guarded_bytes
 from src.a6400.execution.guarded_bytes import GuardedGuestBytes
 
 LDR_R1_R0 = bytes.fromhex('001090e5')  # ldr r1, [r0]
@@ -12,6 +13,8 @@ STR_R1_R0 = bytes.fromhex('001080e5')  # str r1, [r0]
 
 class RangeHookTests(unittest.TestCase):
     def setUp(self):
+        guarded_bytes.PAGE_HOOKS = True
+        self.addCleanup(setattr, guarded_bytes, 'PAGE_HOOKS', False)
         self.mu = unicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_ARM)
         self.mu.mem_map(0x10000, 0x10000)
         self.stops = []

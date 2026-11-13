@@ -220,6 +220,9 @@ def main():
         print(f'[*] Explicit emulated SETCONFIG envelope packet: {len(objmsg_packet)} '
               f'bytes (sha256 {hashlib.sha256(objmsg_packet).hexdigest()[:16]}...).')
 
+    if args.fast_hooks:
+        from src.a6400.execution import guarded_bytes
+        guarded_bytes.PAGE_HOOKS = True
     session = build_boot_session(args, parser)
     probe = session.probe
     if hasattr(probe, 'mmap'):
