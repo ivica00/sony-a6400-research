@@ -118,7 +118,7 @@ def build_parser():
                              'UIPC poll returns EAGAIN (lets runnable peers run safely)')
     parser.add_argument('--uipc-sync-direct', choices=('return', 'yield'), default='return',
                         help="'yield' switches to a runnable peer after each snd_sync_direct (ioctl 0x80000006), "
-                             'like sched_yield; needs --thread-policy threads (syscall_policy threads)')
+                             'like sched_yield (threads syscall policy, which build_boot_session always uses)')
     parser.add_argument('--syscall-record-limit', type=int, default=None, metavar='N',
                         help='keep only the last N serviced syscalls and UIPC transactions (deque); '
                              'exact totals, per-name/per-op counts and drop counts go to the report')
@@ -520,9 +520,10 @@ def main():
     tty = getattr(probe, 'tty', None)
     if tty is not None:
         probe.report.setdefault('tty_device', {}).update(tty.describe())
-    if args.syscall_record_limit is not None:
-        probe.finalize_record_logs(report)  # deque -> list for JSON; adds totals and drop counts
-        print(f"[*] Record cap {args.syscall_record_limit}: syscalls dropped "
+    # Also covers a checkpoint saved under a cap and resumed without the flag; no-op on plain lists.
+    probe.finalize_record_logs(report)
+    if 'syscall_record_limit' in report:
+        print(f"[*] Record cap {report['syscall_record_limit']}: syscalls dropped "
               f"{report['syscalls_dropped']:,}, UIPC transactions dropped "
               f"{report.get('uipc_transactions_dropped', 0):,}.")
     out_file.write_text(json.dumps(report, indent=2), encoding='utf-8')

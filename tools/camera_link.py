@@ -545,7 +545,8 @@ class BootLogger:
         tid, tname = self._current_thread_label()
         total_threads = len(probe.threads.threads) if hasattr(probe, 'threads') else 1
         open_fds = len(probe.filesystem.fds) if hasattr(probe, 'filesystem') else 0
-        syscalls = len(probe.report.get('serviced_syscalls', []))
+        log = probe.report.get('serviced_syscalls', [])
+        syscalls = getattr(log, 'total', len(log))  # CappedLog keeps the exact total, not the retained length
         self._emit(
             'STEP',
             f"{elapsed:5.1f}s ({mips:4.2f} MIPS) | syscalls={syscalls:,} | "
