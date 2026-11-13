@@ -3923,6 +3923,16 @@ class InterpreterProbe:
                 event = {'syscall': 'nanosleep', 'r7': 162, 'tv_sec': tv_sec, 'tv_nsec': tv_nsec,
                          'returned': ret, 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 if self.syscall_policy == 'threads' and hasattr(self, 'threads'):
+                    if getattr(self, 'thread_sleep_policy', 'immediate') == 'timed':
+                        # Park until guest time (instruction count, as clock_gettime) reaches the deadline.
+                        self.threads.__dict__.setdefault('timer_waiters', {})
+                        self.threads.wake_due(self.instructions)
+                        self.uipc.timer_wait = self.instructions + (tv_sec * 1_000_000_000 + tv_nsec) // 1000
+                        event['parked_until'] = self.uipc.timer_wait
+                        self.report['serviced_syscalls'].append(event)
+                        self.report['syscall_responses_supplied'] += 1
+                        self._block_on_timer(uc)
+                        return
                     if getattr(self, 'thread_sleep_policy', 'immediate') == 'block':
                         # Opt-in: no virtual clock exists, so a requested long sleep
                         # parks the caller instead of returning at once. Short sleeps
