@@ -1,0 +1,30 @@
+caller	callee	site	queue_or_cmd
+InfraAdjMedia_Exit	ioctl	0x1871c6	0xe002
+ObjAvAdjCtrl_UnregisterCommand	ioctl	0x30e204	
+compass_res	osal_snd_msg	0x81144a	
+_ZN9InfraLanc17ChangeModelStatusEii	ioctl	0x86c9d8	
+_ZN9InfraLanc17ChangeModelStatusEii	osal_snd_sync_msg	0x884ca2	
+ObjCntMgr_UnregisterCommand	ioctl	0x8b7ede	
+ObjMedia_UnregisterCommand	ioctl	0x9d1108	
+ObjMedia_UnregisterCommand	ioctl	0x9d11c6	
+ObjMedia_UnregisterCommand	osal_rcv_msg_tmo	0xa11a3a	
+ObjMedia_UnregisterCommand	ioctl	0xa21a70	0xc
+ObjMedia_UnregisterCommand	ioctl	0xa21aa0	0xe
+ObjMedia_UnregisterCommand	osal_rcv_msg_tmo	0xa45c80	
+ObjMedia_UnregisterCommand	ioctl	0xa4a462	
+ObjCamera_Destroy	ioctl	0xa731fa	0xc006
+ObjCamera_Destroy	ioctl	0xaa5b3a	0x16
+ObjCamera_Destroy	ioctl	0xaa5b80	0x16
+ObjCamera_Destroy	ioctl	0xaa5c4e	0x17
+ObjCamera_Destroy	ioctl	0xaa5d12	0x19
+ObjCamera_Destroy	ioctl	0xaa5dd8	0x1a
+ObjCamera_Destroy	ioctl	0xaa5e94	0x14
+ObjCamera_Destroy	ioctl	0xad3416	0x19
+ObjCamera_Destroy	ioctl	0xae9fba	0xc0ca
+ObjCamera_Destroy	ioctl	0xafe57c	0x19
+ObjCamera_Destroy	ioctl	0xd5afa6	
+ObjCamera_Destroy	ioctl	0xd5f9b0	0x18
+_ZN7StatMgr11ChangeStateEjjPvj	ioctl	0xd74a68	0x3a30
+_ZN7StatMgr11ChangeStateEjjPvj	ioctl	0xd750b6	0x3a30
+ObjEffect_UnregisterCommand	ioctl	0xe2e126	
+ObjEffect_UnregisterCommand	ioctl	0xe2e974	0x2022

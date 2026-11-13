@@ -66,9 +66,12 @@ def _thumb_bl_target(data: bytes, pos: int, base: int) -> int | None:
 def direct_calls(data: bytes, base: int) -> list[tuple[int, int]]:
     """``(caller address, callee address)`` for every direct call in ``data``.
 
-    Scans both parities because Thumb code can start at either, and deduplicates, so literal-pool
-    bytes that happen to look like a call do not become edges twice.
+    Two independent forms of the same check, because the encoding alone produces false positives:
+    literal-pool bytes that happen to match the ``bl`` shape. Every candidate is confirmed by
+    capstone decoding it as a branch, and an image whose code does not decode is rejected rather
+    than mined for patterns — a bogus edge would later be labelled with a made-up argument.
     """
+    md = _capstone()
     edges: list[tuple[int, int]] = []
     seen: set[int] = set()
     for parity in (0, 1):
@@ -77,6 +80,14 @@ def direct_calls(data: bytes, base: int) -> list[tuple[int, int]]:
                 continue
             target = _thumb_bl_target(data, pos, base)
             if target is None:
+                continue
+            # The first decoded instruction must itself be the 4-byte branch. The earlier
+            # version broke out of the loop before comparing `size`, so a 2-byte instruction
+            # sharing the encoding bits passed as a "call" — which produced 28 bogus IPC edges
+            # in 29, each with a fabricated argument.
+            confirmed = any(ins.mnemonic in ("bl", "blx") and ins.size == 4
+                            for ins in list(md.disasm(data[pos:pos + 4], base + pos))[:1])
+            if not confirmed:
                 continue
             seen.add(pos)
             edges.append((base + pos, target))
