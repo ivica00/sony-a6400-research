@@ -119,6 +119,9 @@ def build_parser():
     parser.add_argument('--uipc-sync-direct', choices=('return', 'yield'), default='return',
                         help="'yield' switches to a runnable peer after each snd_sync_direct (ioctl 0x80000006), "
                              'like sched_yield (threads syscall policy, which build_boot_session always uses)')
+    parser.add_argument('--uipc-timer-service', choices=('off', 'emulated'), default='off',
+                        help="'emulated' answers the OSAL timer queues: 0x910042 returns guest microseconds, "
+                             '0x910041 blocks the caller until its deadline (idle time fast-forwards)')
     parser.add_argument('--syscall-record-limit', type=int, default=None, metavar='N',
                         help='keep only the last N serviced syscalls and UIPC transactions (deque); '
                              'exact totals, per-name/per-op counts and drop counts go to the report')
@@ -240,6 +243,12 @@ def main():
             parser.error('--uipc-sync-direct yield requires the threads syscall policy')
         probe.uipc.sync_direct_mode = 'yield'
         probe.report['uipc_sync_direct'] = 'yield'
+    if args.uipc_timer_service == 'emulated':
+        if probe.syscall_policy != 'threads' or not hasattr(probe, 'threads'):
+            parser.error('--uipc-timer-service emulated requires the threads syscall policy')
+        probe.uipc.timer_service = 'emulated'
+        probe.threads.__dict__.setdefault('timer_waiters', {})
+        probe.report['uipc_timer_service'] = 'emulated'
     if hasattr(probe, 'mmap'):
         probe.mmap.eof_policy = args.mmap_eof
     probe.report['mmap_eof_policy'] = args.mmap_eof

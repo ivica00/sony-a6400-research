@@ -753,6 +753,24 @@ class InterpreterProbe:
         if self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
             uc.reg_write(arm.UC_ARM_REG_R4, uc.reg_read(arm.UC_ARM_REG_R0))
 
+    def _block_on_timer(self, uc):
+        """Parks the caller until guest time reaches uipc.timer_wait; time jumps ahead when all are idle."""
+        threads = self.threads
+        current = threads.threads[threads.current_tid]
+        threads.timer_waiters[current.tid] = self.uipc.timer_wait
+        self.uipc.timer_wait = None
+        current.state = 'blocked_timer'
+        next_tid = threads.get_next_runnable_tid()
+        if next_tid is None:  # idle: advance the guest clock like a real idle CPU would
+            self.instructions = max(self.instructions, min(threads.timer_waiters.values()))
+            threads.wake_due(self.instructions)
+            next_tid = current.tid if current.state == 'runnable' else threads.get_next_runnable_tid()
+        if next_tid == current.tid:
+            current.state = 'running'
+            return
+        threads.save_context(uc)
+        threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+
     def _maybe_preempt(self, uc):
         """Deterministic timer-preemption model for the cooperative scheduler.
 
@@ -3078,6 +3096,9 @@ class InterpreterProbe:
                     try:
                         queue = (struct.unpack('<I', self._uipc_read(arg, 4))[0]
                                  if cmd in (0x80000007, 0x80000004) else None)
+                        if self.uipc.timer_service == 'emulated':
+                            self.uipc.now_us = self.instructions  # same clock as clock_gettime (1 insn = 1 us)
+                            self.threads.wake_due(self.instructions)
                         ret = self.uipc.handle_ioctl(self._uipc_read, self._uipc_write, cmd, arg,
                                                      tid=self.threads.current_tid if hasattr(self, 'threads') else None)
                     except UnverifiedGuestData as error:
@@ -3153,6 +3174,9 @@ class InterpreterProbe:
                         self.report['serviced_syscalls'].append(event)
                         self.report['syscall_responses_supplied'] += 1
                         uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                        if self.uipc.timer_wait is not None:
+                            self._block_on_timer(uc)
+                            return
                         if self.uipc.yield_requested:
                             # Same cooperative switch as sched_yield (158), after R0 is written so the saved context keeps the return value.
                             self.uipc.yield_requested = False

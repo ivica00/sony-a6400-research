@@ -83,6 +83,7 @@ class GuestThreads:
         self.futex_waiters: Dict[int, List[int]] = {}
         self.uipc_waiters: Dict[int, List[int]] = {}
         self.fd_waiters: Dict[int, List[int]] = {}
+        self.timer_waiters: Dict[int, int] = {}  # tid -> absolute guest-time deadline (us)
         self.thread_log: List[Dict[str, object]] = []
         # Optional observer for a guest-derived per-thread kernel task record.
         self.on_clone = None
@@ -181,6 +182,15 @@ class GuestThreads:
             if self.threads[tid].state == 'runnable':
                 return tid
         return None
+
+    def wake_due(self, now: int) -> List[int]:
+        """Makes timer waiters whose deadline has passed runnable (--uipc-timer-service)."""
+        due = [tid for tid, deadline in getattr(self, 'timer_waiters', {}).items() if deadline <= now]
+        for tid in due:
+            del self.timer_waiters[tid]
+            if tid in self.threads and self.threads[tid].state == 'blocked_timer':
+                self.threads[tid].state = 'runnable'
+        return due
 
     def handle_sched_yield(self) -> Tuple[Optional[int], Dict[str, object]]:
         """Handles sys_sched_yield (syscall 158).
