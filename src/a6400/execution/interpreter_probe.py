@@ -3126,6 +3126,8 @@ class InterpreterProbe:
                         if self.uipc.timer_service == 'emulated':
                             self.uipc.now_us = self.instructions  # same clock as clock_gettime (1 insn = 1 us)
                             self.threads.wake_due(self.instructions)
+                        self.uipc.clock_us = self.instructions
+                        self.uipc.rcv_wait = None
                         ret = self.uipc.handle_ioctl(self._uipc_read, self._uipc_write, cmd, arg,
                                                      tid=self.threads.current_tid if hasattr(self, 'threads') else None)
                     except UnverifiedGuestData as error:
@@ -3143,7 +3145,8 @@ class InterpreterProbe:
                             self.report['uipc_rcv_timeout_policy'] = 'block_until_message_no_virtual_deadline'
                         self.threads.save_context(uc)
                         self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
-                        next_tid, event = self.threads.handle_uipc_wait(queue, pc - size)
+                        next_tid, event = self.threads.handle_uipc_wait(queue, pc - size,
+                                                                        deadline=getattr(self.uipc, 'rcv_wait', None))
                         event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
                         if cmd == 0x8000000d:
                             event['cmd'] = 'UIPC_CMD_WAIT_CB'
