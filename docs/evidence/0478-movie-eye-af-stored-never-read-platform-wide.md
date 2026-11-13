@@ -1,7 +1,7 @@
-# E0463 — The `0x413b` (Movie Eye AF) value is stored and never read on every body that has it
+# E0478 — The `0x413b` (Movie Eye AF) value is stored and never read on every body that has it
 
 Date: 2026-11-13. **Strictly offline.** No camera, no USB, no mode switch, no firmware write.
-Inputs: the same thirteen official updaters as E0462, unpacked with `fwtool` at
+Inputs: the same thirteen official updaters as E0477, unpacked with `fwtool` at
 `cdba742b`. Continues the `ILCE-6600` result in issue #7 and answers the two mechanisms
 proposed there.
 
@@ -52,7 +52,7 @@ because the field has more logic behind it.
 
 `tools/research/av_eyeaf_field.py`. Thumb-2, no decompiler:
 
-1. Read the table entry for `0x413b` from `av-cam.bin` (E0462's locator).
+1. Read the table entry for `0x413b` from `av-cam.bin` (E0477's locator).
 2. Disassemble a short window at the handler. The store has the shape
    `str{b,h}.w rT,[rB,#imm12]`; `imm12` is the field offset.
 3. Resolve `rB` through the PIC idiom `ldr rD,[pc,#k]` ; `add rD,pc`. The absolute base is

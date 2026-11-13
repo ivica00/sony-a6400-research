@@ -1,7 +1,7 @@
-# E0464 — The UVC delta is a module-package delta, not a kernel-capability delta
+# E0479 — The UVC delta is a module-package delta, not a kernel-capability delta
 
 Date: 2026-11-13. **Strictly offline.** No camera, no USB, no module load, no firmware write.
-Inputs: the thirteen official updaters of E0462. Continues E0320/E0321 (the ZV-E10 → a6400
+Inputs: the thirteen official updaters of E0477. Continues E0320/E0321 (the ZV-E10 → a6400
 UVC overlay plan) by asking the question that plan leaves open: is the missing piece in the
 kernel, or in the module package?
 
@@ -11,7 +11,7 @@ kernel, or in the module package?
    Present: `ZV-E10`, `ILCE-7C`, `ZV-1`, `DSC-RX0M2`. Absent: `ILCE-6400`, `ILCE-6600`,
    `ILCE-6100A`, `ILCE-7M3`, `ILCE-7RM3`, `ILCE-7RM4`, `ILCE-7RM4A`, `ILCE-9`, `ILCE-9M2`.
 2. **`ZV-E10` and `ILCE-7C` ship byte-identical UVC modules** (same size, same SHA-256). They
-   also share one kernel code object (E0462), so the pair is one software stack in two
+   also share one kernel code object (E0477), so the pair is one software stack in two
    bodies — a natural control for any UVC experiment.
 3. **The 42 video / 41 audio import surface is not the differentiator.** Both modules import
    symbols that the a6400 kernel provides; the modules are a *package* difference rather than
@@ -40,7 +40,7 @@ is exactly what makes the module-package framing useful.
 ## 2. Imports versus the kernel symbol table
 
 `usbg_video.ko` (ZV-E10 build) has 42 undefined symbols and `usbg_audio.ko` has 41. Checked
-against each body's decoded kernel symbol table (E0462's method):
+against each body's decoded kernel symbol table (E0477's method):
 
 | body | unresolved video imports | unresolved audio imports |
 | --- | --- | --- |

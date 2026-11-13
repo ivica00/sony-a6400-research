@@ -1,7 +1,7 @@
-# E0466 — Published firmware changelogs give a target for every binary diff
+# E0481 — Published firmware changelogs give a target for every binary diff
 
 Date: 2026-11-13. **Read-only web reading**, no camera, no firmware execution. Source: the
-thirteen official Sony support pages that host the updaters of E0462. This record exists
+thirteen official Sony support pages that host the updaters of E0477. This record exists
 because a binary diff needs a question to answer, and Sony publishes the questions.
 
 ## 0. Short answer
@@ -22,7 +22,7 @@ because a binary diff needs a question to answer, and Sony publishes the questio
    supplies the addresses.
 5. **One entry names a feature this project already tracks.** The `ILCE-7C` page (flat list)
    says "Makes the Eye AF feature compatible with animals when recording a movie" — the same
-   capability as command `0x413b` (Movie Eye AF), which E0463 examines on ten bodies.
+   capability as command `0x413b` (Movie Eye AF), which E0478 examines on ten bodies.
 
 ## 1. What was read, and what each page actually exposed
 
@@ -85,7 +85,7 @@ Sony keeps only the current file per model, and the old version pages do not car
 link to their own file. So a version-to-version diff **within one model** is not obtainable
 from official sources, and this record does not claim otherwise.
 
-What remains available, and is what E0462 uses:
+What remains available, and is what E0477 uses:
 
 - **build-to-build across models** — nine kernels across thirteen bodies, all current;
 - **model-to-model at the same build** — `ILCE-6100A`/`ILCE-7M3`/`ILCE-7RM4A` share a symbol

@@ -1,4 +1,4 @@
-# E0462 — BIONZ X (CXD90045) cross-model platform map from 13 official updaters
+# E0477 — BIONZ X (CXD90045) cross-model platform map from 13 official updaters
 
 Date: 2026-11-13. **Strictly offline.** No camera, no USB, no updater execution, no
 network. Inputs: thirteen official Sony updater packages, hash-pinned below, unpacked with
@@ -179,11 +179,11 @@ Expected for step 5, on this input set: `13 bodies, 9 distinct kernel symbol set
 ## 8. Dependent implementation/scenarios
 
 - The per-body `TargetProfile` entries for `ILCE-6100`, `ILCE-6600` and `ILCE-7M3` can now
-  carry evidence-backed kernel symbols instead of a stub (E0463–E0465).
+  carry evidence-backed kernel symbols instead of a stub (E0478–E0480).
 - The six USB-side symbols this project's profile schema asks for are resolvable for all
-  thirteen bodies (E0466), so a new body no longer needs a camera to gain a profile.
+  thirteen bodies (E0481), so a new body no longer needs a camera to gain a profile.
 - The UVC `usbg_video.ko` question is a module-package question, answerable per body before
-  any physical work (E0467).
+  any physical work (E0482).
 
 ## 9. Next experiment
 
