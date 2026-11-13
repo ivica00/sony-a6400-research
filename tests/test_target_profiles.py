@@ -82,10 +82,14 @@ class TestRegistryContents(unittest.TestCase):
             TargetRegistry((profile, profile))
 
     def test_by_status_partitions_the_registry(self):
+        # E0436 sourced the three ILCE bodies from their own packaged updaters, so the registry
+        # no longer carries an unverified stub.  A stub would reappear here if a body were
+        # declared without any evidence behind it.
         stubs = DEFAULT_REGISTRY.by_status(STATUS_UNVERIFIED)
+        self.assertEqual(tuple(p.target_id for p in stubs), ())
         self.assertEqual(
-            tuple(p.target_id for p in stubs),
-            ("ilce_6100", "ilce_6600", "ilce_7m3"),
+            tuple(p.target_id for p in DEFAULT_REGISTRY.by_status(STATUS_REFERENCE)),
+            ("ilce_6100", "ilce_6600", "ilce_7m3", "zv_e10"),
         )
         self.assertEqual(
             sum(len(DEFAULT_REGISTRY.by_status(status))
@@ -241,14 +245,17 @@ class TestJsonView(unittest.TestCase):
         reloaded = json.loads(payload)
         self.assertEqual(reloaded["ilce_6400"]["kallsyms"]["usb_gadgetcore_ioctl"], 0x602B8844)
         self.assertEqual(reloaded["ilce_6400"]["status"], STATUS_VERIFIED)
-        self.assertEqual(reloaded["ilce_6100"]["status"], STATUS_UNVERIFIED)
-        self.assertEqual(reloaded["ilce_6100"]["kallsyms"], {})
+        self.assertEqual(reloaded["ilce_6100"]["status"], STATUS_REFERENCE)
+        self.assertEqual(reloaded["ilce_6100"]["kallsyms"]["usb_gadgetcore_ioctl"], 0x602BC864)
 
     def test_as_dict_keeps_unknowns_explicit(self):
-        stub = get_profile("ilce_6600").as_dict()
-        self.assertIsNone(stub["firmware_version"])
-        self.assertIsNone(stub["usb"])
-        self.assertFalse(stub["soc_verified"])
+        # uipc_queues cannot be recovered offline, so it stays explicitly empty rather than
+        # borrowing the a6400's live handles.
+        body = get_profile("ilce_6600").as_dict()
+        self.assertEqual(body["uipc_queues"], {})
+        self.assertEqual(body["firmware_version"], "1.10")
+        self.assertIsNotNone(body["usb"])
+        self.assertTrue(body["soc_verified"])
 
     def test_zv_e10_modules_match_the_enablement_table(self):
         modules = get_profile("zv_e10").modules

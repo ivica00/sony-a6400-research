@@ -20,6 +20,17 @@ of "full firmware compatibility."
 
 ## Latest progress
 
+- **Cross-Model BIONZ X Platform Map ([E0462](docs/evidence/0462-bionz-x-platform-map-13-updaters.md)–[E0467](docs/evidence/0467-three-stubs-gain-sourced-values.md)):**
+  Thirteen official updaters unpacked offline: a6400, a6600, a6100A, ZV-E10, A7 III, A7C,
+  A7R III, A7R IV, A7R IVA, A9, A9 II, ZV-1 and RX0 II. They run **nine kernels**, not thirteen:
+  ZV-E10 and A7C put all 14,460 function symbols at the same address and differ in 9 data
+  addresses, while a6400/a6600 share all 14,401 function symbols; a6100A/A7 III/A7R IVA share
+  one symbol set but 4,033 of their 4,042 differing addresses are functions, so they are three
+  separate kernels. The `av-cam` command table is a monotone ladder (285 records on the a6400,
+  286 on the a6600 with exactly `0x413b` added, 337 on the ZV-E10/A7C). Six USB-side kernel
+  symbols now resolve for every body **without a camera**, and for the a6400 the offline
+  decode matches the existing live `/proc/kallsyms` read on all seven symbols. The
+  `ilce_6100`, `ilce_6600` and `ilce_7m3` profiles stop being stubs and carry sourced values.
 - **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0461](docs/evidence/0461-cxd90045-pt-regs-scan-and-live-ash.md)):**
   Decoded the camera's first-stage bootloader and updater boot images, and emulated the
   interrupt controller, system timers, clock hardware, and serial console. The updater
@@ -47,7 +58,7 @@ of "full firmware compatibility."
 Recorded suite: 1531 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=44f186823f43)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=3bfe86f4a267)
 
 ### Subsystem status
 

@@ -220,29 +220,31 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-13",
     latest=EvidenceRef(
-        evidence_id="E0461",
-        path="docs/evidence/0461-cxd90045-pt-regs-scan-and-live-ash.md",
+        evidence_id="E0467",
+        path="docs/evidence/0467-three-stubs-gain-sourced-values.md",
         date="2026-11-13",
-        title="pt_regs base located: ARM_pc is correct in the frame; PC=0 is a restore-path issue",
+        title="Three declared stubs become evidence-backed profiles",
         demonstrated=(
-            "Added _find_pt_regs_base(sp) (probes ti+0x1FB0/+0x1FB8/+0x1FA8 plus a SP-0x100..SP+0x100 sweep, "
-            "accepting a frame whose cpsr slot has USR mode bits and whose pc slot is a userspace address, "
-            "rejecting pc=0) and _record_user_frame() at do_PrefetchAbort (0x601085EC), do_page_fault "
-            "(0x60116D94) and ret_to_user (0x6010DF34). Live probes: base is SP itself (ti+0x1FB0 = 0x7DC0FFB0); "
-            "at abort entry ARM_pc=0x0402E790, ARM_cpsr=0x70 (USR+Thumb), and for the data fault "
-            "ARM_pc=0x0404E85C; at ret_to_user ARM_pc is still 0x0402E790 (ARM_lr slot 0, expected at the ld.so "
-            "entry point). So the abort delivery does not zero ARM_pc - the PC=0 stop must arise at/after the "
-            "final user restore (ldmia sp,{r0-pc}^ / movs pc, lr) or from Unicorn's T-bit<->PC-LSB coupling. "
-            "No behavioural change: run still stops at VA-0 fetch PC=0x0, svc_hits=0, kuser_hits=1, serial 0 B, "
-            "no shell."
+            "The ILCE-6100A, ILCE-6600 and ILCE-7M3 profiles were declared stubs carrying no "
+            "claims. Each now carries seven kernel symbol addresses decoded from its own "
+            "vmlinux.bin, its full stock USB id set read from its own config.yaml, a confirmed "
+            "CXD90045 identity, and its verified device-node table. Thirteen packages unpack "
+            "offline into nine kernels: ZV-E10 and ILCE-7C put all 14,460 function symbols at the "
+            "same address and differ in 9 data addresses, while a6400/ILCE-6600 share all 14,401 "
+            "function symbols. The av-cam command table is a monotone ladder (285 records on the "
+            "a6400, 286 on the a6600 with exactly 0x413b added, 337 on the ZV-E10). None of the "
+            "three new bodies publishes a /dev/usb/video or audio node, so kernel-side UVC is "
+            "answered no for them rather than unknown."
         ),
         boundary=(
-            "No shell: serial 0 B, svc_hits=0. Next: hook/disassemble the tail of ret_to_user, capture the "
-            "frame just before the final restore, single-step the restore to check CPSR/PC ordering (T=1 with an "
-            "even PC may make Unicorn decode ARM at 0x0402E790), and emulate the restore if needed; then verify "
-            "0x0402F666/0x04031AF0, svc_hits and live ash."
+            "uipc_queues stays empty on the three new profiles: those handles come from a live "
+            "/proc/osal/uipc read and are per-boot, so no offline value is claimed. Three of the "
+            "ten profile symbols are module exports and cannot come from kallsyms. USB PIDs are "
+            "the package's stock descriptor set, not a host-observed identity. Older updater "
+            "files are gone (404), so a within-model version diff is not obtainable. Offline "
+            "addresses are for the packaged build, which may be older than a camera's."
         ),
-        tier="OFFLINE BOUNDED UNICORN BRING-UP",
+        tier="OFFLINE PACKAGED FIRMWARE",
     ),
     headline="1531 tests recorded passing | No verified emulator GUI frame",
     cards=(
