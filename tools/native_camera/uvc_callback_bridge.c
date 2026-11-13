@@ -75,8 +75,25 @@ extern int a6400_uvc_restore_descriptors_bridge(void);
 extern int schedule_work(void *work);
 extern void msleep(unsigned int msecs);
 static int g_disconnect_restored;
-static uvc_u32 g_restore_work[8] __attribute__((aligned(4)));
+/* E0453/E0454: Linux work_struct layout on this ARM kernel is
+ * {data, entry.next, entry.prev, func}. The B23 warm ring proves that a
+ * zero-initialised work item trips BUG_ON(!list_empty(&work->entry)) in
+ * __queue_work+0x220 (0x6014a280 -> __bug_noarg) when it is handed to
+ * schedule_work(). Both work items therefore get a self-linked list head
+ * (entry.next == entry.prev == &entry) and data = WORK_DATA_INIT (0) before
+ * the first schedule. The settle/restore logic itself is unchanged. */
+struct a6400_work_struct { uvc_u32 data, next, prev, func; };
+static struct a6400_work_struct g_restore_work;
+static unsigned g_restore_scheduled;
 static void a6400_uvc_restore_work_fn(void *work);
+
+static void a6400_work_init(struct a6400_work_struct *w, void (*fn)(void *))
+{
+    w->data = 0;                 /* WORK_DATA_INIT: no pool, not pending   */
+    w->next = (uvc_u32)&w->next; /* list_head entry.next -> &entry         */
+    w->prev = (uvc_u32)&w->next; /* list_head entry.prev -> &entry         */
+    w->func = (uvc_u32)fn;
+}
 
 static int a6400_uvc_kernel_ptr(uvc_u32 p);
 static uvc_u32 a6400_uvc_rd32(uvc_u32 address);
@@ -656,11 +673,75 @@ static struct uvc_bridge *owner(struct uvc_old_descriptor *d)
     return b;
 }
 
+/* E0446: read-only EP0 state observer (no hooks, no kernel-text writes). A workqueue
+ * item polls dwc3 ep0state/next_event/eps flags/event-buffer lpos every ~1 jiffy after the first
+ * class request and records every change with a ktime_get_ts timestamp, dumped once at the end.
+ * Purpose: decide when NRDY(status) is handled and when the status XferComplete arrives
+ * (the GET_CUR 5.01 s stall) without touching the EP0 path. */
+#define A6400_OBS_MAX 96
+struct a6400_obs { uvc_u32 sec, nsec, ep0state, next, st, f0, f1, lpos, cnt; };
+static struct a6400_obs g_obs[A6400_OBS_MAX];
+static unsigned g_obs_n, g_obs_started;
+static uvc_u32 g_obs_dwc;
+static struct a6400_work_struct g_obs_work;
+
+static void a6400_uvc_obs_work_fn(void *work)
+{
+    unsigned i, j;
+    struct a6400_obs cur, last;
+    struct a6400_ts ts;
+    int have=0;
+    (void)work;
+    for (i=0;i<1500u && g_obs_n<A6400_OBS_MAX;i++) {
+        uvc_u32 dwc=g_obs_dwc, e0=0, e1=0, arr, n, eb=0;
+        if (!dwc || !a6400_uvc_kernel_ptr(dwc)) break;
+        cur.ep0state=a6400_uvc_rd32(dwc+0x2e0u);
+        cur.next=a6400_uvc_rd32(dwc+0x2dcu);
+        cur.st=a6400_uvc_rd8(dwc+0x2d8u);
+        e0=a6400_uvc_rd32(dwc+0xd0u); e1=a6400_uvc_rd32(dwc+0xd4u);
+        cur.f0=(e0 && a6400_uvc_kernel_ptr(e0))?a6400_uvc_rd32(e0+0x4cu):0xffffffffu;
+        cur.f1=(e1 && a6400_uvc_kernel_ptr(e1))?a6400_uvc_rd32(e1+0x4cu):0xffffffffu;
+        n=a6400_uvc_rd32(dwc+0x2c8u); arr=a6400_uvc_rd32(dwc+0xccu);
+        cur.lpos=0xffffffffu; cur.cnt=0xffffffffu;
+        if (arr && n && n<=2u && a6400_uvc_kernel_ptr(arr)) {
+            eb=a6400_uvc_rd32(arr);
+            if (eb && a6400_uvc_kernel_ptr(eb)) { cur.lpos=a6400_uvc_rd32(eb+8u); cur.cnt=a6400_uvc_rd32(eb+0xcu); }
+        }
+        if (!have || cur.ep0state!=last.ep0state || cur.next!=last.next || cur.st!=last.st ||
+            cur.f0!=last.f0 || cur.f1!=last.f1 || cur.lpos!=last.lpos || cur.cnt!=last.cnt) {
+            ts.sec=0; ts.nsec=0;
+            ((void (*)(void *))0x60157a14u)(&ts);
+            cur.sec=ts.sec; cur.nsec=ts.nsec;
+            g_obs[g_obs_n++]=cur; last=cur; have=1;
+        }
+        msleep(1u);
+    }
+    for (j=0;j<g_obs_n;j++)
+        printk("[a6400_uvc] OBS %u t=%u.%09u ep0s=%u next=%u st=%02x f0=%x f1=%x lpos=%x cnt=%x\n",
+               j,(unsigned)g_obs[j].sec,(unsigned)g_obs[j].nsec,(unsigned)g_obs[j].ep0state,
+               (unsigned)g_obs[j].next,(unsigned)g_obs[j].st,(unsigned)g_obs[j].f0,
+               (unsigned)g_obs[j].f1,(unsigned)g_obs[j].lpos,(unsigned)g_obs[j].cnt);
+    printk("[a6400_uvc] OBS done n=%u iterations=%u\n",g_obs_n,i);
+}
+
+static __attribute__((noinline)) void a6400_uvc_obs_start(uvc_u32 ep)
+{
+    uvc_u32 dwc;
+    if (g_obs_started || !ep || !a6400_uvc_kernel_ptr(ep)) return;
+    dwc=a6400_uvc_rd32(ep+0x48u);
+    if (!dwc || !a6400_uvc_kernel_ptr(dwc)) return;
+    g_obs_dwc=dwc; g_obs_started=1;
+    a6400_work_init(&g_obs_work, a6400_uvc_obs_work_fn);
+    printk("[a6400_uvc] OBS start dwc=%08x\n",(unsigned)dwc);
+    schedule_work((void *)&g_obs_work);
+}
+
 static void a6400_uvc_restore_work_fn(void *work)
 {
     struct uvc_bridge *b=(struct uvc_bridge *)current;
     int i;
     (void)work;
+    g_restore_scheduled=0; /* allow a later disconnect to reschedule */
     for (i=0;i<20;i++) {
         if (!b || b->in_flight==0) break;
         msleep(10u);
@@ -672,9 +753,10 @@ static void a6400_uvc_restore_work_fn(void *work)
 
 static void a6400_uvc_schedule_restore(void)
 {
-    g_restore_work[0]=0; g_restore_work[1]=0; g_restore_work[2]=0;
-    g_restore_work[3]=(uvc_u32)a6400_uvc_restore_work_fn;
-    schedule_work((void *)g_restore_work);
+    if (g_restore_scheduled) return; /* never queue an already-pending item */
+    g_restore_scheduled=1;
+    a6400_work_init(&g_restore_work, a6400_uvc_restore_work_fn);
+    schedule_work((void *)&g_restore_work);
 }
 
 static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
@@ -804,6 +886,7 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
         a6400_uvc_ring_record(1u,(uvc_u32)a2,0,(const uvc_u8 *)a1,0);
         if (drq) { if (drq[0]&0x80u) g_get_cur_count++; else g_set_cur_count++; }
         a6400_uvc_ring_install((uvc_u32)a2);
+        a6400_uvc_obs_start((uvc_u32)a2);
 #if A6400_UVC_TRACE
         g_class_lr=(uvc_u32)__builtin_return_address(0);
         {   uvc_u32 d=(a2 && a6400_uvc_kernel_ptr((uvc_u32)a2))?a6400_uvc_rd32((uvc_u32)a2+0x48u):0;
