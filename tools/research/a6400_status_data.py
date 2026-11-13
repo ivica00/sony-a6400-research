@@ -237,7 +237,10 @@ STATUS_SNAPSHOT = StatusSnapshot(
             "callers resolved to their enclosing symbol the graph carries 6,713 named-to-named "
             "edges, and tracing input to display shows the display entry points have no direct "
             "caller at all: their addresses are stored as data, so the route is a function "
-            "pointer (E0484)."
+            "pointer (E0484). The work is also predictive rather than descriptive: a command-id "
+            "rule fitted on four bodies recalls 0.997, 0.885 and 0.973 of three bodies it never "
+            "saw (E0485), while the USB and device-node columns stay at zero because no rule was "
+            "derived for them."
         ),
         boundary=(
             "The update-chain work establishes what the packaged files contain and what the "
