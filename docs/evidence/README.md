@@ -4,13 +4,13 @@ One record per hardware or software claim. Records are dated and are **not** rew
 when a later result supersedes them: the newer record says what changed.
 
 Current consolidated state: [README research status](../../README.md) and
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0482**, 2026-11-13).
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0467**, 2026-11-13).
+[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0489**, 2026-11-13).
 
 ## Latest records
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0489](0489-update-chain-integrity-is-crc32-and-md5.md) | 2026-11-13 | The update chain verifies CRC32 (`uc_crc32sum.elf`, no crypto imports) and MD5 (`md5sum -c`), never a signature; the only AES helper uses `sha256("")[:16]` in ECB, identical on all 13 bodies; 484 files extract as plain ELF without decryption |
 | [E0482](0482-three-stubs-gain-sourced-values.md) | 2026-11-13 | The ILCE-6100A, ILCE-6600 and ILCE-7M3 stubs gain seven kernel symbols each from their own decoded images, their full stock USB id sets, and a confirmed CXD90045 identity; none of the three publishes a video or audio device node |
 | [E0481](0481-published-changelogs-as-diff-targets.md) | 2026-11-13 | Published firmware changelogs: a7 III exposes 10 per-version entries with dates, a7R IVA 3, the other seven pages a flat undated list; older files are 404 so a within-model version diff is not obtainable |
 | [E0480](0480-ten-bodies-gain-kernel-symbols-offline.md) | 2026-11-13 | The six USB-side kernel symbols resolve for every body from packaged firmware alone; the a6400 offline decode matches the live `/proc/kallsyms` read 7/7; three schema symbols are module exports, not kernel |
