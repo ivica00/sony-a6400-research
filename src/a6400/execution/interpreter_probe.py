@@ -4210,8 +4210,10 @@ class InterpreterProbe:
         """Opt-in (--syscall-record-limit): keep only the last `limit` syscall and UIPC records."""
         if limit is None:
             return
-        self._record_limit = limit
-        self.report['serviced_syscalls'] = CappedLog.wrap(self.report['serviced_syscalls'], limit, 'syscall')
+        old = self.report['serviced_syscalls']
+        log = CappedLog.wrap(old, limit, 'syscall')
+        log.on_append = getattr(old, '_callback', None)  # BootLogger attaches before this runs; keep its live tail
+        self.report['serviced_syscalls'] = log
         if getattr(self, 'uipc', None) is not None:
             self.uipc.transactions = CappedLog.wrap(self.uipc.transactions, limit, 'type')
 
@@ -4219,7 +4221,7 @@ class InterpreterProbe:
         """Turn capped logs into plain lists for JSON and add exact totals and drop counts."""
         log = report['serviced_syscalls']
         if isinstance(log, CappedLog):
-            report.update(syscall_record_limit=self._record_limit, syscalls_total=log.total,
+            report.update(syscall_record_limit=log.maxlen, syscalls_total=log.total,
                           syscalls_dropped=log.total - len(log), syscall_name_counts=dict(log.counts))
             report['serviced_syscalls'] = list(log)
         uipc_log = getattr(getattr(self, 'uipc', None), 'transactions', None)

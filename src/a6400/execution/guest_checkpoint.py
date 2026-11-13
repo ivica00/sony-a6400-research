@@ -12,6 +12,8 @@ from typing import Any, Dict
 import unicorn
 from unicorn import arm_const as arm
 
+from src.a6400.execution.capped_log import CappedLog
+
 ARM_CHECKPOINT_REGS = (
     arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2, arm.UC_ARM_REG_R3,
     arm.UC_ARM_REG_R4, arm.UC_ARM_REG_R5, arm.UC_ARM_REG_R6, arm.UC_ARM_REG_R7,
@@ -87,6 +89,9 @@ def save_checkpoint(probe, filepath: Path) -> int:
                 probe.uipc.handle_rcv_msg_tmo = patched_fn
 
     # 3. Python Subsystem State
+    # A CappedLog keeps its totals and counts; a BootLogger wrapper must not be pickled (callback, stream, probe).
+    raw_serviced = probe.report.get('serviced_syscalls', [])
+    serviced_log = raw_serviced if isinstance(raw_serviced, CappedLog) else list(raw_serviced)
     subsystems: Dict[str, Any] = {
         'instructions': probe.instructions,
         'runtime': {
@@ -94,8 +99,7 @@ def save_checkpoint(probe, filepath: Path) -> int:
             'timeslice_mark': getattr(probe, '_timeslice_mark', 0),
         },
         'signal_handlers': dict(probe.signal_handlers),
-        # Not copied to a list: a CappedLog must keep its totals and counts (pickled right below).
-        'serviced_syscalls': probe.report.get('serviced_syscalls', []),
+        'serviced_syscalls': serviced_log,
         'syscall_responses_supplied': probe.report.get('syscall_responses_supplied', 0),
         'loaded_modules': list(probe.report.get('loaded_modules', [])),
         'filesystem_fds': dict(probe.filesystem.fds),

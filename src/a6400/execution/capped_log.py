@@ -12,6 +12,7 @@ class CappedLog(deque):
         self.count_key = count_key
         self.counts: Dict[str, int] = {} if counts is None else dict(counts)
         self.total = len(items) if total is None else total
+        self.on_append = None  # live-tail callback (BootLogger); not pickled
         if counts is None:
             for item in items:
                 self._count(item)
@@ -25,6 +26,8 @@ class CappedLog(deque):
         self.total += 1
         self._count(item)
         super().append(item)
+        if self.on_append is not None:
+            self.on_append(item)
 
     def __reduce__(self):
         return (CappedLog, (list(self), self.maxlen, self.count_key, self.total, self.counts))
