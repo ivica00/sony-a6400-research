@@ -3650,9 +3650,11 @@ class InterpreterProbe:
                 mask_ptr = uc.reg_read(arm.UC_ARM_REG_R2)
                 if len_ >= 4 and mask_ptr:
                     uc.mem_write(mask_ptr, (1).to_bytes(4, 'little'))
-                uc.reg_write(arm.UC_ARM_REG_R0, 0)
+                # Linux returns the cpumask byte count; glibc's sched_setaffinity uses it as the kernel mask size.
+                ret = 4 if len_ >= 4 else -22
+                uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xFFFFFFFF)
                 event = {'syscall': 'sched_getaffinity', 'r7': 242, 'pid': pid,
-                         'len': len_, 'mask': 1, 'returned': 0,
+                         'len': len_, 'mask': 1, 'returned': ret,
                          'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1
