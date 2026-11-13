@@ -4,13 +4,19 @@ One record per hardware or software claim. Records are dated and are **not** rew
 when a later result supersedes them: the newer record says what changed.
 
 Current consolidated state: [README research status](../../README.md) and
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0482**, 2026-11-13).
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0467**, 2026-11-13).
+[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0490**, 2026-11-13).
 
 ## Latest records
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0488](0488-no-framebuffer-node-on-any-body.md) | 2026-11-13 | None of thirteen packaged bodies registers an `fb*` device node and every one publishes `dmpgles2`; a program opening `/dev/fb0` by name cannot succeed on a stock body, though a live `/dev` was not read |
+| [E0490](0490-platform-model-and-flash-boundary.md) | 2026-11-13 | The platform model document: nine kernels, 0.997/0.885/0.973 held-out prediction, 29 IPC sites, indirect display entry points, and the flash boundary stated as unknown rather than closed |
+| [E0486](0486-writable-mounts-versus-the-flash-boundary.md) | 2026-11-13 | Six mount points are writable at runtime while `/`, `/usr` and `/android/system` are read-only flash; a writable mount is not a modified image, and the parser treats an option list without `rw` as not writable |
+| [E0485](0485-command-table-predicts-held-out-body.md) | 2026-11-13 | A command-id rule fitted on four bodies recalls 0.997 / 0.885 / 0.973 of three bodies it never saw; no USB or device-node rule exists, and those columns stay 0 rather than being made to look better |
+| [E0484](0484-display-entry-points-are-indirect.md) | 2026-11-13 | No `ObjDisplay_Start` exists on four bodies (four other `ObjDisplay_*` names do); the display entry points have zero direct callers and their addresses appear as data, so the route is a function pointer a direct-call graph cannot follow |
+| [E0483](0483-ipc-edge-inventory-libobj.md) | 2026-11-13 | 29 direct IPC call sites in the a6400 `libObj.so`, each disassembled; 17 pass a constant argument, matched to its `mov`/`movw` immediate, and 12 stay empty rather than becoming a fabricated `0x0` |
+| [E0489](0489-update-chain-integrity-is-crc32-and-md5.md) | 2026-11-13 | The update chain verifies CRC32 (`uc_crc32sum.elf`, no crypto imports) and MD5 (`md5sum -c`), never a signature; the only AES helper uses `sha256("")[:16]` in ECB, identical on all 13 bodies; 484 files extract as plain ELF without decryption |
 | [E0482](0482-three-stubs-gain-sourced-values.md) | 2026-11-13 | The ILCE-6100A, ILCE-6600 and ILCE-7M3 stubs gain seven kernel symbols each from their own decoded images, their full stock USB id sets, and a confirmed CXD90045 identity; none of the three publishes a video or audio device node |
 | [E0481](0481-published-changelogs-as-diff-targets.md) | 2026-11-13 | Published firmware changelogs: a7 III exposes 10 per-version entries with dates, a7R IVA 3, the other seven pages a flat undated list; older files are 404 so a within-model version diff is not obtainable |
 | [E0480](0480-ten-bodies-gain-kernel-symbols-offline.md) | 2026-11-13 | The six USB-side kernel symbols resolve for every body from packaged firmware alone; the a6400 offline decode matches the live `/proc/kallsyms` read 7/7; three schema symbols are module exports, not kernel |

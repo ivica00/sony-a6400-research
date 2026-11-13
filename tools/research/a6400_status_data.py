@@ -220,33 +220,41 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-13",
     latest=EvidenceRef(
-        evidence_id="E0482",
-        path="docs/evidence/0482-three-stubs-gain-sourced-values.md",
+        evidence_id="E0490",
+        path="docs/evidence/0490-platform-model-and-flash-boundary.md",
         date="2026-11-13",
-        title="Three declared stubs become evidence-backed profiles",
+        title="The platform model, and the boundary it does not cross",
         demonstrated=(
-            "The ILCE-6100A, ILCE-6600 and ILCE-7M3 profiles were declared stubs carrying no "
-            "claims. Each now carries seven kernel symbol addresses decoded from its own "
-            "vmlinux.bin, its full stock USB id set read from its own config.yaml, a confirmed "
-            "CXD90045 identity, and its verified device-node table. Thirteen packages unpack "
-            "offline into nine kernels: ZV-E10 and ILCE-7C put all 14,460 function symbols at the "
-            "same address and differ in 9 data addresses, while a6400/ILCE-6600 share all 14,401 "
-            "function symbols. The av-cam command table is a monotone ladder (285 records on the "
-            "a6400, 286 on the a6600 with exactly 0x413b added, 337 on the ZV-E10). None of the "
-            "three new bodies publishes a /dev/usb/video or audio node, so kernel-side UVC is "
-            "answered no for them rather than unknown."
+            "The ecosystem claim that the image is AES-encrypted with per-model keys does not "
+            "hold for the packaged files: 484 files under the a6400 tree are ELF objects readable "
+            "as-is, integrity is CRC32 and MD5 rather than a signature, and the only AES helper "
+            "uses sha256('')[:16] in ECB, identical on all thirteen bodies. The application "
+            "library then becomes legible: libObj.so defines 1,853 code symbols at 1,851 distinct addresses and holds 29 "
+            "direct IPC call sites, 17 of which pass a constant queue id matched to its mov/movw "
+            "immediate (E0483). Two classes of fabricated result were found and removed while "
+            "building that table: 28 bogus call sites from an unconfirmed branch decode, and "
+            "invented argument values from reading instruction bytes as a literal pool. With "
+            "callers resolved to their enclosing symbol the graph carries 6,713 named-to-named "
+            "edges, and tracing input to display shows the display entry points have no direct "
+            "caller at all: their addresses are stored as data, so the route is a function "
+            "pointer (E0484). The work is also predictive rather than descriptive: a command-id "
+            "rule fitted on four bodies recalls 0.997, 0.885 and 0.973 of three bodies it never "
+            "saw (E0485), while the USB and device-node columns stay at zero because no rule was "
+            "derived for them. The modifiable surface is separated from the flash boundary: six "
+            "mount points are writable at runtime and three flash partitions are read-only "
+            "(E0486), and the record states plainly that a writable mount is not a modified "
+            "image."
         ),
         boundary=(
-            "uipc_queues stays empty on the three new profiles: those handles come from a live "
-            "/proc/osal/uipc read and are per-boot, so no offline value is claimed. Three of the "
-            "ten profile symbols are module exports and cannot come from kallsyms. USB PIDs are "
-            "the package's stock descriptor set, not a host-observed identity. Older updater "
-            "files are gone (404), so a within-model version diff is not obtainable. Offline "
-            "addresses are for the packaged build, which may be older than a camera's."
+            "The update-chain work establishes what the packaged files contain and what the "
+            "updater scripts check, not that the bootloader accepts an image whose CRC list was "
+            "recomputed; that needs a camera and is recorded as unknown. The IPC table is exact "
+            "for the a6400 library by SHA-256 and no other, covers direct calls only, and claims "
+            "nothing about what a queue id's consumer does at runtime."
         ),
         tier="OFFLINE PACKAGED FIRMWARE",
     ),
-    headline="1595 tests recorded passing | No verified emulator GUI frame",
+    headline="1720 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0476",
@@ -451,9 +459,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1595,
+        test_count=1720,
         recorded_at="2026-11-13",
-        evidence_id="E0482",
+        evidence_id="E0490",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(
