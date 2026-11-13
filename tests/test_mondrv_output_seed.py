@@ -4,7 +4,7 @@ import unittest
 
 import unicorn
 
-from src.a6400.execution.interpreter_probe import seed_mondrv_output
+from src.a6400.execution.interpreter_probe import drain_mondrv_output, seed_mondrv_output
 
 PAGE = 0x52000000          # fake libMWF page
 MP_OUTPUT = PAGE + 0xfe0   # stands in for base + mp_output
@@ -30,6 +30,19 @@ class MondrvOutputSeedTests(unittest.TestCase):
         self.assertFalse(seed_mondrv_output(self.mu, MP_OUTPUT, REGION))
         self.assertEqual(struct.unpack('<I', bytes(self.mu.mem_read(MP_OUTPUT, 4)))[0], 0x12345678)
         self.assertEqual(bytes(self.mu.mem_read(REGION, 16)), b'\xaa' * 16)
+
+    def test_drain_keeps_text_and_empties_queue(self):
+        seed_mondrv_output(self.mu, MP_OUTPUT, REGION)
+        self.mu.mem_write(REGION + 0x20 + 0x7bee, b'ab')
+        self.mu.mem_write(REGION + 0x20, b'cd')
+        self.mu.mem_write(REGION + 0x10, struct.pack('<II', 0x7bee, 2))  # wrapped
+        entry = {}
+        drain_mondrv_output(self.mu, REGION, entry)
+        self.assertEqual(entry['text'], 'abcd')
+        self.assertEqual(entry['drained'], 1)
+        self.assertEqual(bytes(self.mu.mem_read(REGION + 0x10, 8)), bytes(8))
+        drain_mondrv_output(self.mu, REGION, entry)  # already empty: no-op
+        self.assertEqual(entry['drained'], 1)
 
 
 if __name__ == '__main__':
