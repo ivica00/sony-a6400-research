@@ -267,6 +267,30 @@ def seed_mondrv_output(mu, mp_output_addr, region):
     return True
 
 
+MONDRV_TEXT_LIMIT = 0x10000
+
+
+def drain_mondrv_output(mu, region, entry):
+    """Stand in for the absent console reader: keep the bytes, then empty the seeded MonQueue.
+
+    Without a reader PutcharSub waits forever in IsEmptyOutputBuf/MprUtil::MSleep (deep9 THREAD_INFRA1).
+    """
+    read_index, write_index = struct.unpack('<II', bytes(mu.mem_read(region + 0x10, 8)))
+    if read_index == write_index:
+        return
+    capacity = MONDRV_QUEUE_CAPACITY
+    if read_index < capacity and write_index < capacity:
+        end = write_index if write_index > read_index else capacity
+        data = bytes(mu.mem_read(region + 0x20 + read_index, end - read_index))
+        if write_index < read_index:
+            data += bytes(mu.mem_read(region + 0x20, write_index))
+        text = entry.setdefault('text', '')
+        if len(text) < MONDRV_TEXT_LIMIT:
+            entry['text'] = text + data.decode('latin-1')[:MONDRV_TEXT_LIMIT - len(text)]
+    mu.mem_write(region + 0x10, bytes(8))
+    entry['drained'] = entry.get('drained', 0) + 1
+
+
 class InterpreterProbe:
     def __init__(self, syscall_policy='stop', uname_profile=None, filesystem=None, kuser_template=None,
                  madvise_policy='stop', backup_service_policy='unverified-ack',
@@ -662,7 +686,12 @@ class InterpreterProbe:
             if entry['first_pc'] is None:
                 entry['first_pc'] = address
             try:
-                if int.from_bytes(bytes(uc.mem_read(mp_output, 4)), 'little'):
+                current = int.from_bytes(bytes(uc.mem_read(mp_output, 4)), 'little')
+                if current and current == entry['queue']:
+                    if address == drain_pc:
+                        drain_mondrv_output(uc, current, entry)
+                    return
+                if current:
                     return
                 if entry['queue'] is None:
                     cursor = self.mmap.next_address
@@ -682,6 +711,7 @@ class InterpreterProbe:
             except unicorn.UcError as error:
                 entry['reason'] = 'ucerror: %s' % (error,)
 
+        drain_pc = base + (symbols[MONDRV_OUTPUT_SYMBOLS[2]]['value'] & ~1)
         for name in MONDRV_OUTPUT_SYMBOLS[1:]:
             entry_pc = base + (symbols[name]['value'] & ~1)
             self.mu.hook_add(unicorn.UC_HOOK_CODE, seed_hook, begin=entry_pc, end=entry_pc)
