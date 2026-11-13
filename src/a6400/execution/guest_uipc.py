@@ -598,13 +598,16 @@ class GuestUipc:
 
     def handle_rcv_msg_tmo(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x80000007 (__k_4u_rcv_msg_tmo).
-        
+
         arg_ptr points to struct { uint32_t queue; uint32_t *p_out_msg; uint32_t out_msg; uint32_t timeout; }.
         """
         raw_arg = memory_reader(arg_ptr, 16)
         queue, p_out_msg, out_msg, timeout = struct.unpack('<IIII', raw_arg)
         msgs = self.message_queues.get(queue, [])
+        tid = getattr(self, 'rcv_tid', None)
+        deadlines = self.__dict__.setdefault('rcv_deadlines', {})  # tid -> guest-us expiry (--uipc-rcv-timeout modeled)
         if msgs:
+            deadlines.pop(tid, None)
             msg = msgs.pop(0)
             target_dest = out_msg if out_msg != 0 else p_out_msg
             if target_dest != 0:
@@ -619,6 +622,18 @@ class GuestUipc:
         else:
             if timeout == 0xFFFFFFFF:
                 return None
+            if timeout > 0 and getattr(self, 'rcv_timeout_policy', None) == 'modeled' and tid is not None:
+                now = getattr(self, 'clock_us', 0)
+                if tid not in deadlines:
+                    # shortcut: timeout taken as ms (osal convention assumed, not measured); refine if a trace shows the unit.
+                    deadlines[tid] = now + timeout * 1000
+                if now < deadlines[tid]:
+                    self.rcv_wait = deadlines[tid]  # the probe hands this to the scheduler as a timer deadline
+                    return None
+                deadlines.pop(tid)
+                self.transactions.append({'type': 'rcv_msg_tmo', 'queue': queue, 'status': 'timeout_expired',
+                                          'timeout': timeout})
+                return -1022
             if timeout > 0 and getattr(self, 'pool_options_policy', '') in ('kernel-e0301', KERNEL_E0303):
                 # No virtual-time model: a positive timeout blocks until a message
                 # arrives; expiry is not modeled and is recorded explicitly.
@@ -772,6 +787,7 @@ class GuestUipc:
         elif cmd == UIPC_CMD_SND_MSG:
             return self.handle_snd_msg(memory_reader, arg, memory_writer=memory_writer)
         elif cmd == UIPC_CMD_RCV_MSG_TMO:
+            self.rcv_tid = tid  # read by handle_rcv_msg_tmo; wrappers keep the 3-argument signature
             return self.handle_rcv_msg_tmo(memory_reader, memory_writer, arg)
         elif cmd == UIPC_CMD_STAT_MSGQ:
             return self.handle_stat_msgq(memory_reader, memory_writer, arg)

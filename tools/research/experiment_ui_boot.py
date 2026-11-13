@@ -121,6 +121,8 @@ def build_parser():
     parser.add_argument('--uipc-sync-direct', choices=('return', 'yield'), default='return',
                         help="'yield' switches to a runnable peer after each snd_sync_direct (ioctl 0x80000006), "
                              'like sched_yield (threads syscall policy, which build_boot_session always uses)')
+    parser.add_argument('--uipc-rcv-timeout', choices=('blocking', 'modeled'), default='blocking',
+                        help='modeled: rcv_msg_tmo with a positive timeout returns OSAL timeout at its guest-time deadline')
     parser.add_argument('--uipc-timer-service', choices=('off', 'emulated'), default='off',
                         help="'emulated' answers the OSAL timer queues: 0x910042 returns guest microseconds, "
                              '0x910041 blocks the caller until its deadline (idle time fast-forwards)')
@@ -251,6 +253,11 @@ def main():
         probe.uipc.timer_service = 'emulated'
         probe.threads.__dict__.setdefault('timer_waiters', {})
         probe.report['uipc_timer_service'] = 'emulated'
+    if args.uipc_rcv_timeout == 'modeled':
+        if probe.syscall_policy != 'threads' or not hasattr(probe, 'threads'):
+            parser.error('--uipc-rcv-timeout modeled requires the threads syscall policy')
+        probe.uipc.rcv_timeout_policy = 'modeled'
+        probe.report['uipc_rcv_timeout'] = 'modeled'
     if hasattr(probe, 'mmap'):
         probe.mmap.eof_policy = args.mmap_eof
     probe.report['mmap_eof_policy'] = args.mmap_eof
