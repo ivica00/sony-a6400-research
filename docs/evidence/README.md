@@ -10,6 +10,7 @@ Current consolidated state: [README research status](../../README.md) and
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0483](0483-ipc-edge-inventory-libobj.md) | 2026-11-13 | 29 direct IPC call sites in the a6400 `libObj.so`, each disassembled; 17 pass a constant argument, matched to its `mov`/`movw` immediate, and 12 stay empty rather than becoming a fabricated `0x0` |
 | [E0489](0489-update-chain-integrity-is-crc32-and-md5.md) | 2026-11-13 | The update chain verifies CRC32 (`uc_crc32sum.elf`, no crypto imports) and MD5 (`md5sum -c`), never a signature; the only AES helper uses `sha256("")[:16]` in ECB, identical on all 13 bodies; 484 files extract as plain ELF without decryption |
 | [E0482](0482-three-stubs-gain-sourced-values.md) | 2026-11-13 | The ILCE-6100A, ILCE-6600 and ILCE-7M3 stubs gain seven kernel symbols each from their own decoded images, their full stock USB id sets, and a confirmed CXD90045 identity; none of the three publishes a video or audio device node |
 | [E0481](0481-published-changelogs-as-diff-targets.md) | 2026-11-13 | Published firmware changelogs: a7 III exposes 10 per-version entries with dates, a7R IVA 3, the other seven pages a flat undated list; older files are 404 so a within-model version diff is not obtainable |

@@ -225,21 +225,22 @@ STATUS_SNAPSHOT = StatusSnapshot(
         date="2026-11-13",
         title="The update chain checks CRC32 and MD5, not a per-model cipher",
         demonstrated=(
-            "The ecosystem claim that the image is AES-encrypted with per-model keys and three "
-            "integrity layers does not hold for the packaged files. 484 files under the a6400 "
-            "tree are ELF objects readable as-is, with working symbol tables. Integrity is CRC32 "
-            "in uc_crc32sum.elf, which imports no cryptographic function at all, plus md5sum -c in "
-            "loader_writer.sh; across the updater tree's 41 files, 18 of them scripts, none "
-            "verifies a signature. The only AES helper, libupdatertalk.so, uses the first 16 bytes "
-            "of sha256('') as its key in ECB with no IV, and that key is identical on all thirteen "
-            "bodies across its three library variants."
+            "The ecosystem claim that the image is AES-encrypted with per-model keys does not "
+            "hold for the packaged files: 484 files under the a6400 tree are ELF objects readable "
+            "as-is, integrity is CRC32 and MD5 rather than a signature, and the only AES helper "
+            "uses sha256('')[:16] in ECB, identical on all thirteen bodies. The application "
+            "library then becomes legible: libObj.so defines 1,852 code symbols and holds 29 "
+            "direct IPC call sites, 17 of which pass a constant queue id matched to its mov/movw "
+            "immediate (E0483). Two classes of fabricated result were found and removed while "
+            "building that table: 28 bogus call sites from an unconfirmed branch decode, and "
+            "invented argument values from reading instruction bytes as a literal pool."
         ),
         boundary=(
-            "This establishes what the packaged files contain and what the updater scripts check. "
-            "It does not establish that the bootloader accepts an image whose CRC list was "
-            "recomputed; that needs a camera or a preserved boot log and is recorded as unknown, "
-            "not as impossible. What the boot ROM does with firmware.fdat before the updater runs "
-            "is also outside this measurement."
+            "The update-chain work establishes what the packaged files contain and what the "
+            "updater scripts check, not that the bootloader accepts an image whose CRC list was "
+            "recomputed; that needs a camera and is recorded as unknown. The IPC table is exact "
+            "for the a6400 library by SHA-256 and no other, covers direct calls only, and claims "
+            "nothing about what a queue id's consumer does at runtime."
         ),
         tier="OFFLINE PACKAGED FIRMWARE",
     ),
