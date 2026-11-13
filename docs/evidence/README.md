@@ -4,12 +4,13 @@ One record per hardware or software claim. Records are dated and are **not** rew
 when a later result supersedes them: the newer record says what changed.
 
 Current consolidated state: [README research status](../../README.md) and
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0489**, 2026-11-13).
+[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0490**, 2026-11-13).
 
 ## Latest records
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0490](0490-platform-model-and-flash-boundary.md) | 2026-11-13 | The platform model document: nine kernels, 0.997/0.885/0.973 held-out prediction, 29 IPC sites, indirect display entry points, and the flash boundary stated as unknown rather than closed |
 | [E0486](0486-writable-mounts-versus-the-flash-boundary.md) | 2026-11-13 | Six mount points are writable at runtime while `/`, `/usr` and `/android/system` are read-only flash; a writable mount is not a modified image, and the parser treats an option list without `rw` as not writable |
 | [E0485](0485-command-table-predicts-held-out-body.md) | 2026-11-13 | A command-id rule fitted on four bodies recalls 0.997 / 0.885 / 0.973 of three bodies it never saw; no USB or device-node rule exists, and those columns stay 0 rather than being made to look better |
 | [E0484](0484-display-entry-points-are-indirect.md) | 2026-11-13 | No `ObjDisplay_Start` exists on four bodies (four other `ObjDisplay_*` names do); the display entry points have zero direct callers and their addresses appear as data, so the route is a function pointer a direct-call graph cannot follow |

@@ -20,7 +20,7 @@ of "full firmware compatibility."
 
 ## Latest progress
 
-- **Update chain measured ([E0489](docs/evidence/0489-update-chain-integrity-is-crc32-and-md5.md), and the IPC edge inventory in [E0483](docs/evidence/0483-ipc-edge-inventory-libobj.md)):**
+- **Update chain measured ([E0489](docs/evidence/0489-update-chain-integrity-is-crc32-and-md5.md), and the IPC edge inventory in [E0483](docs/evidence/0483-ipc-edge-inventory-libobj.md), and the platform model in [E0490](docs/evidence/0490-platform-model-and-flash-boundary.md)):**
   The image is **not** AES-encrypted. 484 files under the a6400 tree are ELF objects readable
   as-is; integrity is CRC32 (`uc_crc32sum.elf`, which imports no crypto at all) and MD5
   (`md5sum -c` in `loader_writer.sh`), and none of the updater tree's 18 scripts verifies a
@@ -68,7 +68,7 @@ of "full firmware compatibility."
 Recorded suite: 1595 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=5962e42e639a)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=0103ad1b3871)
 
 ### Subsystem status
 
