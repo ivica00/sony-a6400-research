@@ -307,7 +307,8 @@ def build_boot_session(args, parser=None) -> BootSession:
         probe.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, watch_write, begin=word - 15, end=word + 3)
 
     original_rcv = live_uipc_receiver(probe)
-    boot_events_to_inject = ([0x00940007, 0x0092014b, 0x00940036, 0x00940038, 0x00920152]
+    boot_events_to_inject = ((getattr(args, 'stimulus_events', None)
+                              or [0x00940007, 0x0092014b, 0x00940036, 0x00940038, 0x00920152])
                              if args.stimulus == 'experimental-events' else [])
     injected = []
     injection_records = []

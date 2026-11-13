@@ -28,6 +28,8 @@ def build_parser():
     parser.add_argument('--watch-word', action='append', type=lambda value: int(value, 0), default=[], help='record bounded passive writes to a guest diagnostic word')
     parser.add_argument('--argument', action='append', default=[], help='explicit im.elf argument; bootin phase commands use s/g/r/u/l/i/a')
     parser.add_argument('--stimulus', choices=('experimental-events', 'none'), default='experimental-events', help='none lets original startup run without injected queue messages')
+    parser.add_argument('--stimulus-events', type=lambda value: [int(v, 0) for v in value.split(',')], default=None,
+                        help='with --stimulus experimental-events: comma-separated event ids replacing the default list')
     parser.add_argument('--urandom-open', action='store_true', help='open the image-backed 1:9 node; stop before unsupplied entropy bytes')
     parser.add_argument('--urandom-entropy', choices=('stop', 'deterministic'), default='stop',
                         help='stop before unsupplied entropy bytes (default); deterministic supplies explicit 4-byte stack canary entropy')
