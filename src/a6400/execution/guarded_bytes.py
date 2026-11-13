@@ -8,18 +8,53 @@ class UnverifiedGuestData(RuntimeError):
         self.details = details
 
 
+# Opt-in (set by --fast-hooks runs): page-range hooks instead of global ones. Global hooks stay the
+# default because exact-mode instruction counts shift by one without them.
+PAGE_HOOKS = False
+
+
 class GuardedGuestBytes:
     def __init__(self, mu, unverified_fields, stop, domain):
         self.mu, self.stop, self.domain = mu, stop, domain
         self.unverified_fields = set(unverified_fields)
-        self.bytes = {}
+        self._bytes = {}
         self.read_fields = {}
-        mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read)
-        mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write)
+        self.hooked_pages = set()
+        if not PAGE_HOOKS:
+            mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read)
+            mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write)
+
+    @property
+    def bytes(self):
+        return self._bytes
+
+    @bytes.setter
+    def bytes(self, value):  # checkpoint restore assigns the whole dict
+        self._bytes = value
+        self._rehook(True)
+
+    def _rehook(self, was_empty):
+        """Invariant: an access that touches a tracked byte always starts on a hooked page.
+        Accesses outside hooked pages cost no Python callback overhead.
+        Hooks are never deleted; at most one read/write pair exists per page."""
+        if not PAGE_HOOKS:
+            return
+        PAGE = 0x1000
+        needed_pages = set()
+        for a in self._bytes:
+            needed_pages.add((a // PAGE) * PAGE)
+            needed_pages.add((max(a - 15, 0) // PAGE) * PAGE)
+        for page in needed_pages:
+            if page not in self.hooked_pages:
+                self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read, begin=page, end=page + PAGE - 1)
+                self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write, begin=page, end=page + PAGE - 1)
+                self.hooked_pages.add(page)
 
     def track(self, address, labels):
+        was_empty = not self._bytes
         self.forget_range(address, len(labels))
-        self.bytes.update({address + index: label for index, label in enumerate(labels) if label is not None})
+        self._bytes.update({address + index: label for index, label in enumerate(labels) if label is not None})
+        self._rehook(was_empty)
 
     def _fields(self, address, size):
         return {self.bytes[a] for a in range(address, address + size) if a in self.bytes}
