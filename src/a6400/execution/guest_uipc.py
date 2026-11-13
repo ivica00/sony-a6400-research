@@ -15,7 +15,7 @@ UIPC_CMD_SND_SYNC_MSG = 0x80000005
 UIPC_CMD_SND_SYNC_DIRECT = 0x80000006
 TIMER_COUNTER_QUEUE = 0x910042  # utimer_kif_counter: u64 microsecond counter
 TIMER_DELAY_QUEUE = 0x910041    # utimer delay queue: wait until absolute u64 deadline at message +24
-TIMER_OBJECT_QUEUE = 0x910040  # osal timer objects: op0 create .. op5 free (libObj 0x851a4c-0x851d38)
+TIMER_OBJECT_QUEUE = 0x910040  # osal timer objects: op0 create .. op5 free
 TIMER_OBJECT_EVENT_QUEUE_BASE = 0x00EE0000  # shortcut: synthetic per-object queue ids; real ids unknown
 UIPC_CMD_RCV_MSG_TMO = 0x80000007
 UIPC_CMD_REG_MSG_QUEUE_CB = 0x80000008
@@ -435,7 +435,7 @@ class GuestUipc:
             self._timer_object_op(buf_ptr, payload, memory_writer)
             return 0
         if self.timer_service == 'emulated' and queue in (TIMER_COUNTER_QUEUE, TIMER_DELAY_QUEUE):
-            # Body = message +16 (evidence 0041); libObj 0x862c92 reads the u64 at message +24.
+            # Body = message +16 (evidence 0041); the client reads the u64 at message +24.
             if queue == TIMER_COUNTER_QUEUE and total_size >= 32 and memory_writer is not None:
                 selector = struct.unpack('<I', payload[:4])[0]
                 memory_writer(buf_ptr + 20, struct.pack('<i', 0 if selector in (0, 1) else -1024))
