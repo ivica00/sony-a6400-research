@@ -2,6 +2,7 @@
 
 import struct
 from typing import Dict, List, Optional, Tuple
+from src.a6400.execution.capped_log import CappedLog
 from src.a6400.execution.guest_uipc_ids import KernelDynamicIds, UnsupportedDynamicId
 
 # Linux ARM ioctl commands recognized by osal_uipc.ko
@@ -12,6 +13,10 @@ UIPC_CMD_STAT_MSGQ = 0x80000003
 UIPC_CMD_SND_MSG = 0x80000004
 UIPC_CMD_SND_SYNC_MSG = 0x80000005
 UIPC_CMD_SND_SYNC_DIRECT = 0x80000006
+TIMER_COUNTER_QUEUE = 0x910042  # utimer_kif_counter: u64 microsecond counter
+TIMER_DELAY_QUEUE = 0x910041    # utimer delay queue: wait until absolute u64 deadline at message +24
+TIMER_OBJECT_QUEUE = 0x910040  # osal timer objects: op0 create .. op5 free
+TIMER_OBJECT_EVENT_QUEUE_BASE = 0x00EE0000  # shortcut: synthetic per-object queue ids; real ids unknown
 UIPC_CMD_RCV_MSG_TMO = 0x80000007
 UIPC_CMD_REG_MSG_QUEUE_CB = 0x80000008
 UIPC_CMD_UNREG_MSG_QUEUE_CB = 0x80000009
@@ -57,6 +62,12 @@ class GuestUipc:
     userland library /usr/lib/libosal_uipc.so. Recognizing the transport ABI
     does not establish recipient execution or a valid service reply.
     """
+    # Class defaults so checkpoints pickled before these attributes existed still load.
+    sync_direct_mode = 'return'   # 'yield': ask the interpreter to switch threads after snd_sync_direct
+    yield_requested = False
+    timer_service = 'off'         # 'emulated': queue 0x910042 counter reply, 0x910041 timed wait (interpreter blocks)
+    timer_wait = None             # absolute deadline (us) the interpreter must block the caller until
+    now_us = 0                    # guest time (us), set by the interpreter before each ioctl
 
     def __init__(self,
                  total_pool_size: int = DEFAULT_TOTAL_POOL_SIZE,
@@ -105,7 +116,7 @@ class GuestUipc:
         self.message_queues: Dict[int, List[int]] = {}
         self.next_dynamic_id = 0x80001001
         self.dynamic_ids: Dict[int, int] = {}
-        self.transactions: List[Dict[str, object]] = []
+        self.transactions: List[Dict[str, object]] = []  # replaced by a CappedLog under --syscall-record-limit
         self.kernel_contract_revision = 1
         self.kernel_dynamic_ids = KernelDynamicIds()
         # E0303 generic completion bookkeeping (unused by earlier policies).
@@ -354,7 +365,8 @@ class GuestUipc:
         raw_params = memory_reader(params_ptr, 16)
         out_handle_ptr, cb, user_data, flags = struct.unpack('<IIII', raw_params)
 
-        handle_id = 0x1000 + len(self.callbacks)
+        # max+1, not 0x1000+len: after an unregister, len-based ids collided with live handles.
+        handle_id = max(self.callbacks, default=0xFFF) + 1
         memory_writer(out_handle_ptr, struct.pack('<I', handle_id))
         self.callbacks[handle_id] = {
             'queue': queue,
@@ -398,7 +410,7 @@ class GuestUipc:
         self.transactions.append({'type': 'unreg_cb', 'queue': queue, 'handle': handle})
         return 0
 
-    def handle_snd_sync_direct(self, memory_reader, arg_ptr: int) -> int:
+    def handle_snd_sync_direct(self, memory_reader, arg_ptr: int, memory_writer=None) -> int:
         """Handles ioctl 0x80000006 (__k_4u_snd_sync_direct).
         
         arg_ptr points to struct { uint32_t queue; void *buf; }.
@@ -419,7 +431,52 @@ class GuestUipc:
             'payload_hex': payload.hex(),
             'payload_ascii': payload.decode('latin1', errors='replace')
         })
+        if self.timer_service == 'emulated' and queue == TIMER_OBJECT_QUEUE and total_size >= 48 and memory_writer is not None:
+            self._timer_object_op(buf_ptr, payload, memory_writer)
+            return 0
+        if self.timer_service == 'emulated' and queue in (TIMER_COUNTER_QUEUE, TIMER_DELAY_QUEUE):
+            # Body = message +16 (evidence 0041); the client reads the u64 at message +24.
+            if queue == TIMER_COUNTER_QUEUE and total_size >= 32 and memory_writer is not None:
+                selector = struct.unpack('<I', payload[:4])[0]
+                memory_writer(buf_ptr + 20, struct.pack('<i', 0 if selector in (0, 1) else -1024))
+                if selector in (0, 1):
+                    memory_writer(buf_ptr + 24, struct.pack('<Q', self.now_us))
+            elif queue == TIMER_DELAY_QUEUE and total_size >= 40:
+                deadline = struct.unpack('<Q', memory_reader(buf_ptr + 24, 8))[0]
+                self.timer_wait = deadline if deadline > self.now_us else None
+            return 0
+        # Only the interpreter owns the thread switch; it consumes this after the ioctl returns.
+        self.yield_requested = self.sync_direct_mode == 'yield'
         return 0
+
+    def _timer_object_op(self, buf_ptr: int, payload: bytes, memory_writer) -> None:
+        """Message +0x10 op, +0x14 reply status, +0x18 key, +0x20.. op args/replies."""
+        # shortcut: bookkeeping only; armed timers never fire (the real server posts a 0x18-byte
+        # body {fn, arg, msg handle, key, period lo, hi} to the object's queue). Add firing when a run stalls on one.
+        op, _status, key, _pad, a, b, c = struct.unpack('<7I', payload[:28])
+        objs = self.__dict__.setdefault('timer_objects', {})
+        status = 0
+        if op == 0:
+            key = max(objs, default=0) + 1
+            objs[key] = {'queue': TIMER_OBJECT_EVENT_QUEUE_BASE + key, 'fn': 0, 'arg': 0, 'handle': 0, 'armed': None}
+            memory_writer(buf_ptr + 0x18, struct.pack('<I', key))
+            memory_writer(buf_ptr + 0x20, struct.pack('<I', objs[key]['queue']))
+        elif key not in objs:
+            status = 0xFFFFFC00  # -1024, the osal error code
+        elif op == 1:
+            objs[key].update(fn=a, arg=b, handle=c)
+        elif op == 2:
+            objs[key]['armed'] = (a | (b << 32), c)
+        elif op == 3:
+            objs[key]['armed'] = None
+        elif op == 4:
+            memory_writer(buf_ptr + 0x20, struct.pack('<II', objs[key]['queue'], objs[key]['handle']))
+        elif op == 5:
+            del objs[key]
+        else:
+            status = 0xFFFFFC00
+        memory_writer(buf_ptr + 0x14, struct.pack('<I', status))
+        self.transactions[-1].update(timer_object_op=op, key=key, status=status)
 
     def handle_wai_sem_tmo(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x80000001 (__k_4u_wai_sem_tmo).
@@ -576,13 +633,16 @@ class GuestUipc:
 
     def handle_rcv_msg_tmo(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x80000007 (__k_4u_rcv_msg_tmo).
-        
+
         arg_ptr points to struct { uint32_t queue; uint32_t *p_out_msg; uint32_t out_msg; uint32_t timeout; }.
         """
         raw_arg = memory_reader(arg_ptr, 16)
         queue, p_out_msg, out_msg, timeout = struct.unpack('<IIII', raw_arg)
         msgs = self.message_queues.get(queue, [])
+        tid = getattr(self, 'rcv_tid', None)
+        deadlines = self.__dict__.setdefault('rcv_deadlines', {})  # tid -> guest-us expiry (--uipc-rcv-timeout modeled)
         if msgs:
+            deadlines.pop(tid, None)
             msg = msgs.pop(0)
             target_dest = out_msg if out_msg != 0 else p_out_msg
             if target_dest != 0:
@@ -597,6 +657,18 @@ class GuestUipc:
         else:
             if timeout == 0xFFFFFFFF:
                 return None
+            if timeout > 0 and getattr(self, 'rcv_timeout_policy', None) == 'modeled' and tid is not None:
+                now = getattr(self, 'clock_us', 0)
+                if tid not in deadlines:
+                    # shortcut: timeout taken as ms (osal convention assumed, not measured); refine if a trace shows the unit.
+                    deadlines[tid] = now + timeout * 1000
+                if now < deadlines[tid]:
+                    self.rcv_wait = deadlines[tid]  # the probe hands this to the scheduler as a timer deadline
+                    return None
+                deadlines.pop(tid)
+                self.transactions.append({'type': 'rcv_msg_tmo', 'queue': queue, 'status': 'timeout_expired',
+                                          'timeout': timeout})
+                return -1022
             if timeout > 0 and getattr(self, 'pool_options_policy', '') in ('kernel-e0301', KERNEL_E0303):
                 # No virtual-time model: a positive timeout blocks until a message
                 # arrives; expiry is not modeled and is recorded explicitly.
@@ -750,6 +822,7 @@ class GuestUipc:
         elif cmd == UIPC_CMD_SND_MSG:
             return self.handle_snd_msg(memory_reader, arg, memory_writer=memory_writer)
         elif cmd == UIPC_CMD_RCV_MSG_TMO:
+            self.rcv_tid = tid  # read by handle_rcv_msg_tmo; wrappers keep the 3-argument signature
             return self.handle_rcv_msg_tmo(memory_reader, memory_writer, arg)
         elif cmd == UIPC_CMD_STAT_MSGQ:
             return self.handle_stat_msgq(memory_reader, memory_writer, arg)
@@ -760,7 +833,7 @@ class GuestUipc:
         elif cmd == UIPC_CMD_UNREG_MSG_QUEUE_CB:
             return self.handle_unreg_msg_queue_cb(memory_reader, arg)
         elif cmd == UIPC_CMD_SND_SYNC_DIRECT:
-            return self.handle_snd_sync_direct(memory_reader, arg)
+            return self.handle_snd_sync_direct(memory_reader, arg, memory_writer)
         elif cmd == UIPC_CMD_WAI_SEM_TMO:
             return self.handle_wai_sem_tmo(memory_reader, memory_writer, arg)
         elif cmd == UIPC_CMD_SIG_SEM:

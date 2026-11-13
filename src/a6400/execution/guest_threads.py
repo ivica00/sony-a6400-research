@@ -83,6 +83,7 @@ class GuestThreads:
         self.futex_waiters: Dict[int, List[int]] = {}
         self.uipc_waiters: Dict[int, List[int]] = {}
         self.fd_waiters: Dict[int, List[int]] = {}
+        self.timer_waiters: Dict[int, int] = {}  # tid -> absolute guest-time deadline (us)
         self.thread_log: List[Dict[str, object]] = []
         # Optional observer for a guest-derived per-thread kernel task record.
         self.on_clone = None
@@ -180,7 +181,31 @@ class GuestThreads:
         for tid in candidates:
             if self.threads[tid].state == 'runnable':
                 return tid
+        waiters = getattr(self, 'timer_waiters', None)
+        if waiters:
+            # Idle CPU: jump the guest clock to the earliest timer deadline (applied by the probe at its next syscall).
+            deadline = min(waiters.values())
+            self.clock_floor = max(getattr(self, 'clock_floor', 0), deadline)
+            self.wake_due(deadline)
+            for tid in candidates + [self.current_tid]:
+                if self.threads[tid].state == 'runnable':
+                    return tid
         return None
+
+    def wake_due(self, now: int) -> List[int]:
+        """Makes timer waiters whose deadline has passed runnable (--uipc-timer-service)."""
+        due = [tid for tid, deadline in getattr(self, 'timer_waiters', {}).items() if deadline <= now]
+        for tid in due:
+            del self.timer_waiters[tid]
+            if tid in self.threads and self.threads[tid].state == 'blocked_uipc':  # rcv_msg_tmo expiry
+                queue = self.threads[tid].blocked_uaddr
+                if tid in self.uipc_waiters.get(queue, []):
+                    self.uipc_waiters[queue].remove(tid)
+                self.threads[tid].blocked_uaddr = None
+                self.threads[tid].state = 'runnable'
+            if tid in self.threads and self.threads[tid].state == 'blocked_timer':
+                self.threads[tid].state = 'runnable'
+        return due
 
     def handle_sched_yield(self) -> Tuple[Optional[int], Dict[str, object]]:
         """Handles sys_sched_yield (syscall 158).
@@ -352,12 +377,14 @@ class GuestThreads:
         }
         return total_woken, event
 
-    def handle_uipc_wait(self, queue: int, resume_pc: int) -> Tuple[Optional[int], Dict[str, object]]:
-        """Handles blocking wait on an empty UIPC queue (ioctl 0x80000007)."""
+    def handle_uipc_wait(self, queue: int, resume_pc: int, deadline: Optional[int] = None) -> Tuple[Optional[int], Dict[str, object]]:
+        """Handles blocking wait on an empty UIPC queue (ioctl 0x80000007); a deadline also arms a timer wake."""
         curr_thread = self.threads[self.current_tid]
         curr_thread.state = 'blocked_uipc'
         curr_thread.blocked_uaddr = queue
         self.uipc_waiters.setdefault(queue, []).append(self.current_tid)
+        if deadline is not None:
+            self.__dict__.setdefault('timer_waiters', {})[self.current_tid] = deadline
 
         next_tid = self.get_next_runnable_tid()
 
@@ -408,6 +435,7 @@ class GuestThreads:
         waiters = self.uipc_waiters.pop(queue, [])
         woken = []
         for tid in waiters:
+            self.__dict__.setdefault('timer_waiters', {}).pop(tid, None)  # a message beat the rcv_msg_tmo deadline
             if tid in self.threads:
                 self.threads[tid].state = 'runnable'
                 self.threads[tid].blocked_uaddr = None

@@ -12,6 +12,8 @@ from typing import Any, Dict
 import unicorn
 from unicorn import arm_const as arm
 
+from src.a6400.execution.capped_log import CappedLog
+
 ARM_CHECKPOINT_REGS = (
     arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2, arm.UC_ARM_REG_R3,
     arm.UC_ARM_REG_R4, arm.UC_ARM_REG_R5, arm.UC_ARM_REG_R6, arm.UC_ARM_REG_R7,
@@ -87,6 +89,9 @@ def save_checkpoint(probe, filepath: Path) -> int:
                 probe.uipc.handle_rcv_msg_tmo = patched_fn
 
     # 3. Python Subsystem State
+    # A CappedLog keeps its totals and counts; a BootLogger wrapper must not be pickled (callback, stream, probe).
+    raw_serviced = probe.report.get('serviced_syscalls', [])
+    serviced_log = raw_serviced if isinstance(raw_serviced, CappedLog) else list(raw_serviced)
     subsystems: Dict[str, Any] = {
         'instructions': probe.instructions,
         'runtime': {
@@ -94,7 +99,7 @@ def save_checkpoint(probe, filepath: Path) -> int:
             'timeslice_mark': getattr(probe, '_timeslice_mark', 0),
         },
         'signal_handlers': dict(probe.signal_handlers),
-        'serviced_syscalls': list(probe.report.get('serviced_syscalls', [])),
+        'serviced_syscalls': serviced_log,
         'syscall_responses_supplied': probe.report.get('syscall_responses_supplied', 0),
         'loaded_modules': list(probe.report.get('loaded_modules', [])),
         'filesystem_fds': dict(probe.filesystem.fds),
@@ -178,6 +183,7 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
         size = reg['size']
         perms = reg['perms']
         data = zlib.decompress(reg['data'])
+        # shortcut: stream alias VAs (mem_map_ptr on one buffer) restore as independent copies, upgrade when a checkpoint is taken after an alias mmap
         probe.mu.mem_map(begin, size, perms)
         probe.mu.mem_write(begin, data)
 
@@ -186,23 +192,6 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
             probe.mu.mem_protect(0, 4096, unicorn.UC_PROT_READ)
             probe.mu.mem_write(0, bytes(4096))
         except unicorn.UcError:
-            pass
-
-    if not exact:
-        # Ensure authentic MonDrv::mp_output log buffer is initialized if libMWF.so is mapped
-        try:
-            mp_out_bytes = probe.mu.mem_read(0x52201fe0, 4)
-            if mp_out_bytes == b'\x00\x00\x00\x00':
-                import struct
-                queue_obj = 0x1a190000
-                read_idx_ptr = queue_obj + 0x10
-                write_idx_ptr = queue_obj + 0x14
-                buf_ptr = queue_obj + 0x20
-                capacity = 0x7bf0
-                probe.mu.mem_write(queue_obj, struct.pack('<IIII', read_idx_ptr, write_idx_ptr, buf_ptr, capacity))
-                probe.mu.mem_write(read_idx_ptr, struct.pack('<II', 0, 0))
-                probe.mu.mem_write(0x52201fe0, struct.pack('<I', queue_obj))
-        except (unicorn.UcError, Exception):
             pass
 
     # 3. Restore Unicorn CPU context and explicit ARM register state (with Thumb/CPSR handling)
@@ -331,5 +320,7 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
         probe.mu.reg_write(arm.UC_ARM_REG_PC, probe.entry)
         if getattr(probe, 'threads', None) is not None:
             probe.threads.save_context(probe.mu)
+    if hasattr(probe, 'rearm_checkpoint_hooks'):
+        probe.rearm_checkpoint_hooks()
     probe.report['checkpoint_resume'] = {'version': payload['version'], 'exact': exact,
                                          **resume}
