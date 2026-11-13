@@ -1,5 +1,7 @@
 import struct
 import unittest
+from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
+                              UC_ARM_REG_R4, UC_ARM_REG_SP)
 
 from src.a6400.execution.machine_contract import build_atags
 from src.a6400.execution.unicorn_machine import UnicornMachine
@@ -177,6 +179,154 @@ class VirtualTlbTest(unittest.TestCase):
         machine.uc.mem_write(base + 0x3C, struct.pack('<I', 0))
         machine.uc.mem_write(base + 0x40, struct.pack('<I', 0x00000070))
         self.assertIsNone(machine._find_pt_regs_base(ti + 0x1FB0))
+
+
+    def test_thumb_pc_keeps_thumb_bit_for_even_target(self):
+        self.assertEqual(UnicornMachine.thumb_pc(0x0402E790, 0x70), 0x0402E791)
+
+    def test_thumb_pc_clears_lsb_in_arm_mode(self):
+        self.assertEqual(UnicornMachine.thumb_pc(0x0402E791, 0x10), 0x0402E790)
+
+
+    def test_pending_user_return_defaults_and_restore_counter(self):
+        machine = make_machine()
+        self.assertIsNone(machine.pending_user_spsr)
+        self.assertIsNone(machine.pending_user_lr)
+        self.assertEqual(machine.user_restores, 0)
+        # thumb_pc is used by the restore for the final PC
+        self.assertEqual(machine.thumb_pc(0x0402E790, 0x30), 0x0402E791)
+
+
+    def test_set_pc_and_cpsr_thumb_lsb(self):
+        machine = make_machine()
+        machine._set_pc_and_cpsr(0x0402E790, 0x00000030)
+        self.assertTrue(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x20)
+        # Unicorn keeps PC even in the register while T is carried in CPSR
+        self.assertIn(machine.uc.reg_read(UC_ARM_REG_PC), (0x0402E790, 0x0402E791))
+
+    def test_thumb_ldr_w_and_mov_executes_under_odd_begin(self):
+        machine = make_machine()
+        # ldr.w sl,[pc,#0x68] ; ldr.w r4,[pc,#0x68] ; mov r0,sp (Thumb-2)
+        code = bytes.fromhex('dff868a0dff868406846')
+        machine.uc.mem_write(0x0402E790, code)
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x00000030)
+        machine.uc.reg_write(UC_ARM_REG_PC, 0x0402E791)
+        machine.uc.emu_start(0x0402E791, 0, count=3)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0x0402E79A)
+
+
+    def test_pending_user_resume_defaults_to_none(self):
+        machine = make_machine()
+        self.assertIsNone(machine._pending_user_resume)
+        # the run loop resumes at the odd LSB produced by thumb_pc
+        self.assertEqual(machine.thumb_pc(0x0402E790, 0x30), 0x0402E791)
+
+
+    def test_tb_remove_cache_api_available(self):
+        machine = make_machine()
+        # E0467: eviction API used when a cached ARM TB must be dropped
+        self.assertTrue(hasattr(machine.uc, 'ctl_remove_cache'))
+        machine.uc.ctl_remove_cache(0x0402E000, 0x0402F000)
+
+
+    def test_thumb_prologue_interpreter_ldr_mov_bl(self):
+        machine = make_machine()
+        base = 0x0402E790
+        code = bytes.fromhex('dff868a0dff86840684603f085f9')
+        machine._read_user_bytes = lambda va, size: code[va - base:va - base + size]
+        machine._read_user32 = lambda va: {
+            0x0402E7FC: 0x11111111,
+            0x0402E800: 0x22222222,
+        }.get(va)
+        res = machine._emulate_thumb_prologue(0x0402E791, 0x30)
+        self.assertIsNotNone(res)
+        pc, cpsr, trace = res
+        self.assertEqual(pc, 0x0403_1AA8)
+        self.assertEqual(cpsr, 0x30)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_LR), 0x0402E79F)
+        self.assertEqual([t[0] for t in trace], ['ldr', 'ldr', 'mov', 'bl'])
+
+
+    def test_general_stepper_push(self):
+        machine = make_machine()
+        mem = {}
+        code = bytes.fromhex('2de9f04f')  # push.w {r4-r11,lr}
+        machine._read_user_bytes = lambda va, size: code[va - 0x1000:va - 0x1000 + size]
+        machine._read_user32 = lambda va: mem.get(va)
+        machine._write_user32 = lambda va, val: mem.__setitem__(va, val & 0xFFFFFFFF) or True
+        machine.uc.reg_write(UC_ARM_REG_SP, 0x2000)
+        machine.uc.reg_write(UC_ARM_REG_R4, 0xAA)
+        machine.uc.reg_write(UC_ARM_REG_LR, 0xBB)
+        res = machine._step_user_thumb_insns(0x1000, 0x30, max_steps=1)
+        self.assertIsNotNone(res)
+        pc, cpsr, trace = res
+        self.assertEqual([t[0] for t in trace], ['push'])
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SP), 0x2000 - 9 * 4)
+        self.assertIn(0xAA, mem.values())
+
+    def test_general_stepper_ldr_mov_bl(self):
+        machine = make_machine()
+        base = 0x0402E790
+        code = bytes.fromhex('dff868a0dff86840684603f085f9')
+        machine._read_user_bytes = lambda va, size: code[va - base:va - base + size]
+        machine._read_user32 = lambda va: {
+            0x0402E7FC: 0x11111111,
+            0x0402E800: 0x22222222,
+        }.get(va)
+        res = machine._step_user_thumb_insns(0x0402E791, 0x30, max_steps=4)
+        self.assertIsNotNone(res)
+        pc, cpsr, trace = res
+        self.assertEqual(pc, 0x04031AA8)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_LR), 0x0402E79F)
+        self.assertEqual([t[0] for t in trace], ['ldr', 'ldr', 'mov', 'bl'])
+
+
+    def test_general_stepper_callee_block(self):
+        machine = make_machine()
+        base = 0x04031AA8
+        # push.w {r4-r11,lr} ; sub.w sp,sp,#0x1f4 ; ldr.w r3,[pc,#0x7c]
+        code = bytes.fromhex('2de9f04fadf51f7ddff87c34')
+        machine._read_user_bytes = lambda va, size: code[va - base:va - base + size]
+        machine._read_user32 = lambda va: 0x12345678
+        machine._write_user32 = lambda va, val: True
+        machine.uc.reg_write(UC_ARM_REG_SP, 0x8000)
+        res = machine._step_user_thumb_insns(0x04031AA8, 0x30, max_steps=3)
+        self.assertIsNotNone(res)
+        pc, cpsr, trace = res
+        self.assertEqual([t[0] for t in trace], ['push', 'alu', 'ldr'])
+        self.assertEqual(pc, 0x04031AB4)
+
+
+    def test_should_recover_insn_invalid_ignores_cpsr_mode(self):
+        machine = make_machine()
+
+        class _Resident:
+            def __call__(self, pc):
+                return True
+        machine._user_pa = _Resident()
+        # userspace VA, INSN message -> recover regardless of the reported CPSR
+        self.assertTrue(machine._should_recover_insn_invalid(
+            0x04031AAC, 'Invalid instruction (UC_ERR_INSN_INVALID)'))
+        # kernel VA / other message -> no recovery
+        self.assertFalse(machine._should_recover_insn_invalid(
+            0x6010DF64, 'Invalid instruction (UC_ERR_INSN_INVALID)'))
+        self.assertFalse(machine._should_recover_insn_invalid(
+            0x04031AAC, 'Unhandled CPU exception (UC_ERR_EXCEPTION)'))
+
+
+    def test_stepper_keeps_partial_progress_on_unmapped_literal(self):
+        machine = make_machine()
+        base = 0x04031AAC
+        # sub.w sp,sp,#0x27c ; ldr.w r3,[pc,#0x47c] (literal page not resident)
+        code = bytes.fromhex('adf51f7ddff87c34')
+        machine._read_user_bytes = lambda va, size: code[va - base:va - base + size]
+        machine._read_user32 = lambda va: None
+        machine._write_user32 = lambda va, val: True
+        res = machine._step_user_thumb_insns(0x04031AAC, 0x30, max_steps=2)
+        self.assertIsNotNone(res)
+        pc, cpsr, trace = res
+        self.assertEqual([t[0] for t in trace], ['alu'])
+        self.assertEqual(pc, 0x04031AB0)
 
 
 if __name__ == '__main__':

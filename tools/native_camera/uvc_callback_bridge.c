@@ -71,6 +71,18 @@ enum { START, STOP, SET_HALT, CLEAR_HALT, SUSPEND, RESUME, DISCONNECT, CLASS, VE
 static uvc_u32 g_ep0_last;
 static uvc_u32 g_class_lr; /* E0386: class-entry caller identity */
 static int g_class_dir_out;
+/* E0472 (from the E0469 root cause): the host's single Status OUT is NAK'd
+ * because DWC3 arms the status TRB only in the later XferNotReady(STATUS)
+ * event. Pre-arm it at class data-stage completion instead, mirroring the
+ * kernel's own NRDY handler order: dwc->ep0state = STATUS(3) FIRST, then
+ * __dwc3_ep0_do_control_status(dwc, dwc->eps[0]) (VA 0x602b253c). The late
+ * XferNotReady then sees ep0_next_event==1 and is ignored; start_trans's BUSY
+ * guard makes a second arm harmless. Read-only reads + one kernel-text call. */
+#define A6400_FN_EP0_DO_CONTROL_STATUS 0x602b253cu
+static uvc_u32 g_prearm_req;
+static unsigned g_prearm_pending, g_prearm_active;
+static unsigned g_prearm_attempts, g_prearm_armed, g_prearm_skipped;
+static unsigned g_prearm_last_state, g_prearm_last_next;
 extern int a6400_uvc_restore_descriptors_bridge(void);
 extern int schedule_work(void *work);
 extern void msleep(unsigned int msecs);
@@ -153,6 +165,42 @@ static void a6400_uvc_ring_record(uvc_u32 hook, uvc_u32 ep, uvc_u32 req,
     }
 }
 
+/* E0472: arm the EP0 OUT status TRB at class data-stage completion. */
+static void a6400_uvc_status_prearm(void *ep, void *req)
+{
+    uvc_u32 e=(uvc_u32)ep, r=(uvc_u32)req, dwc, eps0, state, next;
+    unsigned armed=0;
+    if (!g_prearm_pending || !r || r!=g_prearm_req) return;
+    g_prearm_pending=0;
+    /* Never arm on an error/setup-pending giveback: only a clean data-stage
+     * completion may be followed by the status stage. */
+    if (r && a6400_uvc_kernel_ptr(r) && (int)a6400_uvc_rd32(r+0x2cu)!=0) {
+        g_prearm_skipped++;
+        return;
+    }
+    if (!e || !a6400_uvc_kernel_ptr(e)) { g_prearm_skipped++; return; }
+    dwc=a6400_uvc_rd32(e+A6400_EP_DWC);
+    if (!dwc || !a6400_uvc_kernel_ptr(dwc)) { g_prearm_skipped++; return; }
+    eps0=a6400_uvc_rd32(dwc+A6400_DWC_EPS);
+    state=a6400_uvc_rd32(dwc+A6400_DWC_EVENT);
+    next=a6400_uvc_rd32(dwc+A6400_DWC_NEXT);
+    g_prearm_attempts++;
+    g_prearm_last_state=state; g_prearm_last_next=next;
+    if (state!=2u || next!=3u || !eps0 || !a6400_uvc_kernel_ptr(eps0)) {
+        g_prearm_skipped++;
+        printk("[a6400_uvc] PREARM skip st=%u nx=%u\n",(unsigned)state,(unsigned)next);
+        return;
+    }
+    /* Order matters (E0366 R1 / B10): ep0state must be STATUS before the arm,
+     * or a later status XferComplete dispatches to the DATA handler and the
+     * request/descriptor dereference faults. */
+    *(volatile uvc_u32 *)(dwc+A6400_DWC_EVENT)=3u;
+    ((void (*)(uvc_u32,uvc_u32))A6400_FN_EP0_DO_CONTROL_STATUS)(dwc,eps0);
+    if (a6400_uvc_rd32(dwc+A6400_DWC_NEXT)==1u) { g_prearm_armed++; armed=1; }
+    else g_prearm_skipped++;
+    printk("[a6400_uvc] PREARM st=%u nx=%u r=%u\n",(unsigned)state,(unsigned)next,armed);
+}
+
 static int a6400_uvc_ring_queue_wrap(void *ep, void *req, unsigned int gfp)
 {
     uvc_u32 r=(uvc_u32)req;
@@ -161,6 +209,11 @@ static int a6400_uvc_ring_queue_wrap(void *ep, void *req, unsigned int gfp)
         *(volatile uvc_u8 *)(r+0x1au) |= 0x02u;
     a6400_uvc_ring_record(2u,(uvc_u32)ep,r,0,0);
     if (g_ring_n) g_ring[g_ring_n-1].lr=(uvc_u32)__builtin_return_address(0);
+    /* E0472: remember the request queued by the class handler so its data-stage
+     * completion can pre-arm the status stage (class IN setup only). */
+    if (g_prearm_active && !g_class_dir_out && r && a6400_uvc_kernel_ptr(r)) {
+        g_prearm_req=r; g_prearm_pending=1;
+    }
     if (r && a6400_uvc_kernel_ptr(r)) {
         uvc_u32 comp=a6400_uvc_rd32(r+0x1cu);
         if (comp && comp!=(uvc_u32)a6400_uvc_ring_complete_thunk) {
@@ -176,6 +229,9 @@ static void a6400_uvc_ring_complete_thunk(void *ep, void *req)
 {
     uvc_u32 r=(uvc_u32)req, orig=g_req_complete_orig;
     a6400_uvc_ring_record(3u,(uvc_u32)ep,r,0,0);
+    /* E0472: class data-stage completion -> arm the status TRB now, before the
+     * kernel's late XferNotReady(STATUS) event would have to do it. */
+    a6400_uvc_status_prearm(ep,req);
     if (r && a6400_uvc_kernel_ptr(r) && orig) *(volatile uvc_u32 *)(r+0x1cu)=orig;
     if (orig && orig!=(uvc_u32)a6400_uvc_ring_complete_thunk)
         ((void (*)(void *,void *))orig)((void *)ep,(void *)req);
@@ -199,8 +255,9 @@ static void a6400_uvc_ring_dump(void)
     unsigned i;
     if (g_ring_dumped) return;
     g_ring_dumped=1;
-    printk("[a6400_uvc] RAMRING n=%u dropped=%u start=%u class=%u get=%u set=%u queue=%u complete=%u\n",
-           g_ring_n,g_ring_dropped,g_start_count,g_class_call_count,g_get_cur_count,g_set_cur_count,g_queue_count,g_complete_count);
+    printk("[a6400_uvc] RAMRING n=%u dropped=%u start=%u class=%u get=%u set=%u queue=%u complete=%u prearm=%u/%u/%u st=%u nx=%u\n",
+           g_ring_n,g_ring_dropped,g_start_count,g_class_call_count,g_get_cur_count,g_set_cur_count,g_queue_count,g_complete_count,
+           g_prearm_attempts,g_prearm_armed,g_prearm_skipped,g_prearm_last_state,g_prearm_last_next);
     for (i=0;i<g_ring_n;i++) {
         struct a6400_ring_rec *r=&g_ring[i];
         printk("[a6400_uvc] RR %u h=%u t=%u.%09u ep=%08x req=%08x bm=%02x rq=%02x v=%04x i=%04x l=%04x lpos=%x cnt=%x ev=%08x st=%02x nx=%x fl=%02x ctl=%08x sz=%08x act=%u sts=%d b0=%08x b1=%08x bo0=%08x bo1=%08x res=%d len=%u flg=%02x lr=%08x\n",
@@ -673,9 +730,11 @@ static struct uvc_bridge *owner(struct uvc_old_descriptor *d)
     return b;
 }
 
-/* E0446: read-only EP0 state observer (no hooks, no kernel-text writes). A workqueue
+/* E0446/E0459: read-only EP0 state observer (no hooks, no kernel-text writes). A workqueue
  * item polls dwc3 ep0state/next_event/eps flags/event-buffer lpos every ~1 jiffy after the first
- * class request and records every change with a ktime_get_ts timestamp, dumped once at the end.
+ * class request and records every change with a ktime_get_ts timestamp.
+ * E0459: the work item announces execution on entry and flushes every recorded row immediately
+ * (printk), because run B24 lost the buffered end dump when the camera rebooted during teardown.
  * Purpose: decide when NRDY(status) is handled and when the status XferComplete arrives
  * (the GET_CUR 5.01 s stall) without touching the EP0 path. */
 #define A6400_OBS_MAX 96
@@ -687,11 +746,14 @@ static struct a6400_work_struct g_obs_work;
 
 static void a6400_uvc_obs_work_fn(void *work)
 {
-    unsigned i, j;
+    unsigned i;
     struct a6400_obs cur, last;
     struct a6400_ts ts;
     int have=0;
     (void)work;
+    /* E0459: announce execution first; a crash/reboot can no longer hide
+     * whether the work item ran at all (B24 had only "OBS start"). */
+    printk("[a6400_uvc] OBS work enter dwc=%08x\n",(unsigned)g_obs_dwc);
     for (i=0;i<1500u && g_obs_n<A6400_OBS_MAX;i++) {
         uvc_u32 dwc=g_obs_dwc, e0=0, e1=0, arr, n, eb=0;
         if (!dwc || !a6400_uvc_kernel_ptr(dwc)) break;
@@ -712,15 +774,17 @@ static void a6400_uvc_obs_work_fn(void *work)
             ts.sec=0; ts.nsec=0;
             ((void (*)(void *))0x60157a14u)(&ts);
             cur.sec=ts.sec; cur.nsec=ts.nsec;
-            g_obs[g_obs_n++]=cur; last=cur; have=1;
+            g_obs[g_obs_n]=cur; last=cur; have=1;
+            /* E0459: flush this row immediately; the end-of-loop dump is gone
+             * so a late crash/reboot cannot erase the timeline. */
+            printk("[a6400_uvc] OBS %u t=%u.%09u ep0s=%u next=%u st=%02x f0=%x f1=%x lpos=%x cnt=%x\n",
+                   g_obs_n,(unsigned)cur.sec,(unsigned)cur.nsec,(unsigned)cur.ep0state,
+                   (unsigned)cur.next,(unsigned)cur.st,(unsigned)cur.f0,
+                   (unsigned)cur.f1,(unsigned)cur.lpos,(unsigned)cur.cnt);
+            g_obs_n++;
         }
         msleep(1u);
     }
-    for (j=0;j<g_obs_n;j++)
-        printk("[a6400_uvc] OBS %u t=%u.%09u ep0s=%u next=%u st=%02x f0=%x f1=%x lpos=%x cnt=%x\n",
-               j,(unsigned)g_obs[j].sec,(unsigned)g_obs[j].nsec,(unsigned)g_obs[j].ep0state,
-               (unsigned)g_obs[j].next,(unsigned)g_obs[j].st,(unsigned)g_obs[j].f0,
-               (unsigned)g_obs[j].f1,(unsigned)g_obs[j].lpos,(unsigned)g_obs[j].cnt);
     printk("[a6400_uvc] OBS done n=%u iterations=%u\n",g_obs_n,i);
 }
 
@@ -885,6 +949,11 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
         if (drq) g_class_dir_out=((drq[0]&0x80u)==0u)?1:0;
         a6400_uvc_ring_record(1u,(uvc_u32)a2,0,(const uvc_u8 *)a1,0);
         if (drq) { if (drq[0]&0x80u) g_get_cur_count++; else g_set_cur_count++; }
+        /* E0472: only a 3-stage class IN request has a data stage to pre-arm after. */
+        g_prearm_req=0; g_prearm_pending=0; g_prearm_active=0;
+        if (drq && (drq[0]&0x80u) &&
+            (((uvc_u32)drq[6]|((uvc_u32)drq[7]<<8))!=0u))
+            g_prearm_active=1;
         a6400_uvc_ring_install((uvc_u32)a2);
         a6400_uvc_obs_start((uvc_u32)a2);
 #if A6400_UVC_TRACE
@@ -919,6 +988,7 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
     if (which==CLASS) {
         b->class_last_result=result;
         a6400_uvc_ring_record(4u,(uvc_u32)a2,0,(const uvc_u8 *)a1,result);
+        g_prearm_active=0;
 #if A6400_UVC_TRACE
         a6400_uvc_tstamp("CLASS-post-ts");
         if (a2) { a6400_uvc_gcro("CLASS post",(uvc_u32)a2,(uvc_u32)a1); }

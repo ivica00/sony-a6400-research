@@ -246,8 +246,26 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
         tier="OFFLINE PACKAGED FIRMWARE",
     ),
-    headline="1531 tests recorded passing | No verified emulator GUI frame",
+    headline="1595 tests recorded passing | No verified emulator GUI frame",
     cards=(
+        EvidenceRef(
+            evidence_id="E0476",
+            path="docs/evidence/0476-status-prearm-fix-build-audit-unicorn.md",
+            date="2026-11-13",
+            title="Status pre-arm fix implemented in the bridge; build, static audit and Unicorn verification pass",
+            demonstrated=(
+                "Offline only, no camera action. The E0469 root-cause fix (arm the EP0 OUT status TRB at class "
+                "data-stage completion, ep0state=3 written before the native call) was implemented in the UVC "
+                "callback bridge, rebuilt (module 83,644 B), static-audited (117/8/0, no failures) and verified in "
+                "Unicorn (8/8 pass: single arm, ordering, late NRDY ignored, status completion dispatch, error-status "
+                "guard). New tests added; the full suite passes with 1576 tests."
+            ),
+            boundary=(
+                "No hardware run: Run B26 needs an explicit user GO. If the 5-second stall persists after the "
+                "pre-arm, the host/controller not re-driving the NAKed status stage (H2) is confirmed."
+            ),
+            tier="OFFLINE + UNICORN",
+        ),
         EvidenceRef(
             evidence_id="E0406",
             path="docs/evidence/0406-bcm4339-wifi-bt-tuning-surface-readonly.md",
@@ -433,9 +451,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1531,
+        test_count=1595,
         recorded_at="2026-11-13",
-        evidence_id="E0461",
+        evidence_id="E0482",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(
