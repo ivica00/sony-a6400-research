@@ -13,7 +13,8 @@ from src.a6400.execution.guest_uname import GuestUname, UnverifiedIdentityData
 from src.a6400.execution.guest_memory import cstring_preview, accessible
 from src.a6400.execution.guest_stat64 import GuestStat64
 from src.a6400.execution.guest_filesystem import GuestFilesystem, UnsupportedFilesystem
-from src.a6400.execution.guest_mmap import GuestMmap, UnsupportedMmap
+from src.a6400.execution.guest_mmap import (GuestMmap, UnsupportedMmap, PROT_READ, PROT_WRITE,
+                                            MAP_PRIVATE, MAP_ANONYMOUS)
 from src.a6400.execution.guest_kuser import GuestKuser
 from src.a6400.execution.guest_uipc import GuestUipc, UnsupportedUipc
 from src.a6400.execution.guarded_bytes import UnverifiedGuestData
@@ -248,6 +249,21 @@ def inspect_elf_load_and_symbols(elf_bytes, symbol_names):
                 'defined': symbol['st_shndx'] != 'SHN_UNDEF',
             }
     return segments, symbols
+
+
+MONDRV_OUTPUT_SYMBOLS = ('_ZN6MonDrv9mp_outputE', '_ZN6MonDrv10PutcharSubEi', '_ZN6MonDrv16IsEmptyOutputBufEv')
+MONDRV_QUEUE_CAPACITY = 0x7bf0
+MONDRV_REGION_SIZE = 0x8000
+
+
+def seed_mondrv_output(mu, mp_output_addr, region):
+    """Publish an empty MonQueue at ``region`` through MonDrv::mp_output; no-op if the pointer is set."""
+    if int.from_bytes(bytes(mu.mem_read(mp_output_addr, 4)), 'little'):
+        return False
+    mu.mem_write(region, struct.pack('<IIII', region + 0x10, region + 0x14, region + 0x20, MONDRV_QUEUE_CAPACITY))
+    mu.mem_write(region + 0x10, bytes(8))
+    mu.mem_write(mp_output_addr, struct.pack('<I', region))
+    return True
 
 
 class InterpreterProbe:
@@ -610,6 +626,64 @@ class InterpreterProbe:
 
         self.mu.hook_add(unicorn.UC_HOOK_CODE, repair, begin=base + 0x59c00, end=base + 0x59c00)
         self.report['relocated_libc_it_repair'] = {'base': base, 'hook': base + 0x59c00, 'literal': literal}
+
+    def _arm_mondrv_output_seed(self, event):
+        """Seed MonDrv::mp_output once libMWF.so is mapped (replaces the fixed-address checkpoint seed).
+
+        Symbols come from the ELF bytes the guest opened. Hooks on PutcharSub and
+        IsEmptyOutputBuf publish an empty queue in a probe-allocated region the first time
+        the pointer is still NULL; a nonzero pointer is never overwritten.
+        """
+        mapping = event.get('mapping') or {}
+        base = event.get('returned')
+        if (self.hook_mode != 'fast' or mapping.get('offset') != 0 or 'mondrv_output_seed' in self.report
+                or not str(mapping.get('path', '')).endswith('/libMWF.so')):
+            return
+        entry = {'armed': False, 'base': base, 'mp_output': None, 'queue': None,
+                 'capacity': MONDRV_QUEUE_CAPACITY, 'seeded': 0, 'first_pc': None}
+        self.report['mondrv_output_seed'] = entry
+        fd = (event.get('arguments') or [None] * 5)[4]
+        elf_bytes = self.filesystem.fds.get(fd, {}).get('data')
+        try:
+            segments, symbols = inspect_elf_load_and_symbols(elf_bytes or b'', MONDRV_OUTPUT_SYMBOLS)
+        except Exception as error:
+            entry['reason'] = 'elf_unreadable: %s' % (error,)
+            return
+        missing = [name for name in MONDRV_OUTPUT_SYMBOLS
+                   if not symbols.get(name, {}).get('defined') or not symbols[name]['value']]
+        if missing or segments[0]['file_offset'] or segments[0]['vaddr']:
+            entry['reason'] = 'symbols_missing: %s' % (missing,) if missing else 'first_load_not_at_base'
+            return
+        mp_output = base + symbols[MONDRV_OUTPUT_SYMBOLS[0]]['value']
+        entry.update(armed=True, mp_output=mp_output)
+
+        def seed_hook(uc, address, size, user_data):
+            if entry['first_pc'] is None:
+                entry['first_pc'] = address
+            try:
+                if int.from_bytes(bytes(uc.mem_read(mp_output, 4)), 'little'):
+                    return
+                if entry['queue'] is None:
+                    cursor = self.mmap.next_address
+                    try:
+                        mapped = self.mmap.request_mmap2(0, MONDRV_REGION_SIZE, PROT_READ | PROT_WRITE,
+                                                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+                    except UnsupportedMmap as error:
+                        entry['reason'] = 'alloc_unsupported: %s' % (error,)
+                        return
+                    if mapped['returned'] >= 0xfffff000:
+                        entry['reason'] = 'alloc_failed: %s' % (mapped.get('reason'),)
+                        return
+                    entry['queue'] = mapped['returned']
+                    entry['cursor_shift'] = [cursor, self.mmap.next_address]
+                if seed_mondrv_output(uc, mp_output, entry['queue']):
+                    entry['seeded'] += 1
+            except unicorn.UcError as error:
+                entry['reason'] = 'ucerror: %s' % (error,)
+
+        for name in MONDRV_OUTPUT_SYMBOLS[1:]:
+            entry_pc = base + (symbols[name]['value'] & ~1)
+            self.mu.hook_add(unicorn.UC_HOOK_CODE, seed_hook, begin=entry_pc, end=entry_pc)
 
     def _ld_fixup_workaround(self, uc, address, size, user_data):
         """Make _dl_fixup's unconditional `mov r4,r0` explicit.
@@ -3215,6 +3289,7 @@ class InterpreterProbe:
                     uc.emu_stop()
                     return
                 self._arm_relocated_libc_repair(event)
+                self._arm_mondrv_output_seed(event)
                 event.update(pc=pc, instruction_address=pc - size, thumb=thumb)
                 self.report['serviced_syscalls'].append(event)
                 self.report['syscall_responses_supplied'] += 1

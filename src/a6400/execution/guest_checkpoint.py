@@ -188,23 +188,6 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
         except unicorn.UcError:
             pass
 
-    if not exact:
-        # Ensure authentic MonDrv::mp_output log buffer is initialized if libMWF.so is mapped
-        try:
-            mp_out_bytes = probe.mu.mem_read(0x52201fe0, 4)
-            if mp_out_bytes == b'\x00\x00\x00\x00':
-                import struct
-                queue_obj = 0x1a190000
-                read_idx_ptr = queue_obj + 0x10
-                write_idx_ptr = queue_obj + 0x14
-                buf_ptr = queue_obj + 0x20
-                capacity = 0x7bf0
-                probe.mu.mem_write(queue_obj, struct.pack('<IIII', read_idx_ptr, write_idx_ptr, buf_ptr, capacity))
-                probe.mu.mem_write(read_idx_ptr, struct.pack('<II', 0, 0))
-                probe.mu.mem_write(0x52201fe0, struct.pack('<I', queue_obj))
-        except (unicorn.UcError, Exception):
-            pass
-
     # 3. Restore Unicorn CPU context and explicit ARM register state (with Thumb/CPSR handling)
     ctx = pickle.loads(payload['context'])
     probe.mu.context_restore(ctx)
