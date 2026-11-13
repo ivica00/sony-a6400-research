@@ -17,6 +17,7 @@ from src.a6400.execution.guest_mmap import (GuestMmap, UnsupportedMmap, PROT_REA
                                             MAP_PRIVATE, MAP_ANONYMOUS)
 from src.a6400.execution.guest_kuser import GuestKuser
 from src.a6400.execution.guest_uipc import GuestUipc, UnsupportedUipc
+from src.a6400.execution.capped_log import CappedLog
 from src.a6400.execution.guarded_bytes import UnverifiedGuestData
 from src.a6400.execution.guest_stdio import GuestStdio
 from src.a6400.execution.guest_threads import GuestThreads, REGISTER_LIST, EXPECTED_PTHREAD_CLONE_FLAGS
@@ -3097,6 +3098,14 @@ class InterpreterProbe:
                         self.report['serviced_syscalls'].append(event)
                         self.report['syscall_responses_supplied'] += 1
                         uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                        if self.uipc.yield_requested:
+                            # Same cooperative switch as sched_yield (158), after R0 is written so the saved context keeps the return value.
+                            self.uipc.yield_requested = False
+                            next_tid, _yield_event = self.threads.handle_sched_yield()
+                            event['yield_to'] = next_tid
+                            if next_tid is not None:
+                                self.threads.save_context(uc)
+                                self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
                         return
                 elif fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'fb0':
                     ret = self.fb.handle_ioctl(
@@ -4196,6 +4205,31 @@ class InterpreterProbe:
             if self.report['status'] == 'running':
                 self.report['status'] = reason or 'instruction_budget_exhausted'
         return self._finalize_report()
+
+    def set_record_limit(self, limit):
+        """Opt-in (--syscall-record-limit): keep only the last `limit` syscall and UIPC records."""
+        if limit is None:
+            return
+        self._record_limit = limit
+        self.report['serviced_syscalls'] = CappedLog.wrap(self.report['serviced_syscalls'], limit, 'syscall')
+        if getattr(self, 'uipc', None) is not None:
+            self.uipc.transactions = CappedLog.wrap(self.uipc.transactions, limit, 'type')
+
+    def finalize_record_logs(self, report):
+        """Turn capped logs into plain lists for JSON and add exact totals and drop counts."""
+        log = report['serviced_syscalls']
+        if isinstance(log, CappedLog):
+            report.update(syscall_record_limit=self._record_limit, syscalls_total=log.total,
+                          syscalls_dropped=log.total - len(log), syscall_name_counts=dict(log.counts))
+            report['serviced_syscalls'] = list(log)
+        uipc_log = getattr(getattr(self, 'uipc', None), 'transactions', None)
+        if isinstance(uipc_log, CappedLog):
+            report.update(uipc_transactions_total=uipc_log.total,
+                          uipc_transactions_dropped=uipc_log.total - len(uipc_log),
+                          uipc_op_counts=dict(uipc_log.counts))
+        uipc = report.get('uipc') or {}
+        if isinstance(uipc.get('transactions'), CappedLog):
+            uipc['transactions'] = list(uipc['transactions'])
 
     def run(self, instruction_budget=100000, timeout_us=2000000):
         self.begin(instruction_budget, timeout_us)

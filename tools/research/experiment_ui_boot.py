@@ -116,6 +116,12 @@ def build_parser():
     parser.add_argument('--thread-poll-yield', action='store_true',
                         help='opt-in cooperative switch at a syscall boundary when a non-blocking '
                              'UIPC poll returns EAGAIN (lets runnable peers run safely)')
+    parser.add_argument('--uipc-sync-direct', choices=('return', 'yield'), default='return',
+                        help="'yield' switches to a runnable peer after each snd_sync_direct (ioctl 0x80000006), "
+                             'like sched_yield; needs --thread-policy threads (syscall_policy threads)')
+    parser.add_argument('--syscall-record-limit', type=int, default=None, metavar='N',
+                        help='keep only the last N serviced syscalls and UIPC transactions (deque); '
+                             'exact totals, per-name/per-op counts and drop counts go to the report')
     parser.add_argument('--gles-engine-model', choices=('none', 'command-completion'), default='none',
                         help='opt-in GPES device-work model: command submitted in BAR+0xE8 header '
                              'yields the physically observed IRQ status class 0x40000000 (decoded ack; '
@@ -225,6 +231,15 @@ def main():
         guarded_bytes.PAGE_HOOKS = True
     session = build_boot_session(args, parser)
     probe = session.probe
+    if args.syscall_record_limit is not None:
+        if args.syscall_record_limit <= 0:
+            parser.error('--syscall-record-limit must be positive')
+        probe.set_record_limit(args.syscall_record_limit)
+    if args.uipc_sync_direct == 'yield':
+        if probe.syscall_policy != 'threads' or not hasattr(probe, 'threads'):
+            parser.error('--uipc-sync-direct yield requires the threads syscall policy')
+        probe.uipc.sync_direct_mode = 'yield'
+        probe.report['uipc_sync_direct'] = 'yield'
     if hasattr(probe, 'mmap'):
         probe.mmap.eof_policy = args.mmap_eof
     probe.report['mmap_eof_policy'] = args.mmap_eof
@@ -505,6 +520,11 @@ def main():
     tty = getattr(probe, 'tty', None)
     if tty is not None:
         probe.report.setdefault('tty_device', {}).update(tty.describe())
+    if args.syscall_record_limit is not None:
+        probe.finalize_record_logs(report)  # deque -> list for JSON; adds totals and drop counts
+        print(f"[*] Record cap {args.syscall_record_limit}: syscalls dropped "
+              f"{report['syscalls_dropped']:,}, UIPC transactions dropped "
+              f"{report.get('uipc_transactions_dropped', 0):,}.")
     out_file.write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(f"[*] Report saved to: {out_file}")
 
