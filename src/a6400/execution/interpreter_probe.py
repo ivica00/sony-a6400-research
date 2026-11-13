@@ -481,7 +481,7 @@ class InterpreterProbe:
             if filesystem.get('stream_profile') is not None:
                 self.stream = GuestStream(self.mu, self.mmap, filesystem['stream_profile'],
                                           self._identity_boundary, self._after_host_write)
-                self.report['assumptions'].append('Optional image-driver /dev/stream: selected compiled 249:7 registration/reset; ioctl reports modeled mapping delta; physical contents remain unsupplied and guarded. Single mapping, no aliases or DMA.')
+                self.report['assumptions'].append('Optional image-driver /dev/stream: selected compiled 249:7 registration/reset; ioctl reports modeled mapping delta; physical contents remain unsupplied and guarded. Exact-duplicate physical mappings alias one host buffer (partial overlaps stop); no DMA.')
             self.report['assumptions'].append('/dev/uipc character device contract (commands connect, valloc, snd_sync_msg, free, reg_msg_queue_cb, snd_sync_direct), /dev/fb0 framebuffer contract (FBIOGET/PUT_VSCREENINFO, FBIOGET_FSCREENINFO, mmap), and standard I/O streams backed by /dev/console.')
         if syscall_policy == 'threads':
             self.threads = GuestThreads(initial_tid=1000)

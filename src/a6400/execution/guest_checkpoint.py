@@ -183,6 +183,7 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
         size = reg['size']
         perms = reg['perms']
         data = zlib.decompress(reg['data'])
+        # shortcut: stream alias VAs (mem_map_ptr on one buffer) restore as independent copies, upgrade when a checkpoint is taken after an alias mmap
         probe.mu.mem_map(begin, size, perms)
         probe.mu.mem_write(begin, data)
 
