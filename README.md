@@ -20,7 +20,7 @@ of "full firmware compatibility."
 
 ## Latest progress
 
-- **Offline Linux Kernel Boot ([E0475](docs/evidence/0475-cxd90045-ldso-0403d6b2-and-live-ash.md)–[E0470](docs/evidence/0470-cxd90045-general-thumb-stepper-and-ash.md)):**
+- **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0475](docs/evidence/0475-cxd90045-ldso-0403d6b2-and-live-ash.md)):**
   Decoded the camera's first-stage bootloader and updater boot images, and emulated the
   interrupt controller, system timers, clock hardware, and serial console. The updater
   Linux kernel now boots through delay calibration, mounts its compressed root filesystem,
@@ -33,21 +33,24 @@ of "full firmware compatibility."
   logs preserved across warm reboots), check USB state, and recover cleanly without pulling
   the SD card or battery. Offline contracts and a safe RAM-only round-trip check for
   automatic Windows WinUSB driver binding are also verified.
-- **USB Video (UVC) Teardown & Stall Diagnosis ([E0352](docs/evidence/0352-offline-teardown-soft-disconnect-fix.md)–[E0399](docs/evidence/0399-runb22-deferred-restore-and-status-capture.md)):**
+- **USB Video (UVC) Teardown & Stall Diagnosis ([E0352](docs/evidence/0352-offline-teardown-soft-disconnect-fix.md)–[E0476](docs/evidence/0476-status-prearm-fix-build-audit-unicorn.md)):**
   Fixed the USB disconnect sequence so the camera returns to Mass Storage mode cleanly
   without needing a battery pull. Live tests confirmed the camera can serve 29.8 FPS JPEG
   frames alongside PTP, and USB packet/kernel traces narrowed the remaining DirectShow
-  streaming timeout down to the final status stage of a USB control handshake.
+  streaming timeout down to the final status stage of a USB control handshake. The latest
+  analysis shows the camera prepares that final step in time but the PC's reply never completes
+  it; a fix that prepares it earlier is built and passes offline checks, awaiting a supervised
+  camera test.
 - **Wi-Fi & Bluetooth Chip Analysis ([E0406](docs/evidence/0406-bcm4339-wifi-bt-tuning-surface-readonly.md), [E0408](docs/evidence/0408-clm-blob-and-wlan-baseline.md)):**
   Identified and cataloged the Broadcom Wi-Fi/Bluetooth firmware, kernel drivers, and
   regulatory configuration blobs offline against the ZV-E10.
 
 ## Status overview
 
-Recorded suite: 1531 tests. Each result is bounded by its own dated evidence record; no
+Recorded suite: 1576 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=ff31145f07a9)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=83db0806bd89)
 
 ### Subsystem status
 
@@ -62,7 +65,7 @@ UVC video frame, no flash write, and no full firmware boot is claimed.
 | **USB Debugger v2** | Persistent Mass Storage debugger for reading live/warm-reboot kernel logs and USB state | Deploying the always-on WinUSB vendor interface | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
 | **Test UVC video pattern** | Streams a synthetic 720p MJPEG pattern at ~30 FPS; ZV-E10 USB video stack cataloged as reference | Wiring the live camera sensor feed | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
 | **Multi-camera profiles** | Verified a6400 profile and ZV-E10 reference chain | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
-| **Automated checks** | 1531 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
+| **Automated checks** | 1576 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
 
 ## How to help (no camera needed)
 

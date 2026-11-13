@@ -220,33 +220,24 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-13",
     latest=EvidenceRef(
-        evidence_id="E0475",
-        path="docs/evidence/0475-cxd90045-ldso-0403d6b2-and-live-ash.md",
+        evidence_id="E0476",
+        path="docs/evidence/0476-status-prearm-fix-build-audit-unicorn.md",
         date="2026-11-13",
-        title="0x0403D6B2 VA-0 read root-caused: SP_usr is corrupted to a vector-page value",
+        title="Status pre-arm fix implemented in the bridge; build, static audit and Unicorn verification pass",
         demonstrated=(
-            "Disassembled ld-2.11.2.so 0x0403D680..0x0403D6E0 and added register/stack trace hooks (e0475_trace) at "
-            "0x0402E790, 0x0403D6A8 and 0x0403D6B2. The 0x0403D6B2 instruction is 'ldr r7,[r2],#4' (the argc = *argv "
-            "load); it faults on VA 0 because r0 == 0 at the call. The trace shows the caller state at 0x0403D6A8 is "
-            "already corrupted: r0=0, r1=0x0402F661, r2=0x04041358, r7=0xFFFFFD64, SP=0xFFFFFD64 (inside the high "
-            "exception-vector page, not the task stack 0x5E864xxx), LR=0x04031A6D (inside _dl_start), CPSR=0x600000F0, "
-            "and the 16-word dump at SP is all zeros. So the VA-0 read is a downstream consequence of a corrupted "
-            "user SP/r0, not a mis-decoded ldr operand in the stepper. The corruption occurs after the recovered "
-            "_dl_start prologue (executed manually in USR|Thumb with a valid stack) and before the call into "
-            "0x0403D6A8; prime suspects are a kuser helper return/clobber (kuser_hits=4), a ret_to_user banked-SP "
-            "restoration via mode_sp['usr'], or an unmodelled pop/ldmia involving SP. Still no shell: svc_hits=0, "
-            "serial 0 B, user_mode_entries=20, stop instruction_limit (PC 0x6025ED38)."
+            "Offline only, no camera action. The E0469 root-cause fix (arm the EP0 OUT status TRB at class "
+            "data-stage completion, ep0state=3 written before the native call) was implemented in the UVC "
+            "callback bridge, rebuilt (module 83,644 B), static-audited (117/8/0, no failures) and verified in "
+            "Unicorn (8/8 pass: single arm, ordering, late NRDY ignored, status completion dispatch, error-status "
+            "guard). New tests added; the full suite passes with 1576 tests."
         ),
         boundary=(
-            "No shell: serial 0 B, svc_hits=0. Next: bracket SP with trace points at 0x04031AA8, the bl at 0x04031A6C "
-            "and every kuser helper (0xFFFF0FA0/FC0/FE0) to find the exact instruction that turns SP_usr into "
-            "0xFFFFFD64; check mode_sp['usr'] and _restore_user_sp at the last user exception delivery; fix that "
-            "banked-SP/kuser defect so r0 = initial SP reaches _dl_start, then 0x0403D6B2 resolves naturally; then "
-            "verify 0x0402F666/0x04031AF0, svc_hits and live ash."
+            "No hardware run: Run B26 needs an explicit user GO. If the 5-second stall persists after the "
+            "pre-arm, the host/controller not re-driving the NAKed status stage (H2) is confirmed."
         ),
-        tier="OFFLINE BOUNDED UNICORN BRING-UP",
+        tier="OFFLINE + UNICORN",
     ),
-    headline="1531 tests recorded passing | No verified emulator GUI frame",
+    headline="1576 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0406",
@@ -433,9 +424,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1531,
+        test_count=1576,
         recorded_at="2026-11-13",
-        evidence_id="E0464",
+        evidence_id="E0476",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(
