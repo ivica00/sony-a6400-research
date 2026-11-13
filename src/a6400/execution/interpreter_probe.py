@@ -1724,6 +1724,27 @@ class InterpreterProbe:
         self.mu.hook_add(unicorn.UC_HOOK_CODE, hook, begin=address, end=address + 4)
         return records
 
+    PROGRESS_SYSCALLS = (5, 192, 322)  # open, mmap2, openat: the boot-advance metric used in the ledger
+
+    def _run_guard(self, uc, number, svc_address):
+        """Stop when the boot stalls (no open/mmap2 for stall_syscalls syscalls) or guest time passes the budget.
+        Rewinds PC onto the svc so a saved checkpoint resumes with this syscall unserviced."""
+        stall_limit = getattr(self, 'stall_syscalls', 0)
+        since = 0 if number in self.PROGRESS_SYSCALLS else getattr(self, '_since_progress', 0) + 1
+        self._since_progress = since
+        budget = self.report.get('instruction_budget') or 0
+        if stall_limit and since >= stall_limit:
+            reason = 'stalled_no_progress'
+        elif budget and self.instructions >= budget:
+            reason = 'instruction_budget_exhausted'  # idle clock jumps count as guest time
+        else:
+            return False
+        self._since_progress = 0  # a resumed run gets a fresh stall window
+        self.report.update(status=reason, stall_syscalls=stall_limit)
+        uc.reg_write(arm.UC_ARM_REG_PC, svc_address)
+        uc.emu_stop()
+        return True
+
     def _interrupt(self, uc, interrupt, user_data):
         clock_floor = getattr(getattr(self, 'threads', None), 'clock_floor', 0)
         if clock_floor > self.instructions:  # idle fast-forward chosen by the scheduler
@@ -1737,6 +1758,8 @@ class InterpreterProbe:
                                   (not thumb and instruction & 0x0f000000 == 0x0f000000))
         immediate = instruction & (0xff if thumb else 0xffffff)
         number = uc.reg_read(arm.UC_ARM_REG_R7)
+        if svc and self._run_guard(uc, number, pc - size):
+            return
         if svc and (number == 0xf0005 or (not thumb and instruction == 0xef9f0005)) and self.syscall_policy in ('kuser', 'uipc', 'threads'):
             tls_val = uc.reg_read(arm.UC_ARM_REG_R0)
             self.kuser.set_tls(tls_val)
