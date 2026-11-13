@@ -110,8 +110,8 @@ class StreamTests(unittest.TestCase):
                     self.stream.mmap2(*args)
                 self.assertEqual(self.mapper.mapped_pages, before)
         self.map()
-        with self.assertRaises(UnsupportedStream):
-            self.map()
+        with self.assertRaises(UnsupportedStream):  # partial overlap; exact duplicates alias
+            self.stream.mmap2(0, 8192, 3, 1, 4, 0x2000)
 
     def test_existing_guest_pages_are_not_replaced(self):
         self.mapper.register_range(0x1000, 4096)
@@ -148,7 +148,7 @@ class StreamTests(unittest.TestCase):
         self.assertNotEqual(v1, v2)
         self.assertEqual(len(self.stream.mappings), 2)
         with self.assertRaises(UnsupportedStream):
-            self.map(pgoff=0x20030)
+            self.stream.mmap2(0, 8192, 3, 1, 4, 0x20030)
 
 
 

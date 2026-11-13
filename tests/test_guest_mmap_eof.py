@@ -105,6 +105,27 @@ class ProbeAndUniversalTests(unittest.TestCase):
         self.assertEqual(probe.report['status'], 'unsupported_tty_contract')
         self.assertEqual(probe.report['boundary']['reason'], 'tty_read_not_supplied')
 
+    def test_sched_getaffinity_returns_mask_byte_count(self):
+        probe = self._make_probe()
+        probe.syscall_policy = 'threads'  # the 242 branch sits under the threads policy
+        probe.mu.mem_map(0x10000, 0x1000)
+        probe.mu.mem_write(0x10000, b'\x00\x00\x00\xef')  # svc #0 (ARM)
+        probe.mu.reg_write(arm.UC_ARM_REG_R0, 0)
+        probe.mu.reg_write(arm.UC_ARM_REG_R1, 128)
+        probe.mu.reg_write(arm.UC_ARM_REG_R2, 0x10100)
+        probe.mu.reg_write(arm.UC_ARM_REG_R7, 242)  # __NR_sched_getaffinity
+        probe.mu.reg_write(arm.UC_ARM_REG_PC, 0x10004)
+        probe._interrupt(probe.mu, 2, None)
+        self.assertEqual(probe.mu.reg_read(arm.UC_ARM_REG_R0), 4)
+        self.assertEqual(probe.report['serviced_syscalls'][-1]['returned'], 4)
+        self.assertEqual(bytes(probe.mu.mem_read(0x10100, 4)), b'\x01\x00\x00\x00')
+
+        probe.mu.reg_write(arm.UC_ARM_REG_R1, 2)  # buffer smaller than the 4-byte mask
+        probe.mu.reg_write(arm.UC_ARM_REG_PC, 0x10004)
+        probe._interrupt(probe.mu, 2, None)
+        self.assertEqual(probe.mu.reg_read(arm.UC_ARM_REG_R0), 0xFFFFFFEA)  # -EINVAL
+        self.assertEqual(probe.report['serviced_syscalls'][-1]['returned'], -22)
+
     def test_extract_kuser_template_unknown_kernel_fails_closed(self):
         with self.assertRaises(ValueError):
             extract_kuser_template(b'\x00' * (VMLINUX_KUSER_OFFSET + KUSER_TEMPLATE_SIZE))

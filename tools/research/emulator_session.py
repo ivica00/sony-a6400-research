@@ -57,6 +57,25 @@ class BootSession:
     uipc_local_post_libmwf_base: Optional[int] = None
 
 
+
+class _ObservedSettingTree:
+    """Minimal walk()/read_file() source for mount_vfat: the evidence-recorded /setting members."""
+    image_sha256 = None
+    _files = {'updater/dat4': bytes.fromhex('0002')}
+
+    class _Entry:
+        def __init__(self, path, is_dir):
+            self.path, self.is_dir = path, is_dir
+
+    def walk(self):
+        for directory in ('gps', 'updater'):
+            yield directory, self._Entry(directory, True)
+        for path in self._files:
+            yield path, self._Entry(path, False)
+
+    def read_file(self, entry):
+        return self._files[entry.path]
+
 def usb_otgcore_options(args):
     """Resolve the opt-in otgcore gadget-function policy from session args.
 
@@ -288,7 +307,8 @@ def build_boot_session(args, parser=None) -> BootSession:
         probe.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, watch_write, begin=word - 15, end=word + 3)
 
     original_rcv = live_uipc_receiver(probe)
-    boot_events_to_inject = ([0x00940007, 0x0092014b, 0x00940036, 0x00940038, 0x00920152]
+    boot_events_to_inject = ((getattr(args, 'stimulus_events', None)
+                              or [0x00940007, 0x0092014b, 0x00940036, 0x00940038, 0x00920152])
                              if args.stimulus == 'experimental-events' else [])
     injected = []
     injection_records = []
@@ -421,7 +441,15 @@ def build_boot_session(args, parser=None) -> BootSession:
     probe.stream2_device_policy = getattr(args, 'stream2_device', 'stop')
     probe.nflasha4_device_policy = getattr(args, 'nflasha4_device', 'stop')
     probe.nflasha4_dump = None
-    if probe.nflasha4_device_policy == 'observed-dump':
+    if probe.nflasha4_device_policy == 'synthetic-erased':
+        # Not observed content: an empty MPR partition (eMMC erased value 0x00, E0305 B=00).
+        # Served through the observed-dump paths so reads/ioctl/flush keep the same contracts.
+        from src.a6400.execution.guest_nflasha4 import PARTITION_SIZE, Nflasha4Dump
+        probe.nflasha4_device_policy = 'observed-dump'
+        probe.nflasha4_dump = Nflasha4Dump(bytes(PARTITION_SIZE), 0, evidence={'synthetic': 'erased-zero'})
+        probe.report['nflasha4_dump_policy'] = {'policy': 'synthetic-erased', 'size': PARTITION_SIZE,
+                                                'erased_state_byte': 0}
+    elif probe.nflasha4_device_policy == 'observed-dump':
         from src.a6400.execution.guest_nflasha4 import Nflasha4Dump
         probe.nflasha4_dump = Nflasha4Dump.from_evidence(PROJECT_ROOT)
         probe.report['nflasha4_dump_policy'] = {
@@ -444,7 +472,14 @@ def build_boot_session(args, parser=None) -> BootSession:
             'evidence': probe.vfat_image.evidence,
         }
     probe.setting_service_policy = getattr(args, 'setting_service', 'stop')
-    if probe.setting_service_policy == 'observed-nflasha2':
+    if probe.setting_service_policy == 'observed-dat4':
+        # Not a partition image: only the /setting members the evidence records with content
+        # (E0307: updater/dat4 = 2 B, sha256 fcf0a6c7...c5177f = 00 02 per E0413). Everything else is ENOENT.
+        mounted = probe.filesystem.mount_vfat('/setting', _ObservedSettingTree())
+        probe.filesystem.vfat_mounts['/setting']['source'] = 'observed-dat4 (E0307/E0413), not nflasha2'
+        probe.report['setting_service_policy'] = {'policy': 'observed-dat4', 'mounted': mounted,
+                                                  'camera_fidelity_validated': False}
+    elif probe.setting_service_policy == 'observed-nflasha2':
         from src.a6400.execution.guest_vfat import VfatImage
         setting_image = VfatImage.from_evidence(
             PROJECT_ROOT,
