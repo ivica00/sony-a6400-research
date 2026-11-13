@@ -94,7 +94,8 @@ def save_checkpoint(probe, filepath: Path) -> int:
             'timeslice_mark': getattr(probe, '_timeslice_mark', 0),
         },
         'signal_handlers': dict(probe.signal_handlers),
-        'serviced_syscalls': list(probe.report.get('serviced_syscalls', [])),
+        # Not copied to a list: a CappedLog must keep its totals and counts (pickled right below).
+        'serviced_syscalls': probe.report.get('serviced_syscalls', []),
         'syscall_responses_supplied': probe.report.get('syscall_responses_supplied', 0),
         'loaded_modules': list(probe.report.get('loaded_modules', [])),
         'filesystem_fds': dict(probe.filesystem.fds),

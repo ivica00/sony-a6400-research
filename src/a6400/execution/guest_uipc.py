@@ -2,6 +2,7 @@
 
 import struct
 from typing import Dict, List, Optional, Tuple
+from src.a6400.execution.capped_log import CappedLog
 from src.a6400.execution.guest_uipc_ids import KernelDynamicIds, UnsupportedDynamicId
 
 # Linux ARM ioctl commands recognized by osal_uipc.ko
@@ -57,6 +58,9 @@ class GuestUipc:
     userland library /usr/lib/libosal_uipc.so. Recognizing the transport ABI
     does not establish recipient execution or a valid service reply.
     """
+    # Class defaults so checkpoints pickled before these attributes existed still load.
+    sync_direct_mode = 'return'   # 'yield': ask the interpreter to switch threads after snd_sync_direct
+    yield_requested = False
 
     def __init__(self,
                  total_pool_size: int = DEFAULT_TOTAL_POOL_SIZE,
@@ -105,7 +109,7 @@ class GuestUipc:
         self.message_queues: Dict[int, List[int]] = {}
         self.next_dynamic_id = 0x80001001
         self.dynamic_ids: Dict[int, int] = {}
-        self.transactions: List[Dict[str, object]] = []
+        self.transactions: List[Dict[str, object]] = []  # replaced by a CappedLog under --syscall-record-limit
         self.kernel_contract_revision = 1
         self.kernel_dynamic_ids = KernelDynamicIds()
         # E0303 generic completion bookkeeping (unused by earlier policies).
@@ -419,6 +423,8 @@ class GuestUipc:
             'payload_hex': payload.hex(),
             'payload_ascii': payload.decode('latin1', errors='replace')
         })
+        # Only the interpreter owns the thread switch; it consumes this after the ioctl returns.
+        self.yield_requested = self.sync_direct_mode == 'yield'
         return 0
 
     def handle_wai_sem_tmo(self, memory_reader, memory_writer, arg_ptr: int) -> int:
