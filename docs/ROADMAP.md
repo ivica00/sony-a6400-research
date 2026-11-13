@@ -1,8 +1,33 @@
 # Firmware execution roadmap
 
-**Current status lives in the [README research status](../README.md) (E0352, 2026-11-11).**
+**Current status lives in the [README research status](../README.md) (E0494, 2026-11-13).**
 The entries below are dated history: their test counts and boundaries describe the state at
 the time of writing and are not updated retroactively.
+
+a6400A identity track (2026-11-13, [E0494](evidence/0494-a6400a-msc-reply-lifetime-and-verified-native-identity.md)):
+original reply-lifetime controls correct the split-process test procedure.
+One uninterrupted owner-run query now returns ILCE-6400A in 2.727 ms through
+unchanged USBSTOR, with no BUSY, driver/mode change or sector/file operation.
+The normal identity API is verified; root access, clean physical dumps and a
+first-class runnable profile remain separate prerequisites. Delayed reply-only
+continuation is refused.
+
+a6400A access track (2026-11-13, [E0493](evidence/0493-a6400a-native-readonly-transport-and-model-info-busy.md)):
+a parent-verified Windows USBSTOR probe answers inquiry in an owner-run
+Administrator session. Normal model information remains BUSY after a bounded
+completion-only read window, without request replay or any driver/mode/storage
+change. Stop physical probes here; qualify session/registration behavior before
+another attempt. Debugger access and clean live dumps remain unavailable.
+
+a6400A machine track (2026-11-13, [E0492](evidence/0492-a6400a-kernel-partition-mmio-and-hook-map.md)):
+its preserved package now has a reproducible main/updater kernel, symbol, rootfs,
+partition and MMIO map. Thirty configured partition rows and eight static MMIO
+descriptors match the original package, but several exception/TTBR hook addresses
+do not. An explicit PL011-only prefix stops at unsupported timer MMIO after
+3,017 instructions; no boot is claimed. Next: qualify native read-only access on
+the a6400A, preserve live `/proc`/partition identities and clean dumps, then build
+per-image runtime contracts. Package metadata is not live evidence; no original
+a6400 hardware is required.
 
 UVC/PTP contributor track (2026-11-11, E0331): the USB lane is split into **process-local OSAL queues** (0x00CA8192, bit 15) and **sync-registered callback queues** (0x00CA0288 / 0x00CA01A4, flags=1). The async UIPC model never delivers the latter, so the boundary is `uipc_sync_callback_delivery_unmodelled`. A labelled SET_CONFIG ObjMsg injection reached the original `RcvMsg` and failed closed (OSAL assertion) - no FSM transition is claimed. Scoped workstreams and acceptance criteria are in [CONTRIBUTING_UVC_PTP.md](CONTRIBUTING_UVC_PTP.md); 952 tests pass. See [E0331](evidence/0331-usb-lane-local-queue-vs-sync-callback.md).
 

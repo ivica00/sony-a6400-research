@@ -16,7 +16,7 @@ of "full firmware compatibility."
 | --- | --- | --- |
 | **1 · Offline Firmware Emulator** | Run Sony's original camera software, bootloader, and Linux kernel on a PC with zero risk to hardware | Core camera software reaches startup and event dispatch; the updater Linux kernel boots to its serial console and root filesystem, though full camera boot is **not** yet reached |
 | **2 · Low-Latency Liveview & USB Video (`CinemaHUD`)** | Stream video from the camera with minimal delay over USB | **Android/PTP liveview** works on real hardware. **Native USB webcam (UVC) mode** shows up on the host and disconnects cleanly, but video streaming still stalls during USB setup |
-| **3 · Multi-Camera Support** | Share hardware and kernel knowledge across the a6400, ZV-E10, a6100, a6600, and a7 III | Typed device profiles exist for the a6400 (verified) and ZV-E10 (reference), with placeholders for the other models |
+| **3 · Multi-Camera Support** | Share hardware and kernel knowledge across BIONZ X bodies, including the a6400A | Six sourced profiles: original a6400 is the only verified execution target; the other five are reference profiles |
 
 ## Latest progress
 
@@ -27,6 +27,36 @@ of "full firmware compatibility."
   signature. The one AES helper uses the first 16 bytes of `sha256('')` as its key in ECB, and
   that key is identical on all thirteen bodies. Whether the bootloader accepts a recomputed CRC
   is still unknown and needs a camera.
+- **a6400A Normal Identity Verified ([E0494](docs/evidence/0494-a6400a-msc-reply-lifetime-and-verified-native-identity.md)):**
+  Original ARM/Thumb controls identify a finite reply lifetime, correcting the earlier
+  split-process test procedure. One fresh, uninterrupted query now returns **ILCE-6400A**
+  in **2.727 ms**, with no BUSY and no driver, mode or storage changes. Delayed response-only
+  continuation is refused. This verifies the normal USB identity API, **not debugger,
+  `/proc` or partition-dump access**; the a6400A remains a reference profile.
+- **a6400A Read-only Access Preflight ([E0493](docs/evidence/0493-a6400a-native-readonly-transport-and-model-info-busy.md)):**
+  A parent-verified native Windows probe works with the existing USBSTOR driver:
+  SCSI inquiry succeeds when the owner runs the narrow probe as Administrator.
+  The normal model-info query remains **BUSY**, including 40 bounded completion-only
+  reads, so physical probing stopped. No driver change, service mode, helper upload,
+  sector access or camera file write was used. This is a **historical failed procedure**:
+  E0494 supersedes the normal-query block, while debugger/root/dump access remains unverified.
+- **a6400A Machine Map ([E0492](docs/evidence/0492-a6400a-kernel-partition-mmio-and-hook-map.md)):**
+  Main and updater kernels have separate build identities and BusyBox versions.
+  Their recovered partition configuration and eight static MMIO mappings match the
+  original package, while several exception/TTBR hook addresses moved. A reusable,
+  hash-checked offline mapper preserves those differences and capture-only gaps.
+  With an explicitly selected PL011 fixture, the original updater stops at timer
+  MMIO after 3,017 instructions; **no boot, live `/proc` inventory or physical dump
+  is claimed**, and no camera was accessed.
+- **a6400A Qualification ([E0491](docs/evidence/0491-a6400a-offline-qualification-and-debugger-boundary.md)):**
+  The signed 1.01 package matches the modeled CXD90045 / ARM EABI5 family and machine
+  ID `0xDA9`. Its USB packing code passes offline; an original updater prefix executes
+  3,001 instructions before an unsupported UART access, without patches or MMIO replies.
+  Windows read-only metadata confirms Mass Storage `054C:0F0F`. A separately sourced
+  **reference** profile is registered, but all seven USB kernel addresses moved and the
+  driver differs. **Do not reuse the original a6400 installer, hooks or checkpoints**
+  without body-specific qualification; no debugger installation or partition dump was attempted.
+  Scoped checks pass; the full-suite rerun here is blocked by missing historical inputs.
 - **Cross-Model BIONZ X Platform Map ([E0477](docs/evidence/0477-bionz-x-platform-map-13-updaters.md)–[E0482](docs/evidence/0482-three-stubs-gain-sourced-values.md)):**
   Thirteen official updaters unpacked offline: a6400, a6600, a6100A, ZV-E10, A7 III, A7C,
   A7R III, A7R IV, A7R IVA, A9, A9 II, ZV-1 and RX0 II. They run **nine kernels**, not thirteen:
@@ -65,10 +95,12 @@ of "full firmware compatibility."
 
 ## Status overview
 
-Recorded suite: 1720 tests. Each result is bounded by its own dated evidence record; no
+Historical passing suite ([E0490](docs/evidence/0490-platform-model-and-flash-boundary.md)):
+1720 tests. The current-host full-suite input gaps are recorded in [E0494](docs/evidence/0494-a6400a-msc-reply-lifetime-and-verified-native-identity.md); this is not
+a new green full-suite result. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=802271cb5cef)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=cd6840611c87)
 
 ### Subsystem status
 
@@ -82,8 +114,8 @@ UVC video frame, no flash write, and no full firmware boot is claimed.
 | **Composite USB webcam (real camera)** | Camera appears as both PTP and Video device in Windows, and disconnects cleanly without a battery pull | DirectShow times out during the USB control handshake status stage | [E0350](docs/evidence/0350-trackb-transport-enumerates-but-renderstream-fails.md), [E0398](docs/evidence/0398-runb21-status-stage-and-disconnect-verdict.md) |
 | **USB Debugger v2** | Persistent Mass Storage debugger for reading live/warm-reboot kernel logs and USB state | Deploying the always-on WinUSB vendor interface | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
 | **Test UVC video pattern** | Streams a synthetic 720p MJPEG pattern at ~30 FPS; ZV-E10 USB video stack cataloged as reference | Wiring the live camera sensor feed | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
-| **Multi-camera profiles** | Verified a6400 profile and ZV-E10 reference chain | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
-| **Automated checks** | 1720 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
+| **Multi-camera profiles** | Six sourced profiles, including a6400A package/USB evidence | Only original a6400 is a verified execution target; a6400A bootstrap remains unqualified | [E0491](docs/evidence/0491-a6400a-offline-qualification-and-debugger-boundary.md), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
+| **Automated checks** | Historical passing record: 1720 tests (E0490); current scoped qualification checks pass | Full-suite rerun here needs missing historical inputs; bounded contracts are not full compatibility | [E0494](docs/evidence/0494-a6400a-msc-reply-lifetime-and-verified-native-identity.md), [tests/](tests/README.md) |
 
 ## How to help (no camera needed)
 

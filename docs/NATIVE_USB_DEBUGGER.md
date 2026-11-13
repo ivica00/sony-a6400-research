@@ -1,5 +1,33 @@
 # Native USB debugger (installed; normal MSC verified)
 
+## Per-body qualification
+
+The installed/verified statements below refer to the original **ILCE-6400**,
+not every BIONZ X body. For **ILCE-6400A 1.01**,
+[E0491](evidence/0491-a6400a-offline-qualification-and-debugger-boundary.md)
+verifies packaged API packing offline and observes host Mass Storage `054C:0F0F`,
+but does **not** qualify installation or native debugger access. Its
+`usb_extcmd.ko` is not identity-equivalent to the original input, and USB kernel
+addresses moved. Do not run the original installer or bypass its identity checks.
+Bootstrap/service-mode entry and startup writes need a separately reviewed,
+explicitly authorized body-specific procedure before any live partition dump.
+
+[E0493](evidence/0493-a6400a-native-readonly-transport-and-model-info-busy.md)
+adds a separate, tightly allowlisted Windows USBSTOR inquiry/model-info probe,
+not an installer. Inquiry works in the owner's Administrator session; the model
+query remains BUSY after the bounded read-only completion window. Do not retry
+that request, increase polling, run generic PMCA `infoCommand` (which also
+initializes the updater), or infer debugger access from SCSI acceptance.
+The camera is still in unchanged Mass Storage; no native debugger is qualified.
+
+[E0494](evidence/0494-a6400a-msc-reply-lifetime-and-verified-native-identity.md)
+supersedes that normal-query boundary: a fresh single-process transaction
+returns ILCE-6400A in 2.727 ms through unchanged USBSTOR. Original packaged code
+uses a finite reply lifetime, so the client refuses delayed continuation and
+counts request time in one bounded transaction budget. This is **not** debugger
+or partition access. Do not interpret the successful model query as permission
+for service mode, uploads, startup changes or driver replacement.
+
 ## Protocol v2 (E0401): warm log readout, recover, and the PC Remote boundary
 
 The installed daemon now speaks protocol v2 (same 4096-byte frame, feature
