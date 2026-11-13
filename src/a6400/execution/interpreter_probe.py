@@ -3441,7 +3441,7 @@ class InterpreterProbe:
                 self.report['syscall_responses_supplied'] += 1
                 uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
                 return
-        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 19, 33, 39, 195, 197, 217) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 19, 33, 39, 195, 217)):
+        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 12, 19, 33, 39, 195, 197, 217) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 12, 19, 33, 39, 195, 217)):
             args = [uc.reg_read(r) for r in (arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2)]
             try:
                 event = self.filesystem.request(number, args)
