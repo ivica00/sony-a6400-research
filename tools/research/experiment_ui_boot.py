@@ -38,8 +38,8 @@ def build_parser():
                         help='stop on /dev/nflasha4 (default); open-only accepts the observed O_RDWR open and stops at the first data/ioctl/mmap; observed-dump serves reads from the hash-checked 12 MiB MPR dump and answers only the observed read-only ioctl 0x80014123 (writes/mmap/other ioctls stay boundaries); synthetic-erased serves an all-zero (erased, E0305 B=00) image through the same paths')
     parser.add_argument('--mount-service', choices=('stop', 'observed-nflasha1'), default='stop',
                         help='stop on mount(2) (default); observed-nflasha1 serves only the observed read-only mount("/dev/nflasha1","/mnt","vfat",...,"posix_attr") and materializes the hash-checked nflasha1 vfat dump as read-only guest nodes')
-    parser.add_argument('--setting-service', choices=('stop', 'observed-nflasha2'), default='stop',
-                        help='stop on the /setting namespace (default); observed-nflasha2 materializes the hash-checked read-only nflasha2 vfat dump under /setting (boot-mounted partition; no write path)')
+    parser.add_argument('--setting-service', choices=('stop', 'observed-nflasha2', 'observed-dat4'), default='stop',
+                        help='stop on the /setting namespace (default); observed-nflasha2 materializes the hash-checked read-only nflasha2 vfat dump under /setting (boot-mounted partition; no write path); observed-dat4 mounts only gps/, updater/ and the E0307-recorded updater/dat4 (00 02), read-only')
     parser.add_argument('--regular-inode-rdev', action='store_true', help='supply the kernel-derived zero st_rdev for regular image files only')
     parser.add_argument('--readonly-image-times', action='store_true', help='select hash-checked ext2 image timestamps under original read-only mount records; not observed camera state')
     parser.add_argument('--backup-service', choices=('stop', 'unverified-ack', 'preset-backed'), default='stop',
