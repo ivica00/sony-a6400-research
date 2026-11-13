@@ -96,6 +96,44 @@ or a table, one of these would exist somewhere in the image:
 
 Nothing in the image forms that address except the handler's own store.
 
+## 3a. Correction, 2026-11-13: what the "no reader" sweep actually covered
+
+The per-body read counts in section 1 come from `av_eyeaf_field.py`, whose access search is
+bounded by construction: it follows the handler's own literals and scans a window after each
+materialisation of the cache base. That is a sound search *inside those windows*, and the
+`--expect` calibration pins it. It is not a search of the whole image, and the number it prints
+must not be read as one.
+
+A whole-image linear sweep is worse, not better. Measured on the a6600 `av-cam.bin`:
+
+| method | sites found for `+0x5d0` | coverage of the 16,825,940-byte image |
+| --- | --- | --- |
+| windowed access search (`av_eyeaf_field.py`) | 1 write, 0 reads | the windows after 316 base materialisations |
+| linear `capstone` sweep | 0 | **0.000** — it stops after 33 instructions |
+| encoding mask (second-halfword match) | 2,887 candidate sites | the whole file, but 85% do not decode as a load/store |
+
+So the honest statement is narrower than section 1's wording: **within the reachable region —
+the handler and every window where the cache base is materialised — nothing reads the field.**
+A linear sweep cannot support or contradict that, because on this image it stops almost
+immediately, and the encoding mask alone produces mostly non-instruction matches.
+
+Reproduce:
+
+```bash
+python3 -I tools/research/cmd_search.py --image <unpacked>/a6600/.../av-cam.bin \
+    --base 0x635C6000 --field 0x5d0
+# agrees=False encoding=2887 linear=0 coverage=0.000
+```
+
+`agrees=False` here is the correct answer, not a failure: `cmd_search` reports agreement only
+when both methods cover the region and find the same sites.
+
+What follows for section 3's conclusion: the relocation evidence (no module holds the field's
+address) stands on its own and is unaffected. The "no biased base" test stands too, since it
+enumerates the 316 materialisations directly. What was overstated is the phrase "no instruction
+in that same image", which should read "no instruction in the reachable windows".
+
+
 ## 4. Alternative explanations
 
 - **"The reader is in another module, reached by IPC."** Ruled out for `ILCE-6600` above by
