@@ -254,7 +254,7 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
         tier="OFFLINE PACKAGED FIRMWARE",
     ),
-    headline="1595 tests recorded passing | No verified emulator GUI frame",
+    headline="1720 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0476",
@@ -459,9 +459,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1595,
+        test_count=1720,
         recorded_at="2026-11-13",
-        evidence_id="E0482",
+        evidence_id="E0490",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(
