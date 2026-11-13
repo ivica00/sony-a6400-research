@@ -131,6 +131,10 @@ class GuestGles:
             self.engine_state_events = 0
         if not hasattr(self, 'engine_submitted'):
             self.engine_submitted = False
+        if not hasattr(self, 'engine_last_key'):
+            self.engine_last_key = None
+        if not hasattr(self, 'engine_bar_completed'):
+            self.engine_bar_completed = False
 
     def open(self, flags, caller_pid, caller_tgid, user_ranges=()):
         if self.binding is None:
@@ -573,7 +577,7 @@ class GuestGles:
         decoded IRQ ack path clears via BAR+0x1000/+0xC18. This model only
         exposes that device completion; it never completes a guest ctx.
         """
-        if self.bar_virtual is None or self.engine_command_seen:
+        if self.bar_virtual is None:
             return None
         try:
             header = bytes(mem_read(self.bar_virtual + 0xE8, 4))
@@ -581,16 +585,26 @@ class GuestGles:
             completion = bytes(mem_read(self.bar_virtual + 0x16C, 4))
         except Exception:
             return None
+        # header_ok can only recur after a new guest write (we zero 0xE8 below);
+        # the descriptor words are never cleared, so fire only when they changed.
+        key = (descriptor, completion)
         header_ok = len(header) >= 4 and header[0] == 1 and header[2] == 5
         descriptor_ok = (len(descriptor) >= 4 and descriptor[0] == 0x21
-                         and len(completion) >= 4 and any(completion))
+                         and len(completion) >= 4 and any(completion)
+                         and key != getattr(self, 'engine_last_key', None))
         if not (header_ok or descriptor_ok):
             return None
+        self.engine_last_key = key
         self.engine_command_seen = True
         self.engine_submitted = True
-        self.engine_completions += 1
-        self.engine_event_status |= 0x45000000
-        self.dev_a8 |= 0x45000000
+        if getattr(self, 'engine_bar_completed', False):
+            # complete_engine_command() already counted this submission.
+            self.engine_bar_completed = False
+        else:
+            self.engine_completions += 1
+            self.engine_state_events = 0
+            self.engine_event_status |= 0x45000000
+            self.dev_a8 |= 0x45000000
         for offset in (0x1000, 0xC18):
             try:
                 mem_write(self.bar_virtual + offset, b'\x00\x00\x00\x00')
@@ -607,12 +621,13 @@ class GuestGles:
 
     def complete_engine_command(self, source='bar-write'):
         """Device completion for a submitted command; never completes a ctx."""
-        if self.engine_command_seen:
-            return None
+        if getattr(self, 'engine_bar_completed', False):
+            return None  # same submission (0x16C then 0x170); poll clears the flag
+        self.engine_bar_completed = True
         self.engine_command_seen = True
         self.engine_submitted = True
         self.engine_completions += 1
-        self.engine_submitted = True
+        self.engine_state_events = 0
         self.engine_event_status |= 0x45000000
         self.dev_a8 |= 0x45000000
         self.transactions.append({'operation': 'engine-command', 'status': 0x40000000,
