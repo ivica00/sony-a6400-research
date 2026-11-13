@@ -75,6 +75,21 @@ class UipcTimerServiceTests(unittest.TestCase):
         self.assertEqual(probe.threads.threads[1000].state, 'running')
         self.assertEqual(probe.threads.timer_waiters, {})
 
+    def test_idle_scheduler_wakes_timer_waiter_when_others_block(self):
+        probe = self.make_probe('sched')
+        threads = probe.threads
+        threads.save_context(probe.mu)
+        import copy
+        waiter_tid = threads.current_tid + 1
+        threads.threads[waiter_tid] = copy.deepcopy(threads.threads[threads.current_tid])
+        threads.threads[waiter_tid].tid = waiter_tid
+        threads.threads[threads.current_tid].state = 'blocked_uipc'
+        threads.threads[waiter_tid].state = 'blocked_timer'
+        threads.timer_waiters[waiter_tid] = 9_000_000
+        self.assertEqual(threads.get_next_runnable_tid(), waiter_tid)
+        self.assertEqual(threads.clock_floor, 9_000_000)
+        self.assertEqual(threads.timer_waiters, {})
+
     def test_off_by_default_keeps_no_reply(self):
         probe = self.make_probe('off')
         probe.uipc.timer_service = 'off'
