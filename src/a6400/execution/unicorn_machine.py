@@ -161,6 +161,18 @@ class UnicornMachine:
         self._activation_pgd = None
         self.pt_regs_frames: list[dict] = []
         self.pt_regs_user_frames: list[dict] = []
+        self.ret_tail_hits = 0
+        self.ret_tail_trace: list[dict] = []
+        self.ret_user_returns: list[dict] = []
+        self.pending_user_spsr = None
+        self.pending_user_lr = None
+        self.user_restores = 0
+        self.user_entry_trace: list[dict] = []
+        self._pending_user_resume = None
+        self.insn_invalid_recoveries = 0
+        self.insn_invalid_unsupported: list[dict] = []
+        self._step_last_error = None
+        self.e0475_trace: list[dict] = []
         self.timer_ticks_per_instruction = timer_ticks_per_instruction
         self.timer_ticks_per_jiffy = timer_ticks_per_jiffy
         self.timer_irq_start_instructions = timer_irq_start_instructions
@@ -377,6 +389,135 @@ class UnicornMachine:
             self._install_virtual_tlb()
         self._install_switch_mm_hook()
         self._install_ttbr0_write_hooks()
+
+        try:
+            _regmap = ((0, UC_ARM_REG_R0), (1, UC_ARM_REG_R1), (2, UC_ARM_REG_R2),
+                       (3, UC_ARM_REG_R3), (4, UC_ARM_REG_R4), (5, UC_ARM_REG_R5),
+                       (6, UC_ARM_REG_R6), (7, UC_ARM_REG_R7),
+                       (8, UC_ARM_REG_R8), (9, UC_ARM_REG_R9),
+                       (10, UC_ARM_REG_R10), (11, UC_ARM_REG_R11),
+                       (12, UC_ARM_REG_R12))
+
+            def _e0475_hook(uc, address, size, user):
+                if len(self.e0475_trace) >= 6:
+                    return
+                try:
+                    sp = uc.reg_read(UC_ARM_REG_SP)
+                    regs = {}
+                    for name, rid in _regmap:
+                        regs[f'r{name}'] = f'0x{uc.reg_read(rid):08x}'
+                    regs['sp'] = f'0x{sp:08x}'
+                    regs['lr'] = f'0x{uc.reg_read(UC_ARM_REG_LR):08x}'
+                    regs['cpsr'] = f'0x{uc.reg_read(UC_ARM_REG_CPSR):08x}'
+                    stack = []
+                    if self._cached_ttbr0 is not None:
+                        stack = [f'0x{self._read_user32(sp + 4 * i) or 0:08x}'
+                                 for i in range(16)]
+                    self.e0475_trace.append({
+                        'tag': f'0x{address:08x}', 'regs': regs,
+                        'stack': stack})
+                except Exception:
+                    pass
+            for _pc, _tag in ((0x0402E790, 'entry'), (0x0403D6A8, 'd6a8'),
+                              (0x0403D6B2, 'd6b2')):
+                self.uc.hook_add(UC_HOOK_CODE, _e0475_hook,
+                                 begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+
+        try:
+            def _user_entry_trace_hook(uc, address, size, user):
+                if len(self.user_entry_trace) >= 8:
+                    return
+                try:
+                    cpsr = uc.reg_read(UC_ARM_REG_CPSR)
+                except Exception:
+                    return
+                if (cpsr & 0x1F) != 0x10:
+                    return
+                self.user_entry_trace.append({
+                    'pc': f'0x{address:08x}',
+                    'cpsr': f'0x{cpsr:08x}',
+                    'thumb': bool(cpsr & 0x20)})
+            self.uc.hook_add(UC_HOOK_CODE, _user_entry_trace_hook,
+                             begin=0x0402E790, end=0x0402E7A8)
+        except Exception:
+            pass
+
+
+        try:
+            def _ret_msr_hook(uc, address, size, user):
+                # E0463: 0x6010DF50 msr spsr_fsxc, r1 (lr already = user PC)
+                try:
+                    r1 = uc.reg_read(UC_ARM_REG_R1)
+                    lr = uc.reg_read(UC_ARM_REG_LR)
+                except Exception:
+                    return
+                if (r1 & 0x1F) != 0x10:
+                    return
+                self.pending_user_spsr = r1
+                self.pending_user_lr = lr
+                if len(self.ret_tail_trace) < 16:
+                    self.ret_tail_trace.append({
+                        'tag': 'msr50', 'spsr': f'0x{r1:08x}',
+                        'lr': f'0x{lr:08x}'})
+            self.uc.hook_add(UC_HOOK_CODE, _ret_msr_hook,
+                             begin=0x6010DF50, end=0x6010DF54)
+        except Exception:
+            pass
+
+        try:
+            def _ret_tail_hook(uc, address, size, user):
+                # E0463: 0x6010DF64 movs pc, lr - restore the captured user frame.
+                spsr = self.pending_user_spsr
+                plr = self.pending_user_lr
+                if spsr is None or plr is None:
+                    return
+                try:
+                    sp = uc.reg_read(UC_ARM_REG_SP)
+                    base = (sp - 0x48) & 0xFFFFFFFF
+                    frame = [self._read32_phys(base + off)
+                             for off in range(0, 0x44, 4)]
+                    frame_pc = self._read32_phys(base + 0x3C)
+                    frame_cpsr = self._read32_phys(base + 0x40)
+                except Exception:
+                    return
+                target = plr or frame_pc
+                if not target:
+                    return
+                if (spsr & 0x1F) != 0x10:
+                    return
+                self.user_restores += 1
+                if len(self.ret_tail_trace) < 16:
+                    self.ret_tail_trace.append({
+                        'tag': 'restore', 'spsr': f'0x{spsr:08x}',
+                        'lr': f'0x{plr:08x}', 'pc': f'0x{target:08x}',
+                        'frame_cpsr': f'0x{frame_cpsr:08x}'})
+                try:
+                    for i in range(13):
+                        uc.reg_write(UC_ARM_REG_R0 + i, frame[i])
+                    uc.reg_write(UC_ARM_REG_CPSR, spsr)
+                    uc.reg_write(UC_ARM_REG_SP, frame[0x34 // 4])
+                    uc.reg_write(UC_ARM_REG_LR, frame[0x38 // 4])
+                    self._set_pc_and_cpsr(target, spsr)
+                    # E0465: queue an explicit odd-address resume for the run loop.
+                    self._pending_user_resume = (
+                        self.thumb_pc(target, spsr), spsr)
+                    try:
+                        uc.emu_stop()
+                    except Exception:
+                        pass
+                except Exception:
+                    return
+            self.uc.hook_add(UC_HOOK_CODE, _ret_tail_hook,
+                             begin=0x6010DF64, end=0x6010DF68)
+        except Exception:
+            pass
+
+        except Exception:
+            pass
+
         try:
             for _pc, _tag in ((0x601085EC, 'do_PrefetchAbort'),
                               (0x60116D94, 'do_page_fault')):
@@ -1351,7 +1492,8 @@ class UnicornMachine:
 
     def _pte_report(self, va: int) -> dict:
         """Re-walk TTBR0 -> L1 -> L2 for a VA and decode the ARMv7 PTE bits."""
-        ttbr0 = self._read_cp15_ttbr0() & 0xFFFFC000
+        ttbr0 = ((self._cached_ttbr0
+                  or self._read_cp15_ttbr0()) & 0xFFFFC000)
         report = {'va': f'0x{va:08x}', 'ttbr0': f'0x{ttbr0:08x}'}
         try:
             l1 = struct.unpack('<I', self.uc.mem_read(
@@ -1467,6 +1609,353 @@ class UnicornMachine:
 
     def _read32_kernel(self, va: int) -> int:
         return struct.unpack('<I', self.uc.mem_read(self._kernel_phys(va), 4))[0]
+
+    def _user_pa(self, va: int):
+        try:
+            r = self._walk_user_va(va)
+        except Exception:
+            return None
+        if r is None:
+            return None
+        if isinstance(r, dict):
+            v = r.get('pa')
+            if isinstance(v, str):
+                try:
+                    return int(v, 16)
+                except Exception:
+                    return None
+            return v
+        return r
+
+    def _read_user32(self, va: int):
+        pa = self._user_pa(va)
+        if pa is None:
+            return None
+        try:
+            return struct.unpack('<I', self.uc.mem_read(pa, 4))[0]
+        except Exception:
+            return None
+
+    def _read_user_bytes(self, va: int, size: int):
+        pa = self._user_pa(va)
+        if pa is None:
+            return None
+        try:
+            return bytes(self.uc.mem_read(pa, size))
+        except Exception:
+            return None
+
+    def _read_user16(self, va: int):
+        pa = self._user_pa(va)
+        if pa is None:
+            return None
+        try:
+            return struct.unpack('<H', self.uc.mem_read(pa, 2))[0]
+        except Exception:
+            return None
+
+    def _read_user8(self, va: int):
+        pa = self._user_pa(va)
+        if pa is None:
+            return None
+        try:
+            return self.uc.mem_read(pa, 1)[0]
+        except Exception:
+            return None
+
+    def _write_user32(self, va: int, val: int) -> bool:
+        pa = self._user_pa(va)
+        if pa is None:
+            return False
+        try:
+            self.uc.mem_write(pa, struct.pack('<I', val & 0xFFFFFFFF))
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _cond_true(cc: int, cpsr: int) -> bool:
+        n = bool(cpsr & 0x80000000)
+        z = bool(cpsr & 0x40000000)
+        c = bool(cpsr & 0x20000000)
+        v = bool(cpsr & 0x10000000)
+        return {
+            0: z, 1: not z, 2: c, 3: not c, 4: n, 5: not n,
+            6: v, 7: not v, 8: c and not z, 9: (not c) or z,
+            10: n == v, 11: n != v, 12: (not z) and (n == v),
+            13: z or (n != v), 14: True,
+        }.get(cc, True)
+
+    @staticmethod
+    def _nz(cpsr: int, val: int) -> int:
+        cpsr &= ~0xC0000000
+        if val & 0x80000000:
+            cpsr |= 0x80000000
+        elif val == 0:
+            cpsr |= 0x40000000
+        return cpsr
+
+    def _reg_name_to_id(self, md):
+        cache = getattr(self, '_cap_reg_ids', None)
+        if cache is None:
+            cache = {}
+            for rid in range(0, 260):
+                try:
+                    name = md.reg_name(rid)
+                except Exception:
+                    name = None
+                if name:
+                    cache[name] = rid
+            self._cap_reg_ids = cache
+        return cache
+
+    def _should_recover_insn_invalid(self, pc: int, message: str) -> bool:
+        """E0473: top-of-classifier decode-failure recovery gate."""
+        if not (0x1000 <= (pc & ~1) < 0x60000000):
+            return False
+        if 'INSN' not in (message or '').upper():
+            return False
+        return self._user_pa(pc & ~1) is not None
+
+    def _step_user_thumb_insns(self, pc: int, cpsr: int, max_steps: int = 6):
+        """E0470: bounded general Thumb/Thumb-2 user stepper."""
+        from capstone import CS_ARCH_ARM, CS_MODE_THUMB, Cs
+        from capstone.arm import (ARM_OP_IMM, ARM_OP_MEM, ARM_OP_REG,
+                                  ARM_REG_SP)
+        if not (cpsr & 0x20):
+            return None
+        md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
+        md.detail = True
+        reg_ids = self._reg_name_to_id(md)
+        trace = []
+        cur = pc & ~1
+        for _ in range(max_steps):
+            code = self._read_user_bytes(cur, 4) or self._read_user_bytes(cur, 2)
+            if not code:
+                return (cur, cpsr, trace) if trace else None
+            insns = list(md.disasm(code, cur))
+            if not insns:
+                return None
+            insn = insns[0]
+            op = insn.mnemonic
+            ops = insn.operands
+            nxt = cur + insn.size
+            try:
+                if op.startswith(('push', 'stmdb')):
+                    names = insn.op_str.replace('push.w', '').replace(
+                        'push', '').strip().strip('{}').replace(' ', '')
+                    regs = [reg_ids[n] for n in names.split(',') if n in reg_ids]
+                    if not regs:
+                        return None
+                    sp = self.uc.reg_read(ARM_REG_SP) - 4 * len(regs)
+                    for i, rid in enumerate(sorted(regs)):
+                        if not self._write_user32(sp + 4 * i,
+                                                  self.uc.reg_read(rid)):
+                            return (cur, cpsr, trace) if trace else None
+                    self.uc.reg_write(ARM_REG_SP, sp)
+                    trace.append(('push', f'0x{cur:08x}', insn.op_str))
+                    cur = nxt
+                    continue
+                if op.startswith(('pop', 'ldm')):
+                    names = insn.op_str.replace('pop.w', '').replace(
+                        'pop', '').replace('ldm', '').replace('ia', '')
+                    names = names.strip().strip('{}').replace(' ', '')
+                    regs = [reg_ids[n] for n in names.split(',') if n in reg_ids]
+                    if not regs:
+                        return None
+                    sp = self.uc.reg_read(ARM_REG_SP)
+                    for i, rid in enumerate(sorted(regs)):
+                        if rid == 15:
+                            val = self._read_user32(sp + 4 * i)
+                            if val is None:
+                                return None
+                            trace.append(('pop-pc', f'0x{cur:08x}', f'0x{val:08x}'))
+                            return val, cpsr, trace
+                        val = self._read_user32(sp + 4 * i)
+                        if val is None:
+                            return None
+                        self.uc.reg_write(rid, val)
+                    self.uc.reg_write(ARM_REG_SP, sp + 4 * len(regs))
+                    trace.append(('pop', f'0x{cur:08x}', insn.op_str))
+                    cur = nxt
+                    continue
+                if op in ('mov', 'movs', 'mov.w') and len(ops) == 2:
+                    if ops[0].type != ARM_OP_REG:
+                        return None
+                    if ops[1].type == ARM_OP_REG:
+                        val = self.uc.reg_read(ops[1].reg)
+                    elif ops[1].type == ARM_OP_IMM:
+                        val = ops[1].imm & 0xFFFFFFFF
+                    else:
+                        return None
+                    self.uc.reg_write(ops[0].reg, val)
+                    if op.endswith('s'):
+                        cpsr = self._nz(cpsr, val)
+                    trace.append(('mov', f'0x{cur:08x}', insn.op_str))
+                    cur = nxt
+                    continue
+                if op.startswith(('add', 'sub')) and len(ops) >= 2:
+                    if ops[0].type != ARM_OP_REG or ops[1].type != ARM_OP_REG:
+                        return None
+                    a = self.uc.reg_read(ops[1].reg)
+                    if len(ops) == 3 and ops[2].type == ARM_OP_IMM:
+                        b = ops[2].imm & 0xFFFFFFFF
+                    elif len(ops) == 2:
+                        b = 0
+                    else:
+                        return None
+                    val = (a + b) if op.startswith('add') else (a - b)
+                    val &= 0xFFFFFFFF
+                    self.uc.reg_write(ops[0].reg, val)
+                    if op.startswith('sub') and ops[0].reg == ARM_REG_SP:
+                        pass
+                    trace.append(('alu', f'0x{cur:08x}', insn.op_str))
+                    cur = nxt
+                    continue
+                if op.startswith('ldr') and len(ops) == 2 and ops[1].type == ARM_OP_MEM:
+                    base = ops[1].mem.base
+                    disp = ops[1].mem.disp
+                    if base == reg_ids.get('pc'):
+                        addr = ((cur + 4) & ~3) + disp
+                    else:
+                        addr = (self.uc.reg_read(base) + disp) & 0xFFFFFFFF
+                    if insn.size >= 4 and 'b' in op.split('.')[0] and not op.startswith(('ldrb', 'ldrh')):
+                        val = self._read_user8(addr)
+                    elif op.startswith('ldrh'):
+                        val = self._read_user16(addr)
+                    elif op.startswith('ldrb'):
+                        val = self._read_user8(addr)
+                    else:
+                        val = self._read_user32(addr)
+                    if val is None:
+                        # E0474: unmapped literal (e.g. ld.so data page not resident
+                        # yet) - keep the partial progress instead of aborting.
+                        return (cur, cpsr, trace) if trace else None
+                    self.uc.reg_write(ops[0].reg, val)
+                    trace.append(('ldr', f'0x{cur:08x}', insn.op_str))
+                    cur = nxt
+                    continue
+                if op.startswith('str') and len(ops) == 2 and ops[1].type == ARM_OP_MEM:
+                    base = ops[1].mem.base
+                    addr = (self.uc.reg_read(base) + ops[1].mem.disp) & 0xFFFFFFFF
+                    val = self.uc.reg_read(ops[0].reg)
+                    if not self._write_user32(addr, val):
+                        return (cur, cpsr, trace) if trace else None
+                    trace.append(('str', f'0x{cur:08x}', insn.op_str))
+                    cur = nxt
+                    continue
+                if op.startswith('cmp') and len(ops) == 2:
+                    a = self.uc.reg_read(ops[0].reg)
+                    b = (ops[1].imm if ops[1].type == ARM_OP_IMM
+                         else self.uc.reg_read(ops[1].reg))
+                    res = (a - (b & 0xFFFFFFFF)) & 0xFFFFFFFF
+                    cpsr = self._nz(cpsr, res)
+                    cpsr &= ~0x20000000
+                    if a >= (b & 0xFFFFFFFF):
+                        cpsr |= 0x20000000
+                    trace.append(('cmp', f'0x{cur:08x}', insn.op_str))
+                    cur = nxt
+                    continue
+                if op in ('b', 'b.w'):
+                    cur = ops[0].imm & 0xFFFFFFFF
+                    trace.append(('b', f'0x{cur:08x}', insn.op_str))
+                    continue
+                if op.startswith('b') and op not in ('bic', 'bl', 'blx', 'bx') \
+                        and len(ops) == 1 and ops[0].type == ARM_OP_IMM:
+                    if self._cond_true(insn.cc, cpsr):
+                        cur = ops[0].imm & 0xFFFFFFFF
+                    else:
+                        cur = nxt
+                    trace.append(('bcond', f'0x{cur:08x}', insn.op_str))
+                    continue
+                if op in ('bl', 'blx') and ops and ops[0].type == ARM_OP_IMM:
+                    self.uc.reg_write(UC_ARM_REG_LR, nxt | 1)
+                    cur = ops[0].imm & 0xFFFFFFFF
+                    trace.append(('bl', f'0x{cur:08x}', insn.op_str))
+                    return cur, cpsr, trace
+                if op == 'bx':
+                    cur = self.uc.reg_read(ops[0].reg) & 0xFFFFFFFF
+                    trace.append(('bx', f'0x{cur:08x}', insn.op_str))
+                    return cur, cpsr, trace
+                if op.startswith('cbz') or op.startswith('cbnz'):
+                    if len(ops) == 2:
+                        if op.startswith('cbz'):
+                            taken = self.uc.reg_read(ops[0].reg) == 0
+                        else:
+                            taken = self.uc.reg_read(ops[0].reg) != 0
+                        cur = (ops[1].imm & 0xFFFFFFFF) if taken else nxt
+                        trace.append(('cbz', f'0x{cur:08x}', insn.op_str))
+                        continue
+                if op == 'nop':
+                    cur = nxt
+                    continue
+                return None
+            except Exception as _e:
+                self._step_last_error = repr(_e)
+                return None
+        return cur, cpsr, trace
+
+    def _emulate_thumb_prologue(self, pc: int, cpsr: int,
+                                max_insns: int = 8):
+        """E0469: bounded interpreter for the ld.so Thumb entry prologue."""
+        from capstone import CS_ARCH_ARM, CS_MODE_THUMB, Cs
+        from capstone.arm import ARM_OP_IMM, ARM_OP_MEM, ARM_OP_REG, ARM_REG_PC
+        if not (cpsr & 0x20):
+            return None
+        md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
+        md.detail = True
+        trace = []
+        cur = pc & ~1
+        for _ in range(max_insns):
+            code = self._read_user_bytes(cur, 4)
+            if code is None:
+                return None
+            insns = list(md.disasm(code, cur))
+            if not insns:
+                return None
+            insn = insns[0]
+            ops = insn.operands
+            if insn.mnemonic in ('ldr', 'ldr.w') and len(ops) == 2 \
+                    and ops[0].type == ARM_OP_REG and ops[1].type == ARM_OP_MEM \
+                    and ops[1].mem.base == ARM_REG_PC:
+                addr = ((cur + 4) & ~3) + ops[1].mem.disp
+                val = self._read_user32(addr)
+                if val is None:
+                    return None
+                self.uc.reg_write(ops[0].reg, val)
+                trace.append(('ldr', f'0x{cur:08x}', f'0x{val:08x}'))
+                cur += insn.size
+                continue
+            if insn.mnemonic == 'mov' and len(ops) == 2 \
+                    and ops[0].type == ARM_OP_REG and ops[1].type == ARM_OP_REG:
+                self.uc.reg_write(ops[0].reg, self.uc.reg_read(ops[1].reg))
+                trace.append(('mov', f'0x{cur:08x}', insn.op_str))
+                cur += insn.size
+                continue
+            if insn.mnemonic in ('bl', 'blx') and len(ops) == 1 \
+                    and ops[0].type == ARM_OP_IMM:
+                self.uc.reg_write(UC_ARM_REG_LR, (cur + insn.size) | 1)
+                trace.append(('bl', f'0x{cur:08x}', f'0x{ops[0].imm:08x}'))
+                cur = ops[0].imm
+                return cur, cpsr, trace
+            return None
+        return None
+
+    def _set_pc_and_cpsr(self, pc: int, cpsr: int) -> None:
+        """E0464: Unicorn needs the PC LSB to reflect T and the CPSR write last."""
+        lsb = 1 if (cpsr & 0x20) else 0
+        self.uc.reg_write(UC_ARM_REG_CPSR, cpsr)
+        self.uc.reg_write(UC_ARM_REG_PC, (pc & ~1) | lsb)
+        try:
+            if (self.uc.reg_read(UC_ARM_REG_CPSR) & 0x20) != (cpsr & 0x20):
+                self.uc.reg_write(UC_ARM_REG_CPSR, cpsr)
+        except Exception:
+            pass
+
+    @staticmethod
+    def thumb_pc(pc: int, cpsr: int) -> int:
+        """E0462: Unicorn couples CPSR.T to the PC LSB (even PC clears Thumb)."""
+        return pc | 1 if (cpsr & 0x20) else pc & ~1
 
     def _find_pt_regs_base(self, sp: int) -> int | None:
         """E0461: locate the user pt_regs frame base near SP."""
@@ -2317,6 +2806,38 @@ class UnicornMachine:
                     try:
                         self.uc.emu_start(pc_now | (1 if thumb else 0), 0,
                                           count=slice_size)
+                        _resume = self._pending_user_resume
+                        if _resume is not None:
+                            self._pending_user_resume = None
+                            _rpc, _rcpsr = _resume
+                            # E0470: general stepper implemented; the all-resume
+                            # trigger regressed the live path, so keep the E0469
+                            # prologue-only trigger and use the stepper as a unit-
+                            # tested capability (next: INSN_INVALID recovery hook).
+                            _pro = None
+                            if _rpc == 0x0402E791:
+                                try:
+                                    self._set_pc_and_cpsr(_rpc, _rcpsr)
+                                    _pro = self._emulate_thumb_prologue(
+                                        _rpc, _rcpsr)
+                                except Exception:
+                                    _pro = None
+                            if _pro is not None:
+                                _npc, _ncpsr, _tr = _pro
+                                for _t in _tr:
+                                    if len(self.user_entry_trace) < 24:
+                                        self.user_entry_trace.append({
+                                            'pc': _t[1], 'cpsr': f'0x{_rcpsr:08x}',
+                                            'thumb': True, 'manual': _t[0]})
+                                self._pending_user_resume = None
+                                self._set_pc_and_cpsr(_npc, _ncpsr)
+                                continue
+                            self._set_pc_and_cpsr(_rpc, _rcpsr)
+                            try:
+                                self.uc.ctl_flush_tb()
+                            except Exception:
+                                pass
+                            self.uc.emu_start(_rpc, 0, count=slice_size)
                         if self._user_refresh_requested:
                             self._user_refresh_requested = False
                             try:
@@ -2392,6 +2913,69 @@ class UnicornMachine:
                                     'write': bool(write),
                                     'msg': message[:40]})
                             user_mode = (cpsr & 0x1F) == 0x10
+                            # E0471: recover user-mode Thumb UC_ERR_INSN_INVALID by
+                            # stepping the faulting instructions with Capstone.
+                            # E0473: decode-failure recovery must not depend on the
+                            # reported CPSR mode; gate only on userspace VA + resident
+                            # page + INSN message.
+                            if self._should_recover_insn_invalid(pc, message):
+                                _pro = None
+                                _thumb_cpsr = ((cpsr & ~0x3F) | 0x10 | 0x20)
+                                try:
+                                    # E0474: switch to the USR bank *before* stepping,
+                                    # otherwise SP reads/writes hit the SVC bank and the
+                                    # frame base becomes 0 (observed VA 0x28 store).
+                                    self._set_pc_and_cpsr(pc, _thumb_cpsr)
+                                    _pro = self._step_user_thumb_insns(
+                                        pc, _thumb_cpsr, max_steps=6)
+                                except Exception:
+                                    _pro = None
+                                if _pro is not None:
+                                    _npc, _ncpsr, _tr = _pro
+                                    self.insn_invalid_recoveries += 1
+                                    for _t in _tr:
+                                        if len(self.user_entry_trace) < 32:
+                                            self.user_entry_trace.append({
+                                                'pc': _t[1],
+                                                'cpsr': f'0x{_ncpsr:08x}',
+                                                'thumb': True,
+                                                'manual': 'rec:' + _t[0]})
+                                    _page = _npc & ~0xFFF
+                                    remove = getattr(self.uc, 'ctl_remove_cache', None)
+                                    if remove is not None:
+                                        try:
+                                            remove(_page, _page + 0x1000)
+                                        except Exception:
+                                            pass
+                                    try:
+                                        self.uc.ctl_flush_tb()
+                                    except Exception:
+                                        pass
+                                    self._set_pc_and_cpsr(_npc, _ncpsr)
+                                    executed += 1
+                                    remaining = max(0, remaining - 1)
+                                    continue
+                                if len(self.insn_invalid_unsupported) < 16:
+                                    try:
+                                        _raw = self._read_user_bytes(pc & ~1, 4)
+                                        _hex = _raw.hex() if _raw else None
+                                    except Exception:
+                                        _hex = None
+                                    _mn = None
+                                    try:
+                                        from capstone import (CS_ARCH_ARM,
+                                                              CS_MODE_THUMB, Cs)
+                                        _md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
+                                        _raw = self._read_user_bytes(pc & ~1, 4)
+                                        if _raw:
+                                            _ins = list(_md.disasm(_raw, pc & ~1))
+                                            if _ins:
+                                                _mn = f'{_ins[0].mnemonic} {_ins[0].op_str}'
+                                    except Exception:
+                                        _mn = None
+                                    self.insn_invalid_unsupported.append({
+                                        'pc': f'0x{pc:08x}', 'bytes': _hex,
+                                        'mnemonic': _mn})
                             if (not is_mem and not is_fetch and user_mode
                                     and 0x1000 <= pc < 0x60000000):
                                 # E0443: distinguish a real CPU exception (SWI/UNDEF)
@@ -2588,6 +3172,14 @@ class UnicornMachine:
             'ttbr0_write_hits': self.ttbr0_write_hits,
             'pt_regs_frames': list(self.pt_regs_frames),
             'pt_regs_user_frames': list(self.pt_regs_user_frames),
+            'ret_tail_hits': self.ret_tail_hits,
+            'ret_tail_trace': list(self.ret_tail_trace),
+            'user_restores': self.user_restores,
+            'insn_invalid_recoveries': self.insn_invalid_recoveries,
+            'insn_invalid_unsupported': list(self.insn_invalid_unsupported),
+            'e0475_trace': list(self.e0475_trace),
+            'user_entry_trace': list(self.user_entry_trace),
+            'ret_user_returns': list(self.ret_user_returns),
             'activation_pgd': (f'0x{self._activation_pgd:08x}'
                                if self._activation_pgd else None),
             'switch_mm_values': [f'0x{v:08x}' for v in self.switch_mm_values],

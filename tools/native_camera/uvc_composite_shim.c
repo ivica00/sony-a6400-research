@@ -724,6 +724,21 @@ static int a6400_uvc_restore_descriptors(void)
     unsigned int *p_flags;
 
     if (!p_gc || !*p_gc) return -1;
+
+    /* E0458/B24: in the shared-PTP composite build the descriptor transaction is
+     * owned by a6400_descriptor_install()/a6400_uvc_soft_disconnect(); that teardown
+     * restores the original root and reconnects (td trace desc=RESTORED, root=68a844a0,
+     * reconnect=1). The legacy commit never runs in that build, so
+     * g_saved_msc_desc_tbl stays NULL. This legacy restore would then clear gc+0x6c and
+     * re-arm EP0/D+ with a NULL table; the host's first GET_DESCRIPTOR executes
+     * make_device_desc+0x70 (`ldrh r3,[r7]` with r7=0 at 0x602bb9f8) and oopses/reboots.
+     * Skip the legacy restore unless the legacy commit actually captured a table. */
+    if (!g_saved_msc_desc_tbl) {
+        printk("[a6400_uvc] restore: no legacy Mass Storage table saved; "
+               "shared session owns descriptors, legacy restore skipped\n");
+        return -6; /* -ENXIO: nothing to restore on this path */
+    }
+
     gc = *p_gc;
     dwc = a6400_get_dwc(gc);
     p_flags = (unsigned int *)((char *)gc + 0x68);
@@ -755,6 +770,14 @@ static int a6400_uvc_restore_descriptors(void)
     }
     *(unsigned char *)((char *)gc + 0x84) = g_saved_byte_84;
     *(unsigned char *)((char *)gc + 0x85) = g_saved_byte_85;
+
+    /* Defensive: never start the controller, arm EP0 or raise D+ with an empty
+     * descriptor table; the host's next GET_DESCRIPTOR would dereference it in
+     * make_device_desc (E0458). */
+    if (*(void **)((char *)gc + 0x6c) == (void *)0) {
+        printk("[a6400_uvc] restore: descriptor table is NULL; UDC stays disconnected\n");
+        return -6;
+    }
 
     /* 4. Start controller in saved mode */
     ((int (*)(unsigned char))0x602bd7f8u)(g_saved_byte_84);

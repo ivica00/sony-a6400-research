@@ -20,7 +20,7 @@ of "full firmware compatibility."
 
 ## Latest progress
 
-- **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0461](docs/evidence/0461-cxd90045-pt-regs-scan-and-live-ash.md)):**
+- **Offline Linux Kernel Boot ([E0475](docs/evidence/0475-cxd90045-ldso-0403d6b2-and-live-ash.md)–[E0470](docs/evidence/0470-cxd90045-general-thumb-stepper-and-ash.md)):**
   Decoded the camera's first-stage bootloader and updater boot images, and emulated the
   interrupt controller, system timers, clock hardware, and serial console. The updater
   Linux kernel now boots through delay calibration, mounts its compressed root filesystem,
@@ -47,7 +47,7 @@ of "full firmware compatibility."
 Recorded suite: 1531 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=44f186823f43)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=ff31145f07a9)
 
 ### Subsystem status
 
