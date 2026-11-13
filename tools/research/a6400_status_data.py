@@ -220,10 +220,10 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-13",
     latest=EvidenceRef(
-        evidence_id="E0489",
-        path="docs/evidence/0489-update-chain-integrity-is-crc32-and-md5.md",
+        evidence_id="E0490",
+        path="docs/evidence/0490-platform-model-and-flash-boundary.md",
         date="2026-11-13",
-        title="The update chain checks CRC32 and MD5, not a per-model cipher",
+        title="The platform model, and the boundary it does not cross",
         demonstrated=(
             "The ecosystem claim that the image is AES-encrypted with per-model keys does not "
             "hold for the packaged files: 484 files under the a6400 tree are ELF objects readable "
