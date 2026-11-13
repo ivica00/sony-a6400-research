@@ -5,8 +5,8 @@ from pathlib import Path
 
 from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR,
                                UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1,
-                               UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP,
-                               UC_ARM_REG_SPSR)
+                               UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_R12,
+                               UC_ARM_REG_SP, UC_ARM_REG_SPSR)
 
 from src.a6400.execution.arm_atags import build_atags
 from src.a6400.execution.unicorn_machine import UnicornMachine
@@ -100,6 +100,243 @@ class DataAbortDeliveryTests(unittest.TestCase):
     def test_flush_tlb_is_safe(self):
         machine = self.make_machine()
         machine._flush_tlb()  # must not raise even if the API is unavailable
+
+    def test_unicorn_models_banked_sp(self):
+        from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM
+        cpu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        cpu.mem_map(0, 0x1000)
+        cpu.reg_write(UC_ARM_REG_CPSR, 0xD3)
+        cpu.reg_write(UC_ARM_REG_SP, 0x1111)
+        cpu.reg_write(UC_ARM_REG_CPSR, 0x10)          # USR bank
+        self.assertEqual(cpu.reg_read(UC_ARM_REG_SP), 0)
+        cpu.reg_write(UC_ARM_REG_SP, 0x2222)
+        cpu.reg_write(UC_ARM_REG_CPSR, 0xD3)
+        self.assertEqual(cpu.reg_read(UC_ARM_REG_SP), 0x1111)
+        cpu.reg_write(UC_ARM_REG_CPSR, 0x10)
+        self.assertEqual(cpu.reg_read(UC_ARM_REG_SP), 0x2222)
+
+    def test_banked_restore_reads_user_bank_from_frame(self):
+        machine = self.make_machine()
+        sp = 0x0DC10000
+        machine.uc.reg_write(UC_ARM_REG_SP, sp)
+        words = [0x1000 + i for i in range(13)] + [0x0E864F10, 0x04001234]
+        machine.uc.mem_write(sp - 60, struct.pack('<15I', *words))
+        pc = 0x6010DF58
+        machine._emulate_banked_restore(pc)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R0), 0x1000)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R12), 0x100C)
+        self.assertEqual(machine.mode_sp['usr'], 0x0E864F10)
+        self.assertEqual(machine.mode_lr['usr'], 0x04001234)
+        self.assertEqual(machine.user_sp, 0x0E864F10)
+        self.assertTrue(machine._restore_user_sp)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), pc + 4)
+        self.assertEqual(machine.banked_restore_hits, 1)
+
+    def test_prefetch_delivery_saves_ifar_for_mrc_hooks(self):
+        machine = self.make_machine(symbols={'__pabt_usr': 0x6010DE20})
+        machine.mode_sp['svc'] = 0x0DC0FFB0
+        pc = 0x0402E790
+        self.assertTrue(machine._deliver_prefetch_abort(pc, 0x00000070, pc))
+        self.assertEqual(machine.last_ifar, pc)
+        self.assertEqual(machine.last_ifsr, 5)
+        self.assertEqual(machine.prefetch_aborts_delivered, 1)
+
+    def test_data_delivery_saves_dfar_for_mrc_hooks(self):
+        machine = self.make_machine()
+        self.assertTrue(machine._deliver_data_abort(0x60123456, 0x00000013,
+                                                    0x00048AC6, write=True))
+        self.assertEqual(machine.last_dfar, 0x00048AC6)
+        self.assertEqual(machine.last_dfsr & 0xFFF, 0x805)
+
+    def test_user_copy_helpers_are_demand_page_whitelisted(self):
+        machine = self.make_machine(symbols={
+            'strncpy_from_user': 0x60A00000, 'copy_to_user': 0x60B00000,
+            'kmalloc': 0x60C00000})
+        self.assertTrue(machine._in_demand_page_helper(0x60A00010))
+        self.assertTrue(machine._in_demand_page_helper(0x60B00020))
+        self.assertFalse(machine._in_demand_page_helper(0x60C00030))
+
+    def test_svc_data_abort_counts_delivery(self):
+        machine = self.make_machine(symbols={'__dabt_svc': 0x6010D980})
+        machine.uc.reg_write(UC_ARM_REG_SP, 0x0DC10000)
+        self.assertTrue(machine._deliver_data_abort(0x60123456, 0x13,
+                                                    0x04031AF0, write=False))
+        self.assertEqual(machine.data_aborts_delivered, 1)
+        self.assertTrue(machine.data_abort_trace[-1].get('svc'))
+
+    def test_swi_dispatch_enters_vector_swi(self):
+        machine = self.make_machine()
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x50)
+        machine.uc.reg_write(UC_ARM_REG_PC, 0x04031AF0)
+        machine._on_interrupt(machine.uc, 2)
+        self.assertEqual(machine.svc_hits, 1)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0xFFFF0008)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x1F, 0x13)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SPSR), 0x50)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_LR), 0x04031AF4)
+
+    def test_svc_data_abort_enters_dabt_svc_with_scratch_frame(self):
+        machine = self.make_machine(symbols={'__dabt_svc': 0x6010D980})
+        sp = 0x0DC10000
+        machine.uc.reg_write(UC_ARM_REG_SP, sp)
+        machine.uc.reg_write(UC_ARM_REG_R0, 0x12345678)
+        pc = 0x60123456
+        self.assertTrue(machine._deliver_data_abort(pc, 0x00000013,
+                                                    0x04031AF0, write=False))
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0x6010D980)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SP), sp)
+        scratch = machine.VECTOR_SCRATCH_PA + 0x10
+        values = struct.unpack('<3I', machine.uc.mem_read(scratch, 12))
+        self.assertEqual(values, (0x12345678, pc, 0x13))
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R0),
+                         scratch + machine.PAGE_OFFSET)
+
+    def test_svc_prefetch_abort_enters_pabt_svc_with_scratch_frame(self):
+        machine = self.make_machine(symbols={'__pabt_svc': 0x6010DBA0})
+        sp = 0x0DC10000
+        machine.uc.reg_write(UC_ARM_REG_SP, sp)
+        machine.uc.reg_write(UC_ARM_REG_R0, 0x0BADF00D)
+        pc = 0x04031AF0
+        self.assertTrue(machine._deliver_prefetch_abort(pc, 0x00000013, pc))
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0x6010DBA0)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SP), sp)
+        scratch = machine.VECTOR_SCRATCH_PA + 0x10
+        values = struct.unpack('<3I', machine.uc.mem_read(scratch, 12))
+        self.assertEqual(values, (0x0BADF00D, pc, 0x13))
+        self.assertEqual(machine.prefetch_aborts_delivered, 1)
+
+    def test_swi_lr_uses_thumb_state(self):
+        machine = self.make_machine()
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x70)  # request Thumb + USR
+        machine.uc.reg_write(UC_ARM_REG_PC, 0x04031AF0)
+        thumb = bool(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x20)
+        machine._on_interrupt(machine.uc, 2)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_LR),
+                         0x04031AF0 + (2 if thumb else 4))
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x1F, 0x13)
+
+    def test_intr_aborts_are_redispatched(self):
+        machine = self.make_machine()
+        calls = []
+        machine._deliver_prefetch_abort = lambda pc, cpsr, addr: calls.append(
+            ('pabt', pc, cpsr, addr)) or True
+        machine._deliver_data_abort = lambda pc, cpsr, addr, write=False: calls.append(
+            ('dabt', pc, cpsr, addr, write)) or True
+        machine.uc.reg_write(UC_ARM_REG_PC, 0x04031AF0)
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x50)
+        machine._on_interrupt(machine.uc, 3)
+        machine.last_dfar = 0x04031000
+        machine._on_interrupt(machine.uc, 4)
+        self.assertEqual(calls[0][0], 'pabt')
+        self.assertEqual(calls[0][1], 0x04031AF0)
+        self.assertEqual(calls[1][0], 'dabt')
+        self.assertEqual(calls[1][3], 0x04031000)
+
+    def test_unmapped_read_hook_captures_address_and_type(self):
+        machine = self.make_machine()
+        self.assertFalse(machine._on_unmapped_read(
+            machine.uc, 16, 0x04031AF4, 4, 0))
+        self.assertEqual(machine._last_unmapped, 0x04031AF4)
+        self.assertFalse(machine._last_unmapped_write)
+
+    def test_unmapped_write_hook_captures_address_and_type(self):
+        machine = self.make_machine()
+        self.assertFalse(machine._on_unmapped_write(
+            machine.uc, 17, 0x04048AC6, 4, 0))
+        self.assertEqual(machine._last_unmapped, 0x04048AC6)
+        self.assertTrue(machine._last_unmapped_write)
+
+    def test_repeated_fault_circuit_breaker(self):
+        machine = self.make_machine()
+        key = (0x04031AF0, 0x04031AF0, 0x10)
+        for _ in range(7):
+            self.assertFalse(machine._note_fault(*key))
+        self.assertTrue(machine._note_fault(*key))
+        self.assertEqual(machine._fault_guard_count, 8)
+        # a different fault resets the counter
+        self.assertFalse(machine._note_fault(0x0402E790, 0x0402E790, 0x10))
+        self.assertEqual(machine._fault_guard_count, 1)
+
+    def test_prefetch_delivery_marks_fault_page_dirty(self):
+        machine = self.make_machine(symbols={'__pabt_usr': 0x6010DE20})
+        machine.mode_sp['svc'] = 0x0DC0FFB0
+        self.assertTrue(machine._deliver_prefetch_abort(0x0402F666, 0x70, 0x0402F666))
+        self.assertTrue(machine._pte_dirty)
+        self.assertEqual(machine._last_fault_page, 0x0402F000)
+
+    def test_flush_cputlb_helper_runs(self):
+        machine = self.make_machine()
+        before = machine.cputlb_flushes
+        machine._flush_cputlb()
+        self.assertEqual(machine.cputlb_flushes, before + 1)
+
+    def test_decode_fault_address_thumb_load(self):
+        machine = self.make_machine()
+        pa = 0x00431AF0
+        machine.uc.mem_write(pa, struct.pack('<H', 0x580B))  # ldr r3,[r1,r0]
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x40 | 0x10 | 0x20)  # Thumb+USR
+        machine.uc.reg_write(UC_ARM_REG_R1, 0x0402E000)
+        machine.uc.reg_write(UC_ARM_REG_R0, 0x1FF48)
+        self.assertEqual(machine._decode_fault_address(pa, pa),
+                         (0x0404DF48, False))
+
+    def test_decode_fault_address_thumb_store(self):
+        machine = self.make_machine()
+        pa = 0x00432000
+        machine.uc.mem_write(pa, struct.pack('<H', 0x604B))  # str r3,[r1,#4]
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x40 | 0x10 | 0x20)
+        machine.uc.reg_write(UC_ARM_REG_R1, 0x0402E000)
+        self.assertEqual(machine._decode_fault_address(pa, pa),
+                         (0x0402E004, True))
+
+    def test_guard_is_keyed_on_decoded_va(self):
+        machine = self.make_machine()
+        pc = 0x04031AF0
+        for _ in range(7):
+            self.assertFalse(machine._note_fault(pc, 0x0404DF48, 0x10))
+        # a different decoded VA must not inherit the counter
+        self.assertFalse(machine._note_fault(pc, 0x0404E85C, 0x10))
+        self.assertEqual(machine._fault_guard_count, 1)
+        self.assertTrue(machine._note_fault(pc, 0x0404DF48, 0x10) is False)
+
+    def test_kernel_phys_translation(self):
+        machine = self.make_machine()
+        base = machine.PAGE_OFFSET
+        self.assertEqual(machine._kernel_phys(base + 0x1000), 0x1000)
+        self.assertEqual(machine._kernel_phys(base + 0x1DC0E000), 0x1DC0E000)
+        self.assertEqual(machine._kernel_phys(0x04031000), 0x04031000)
+
+    def test_tlb_flush_is_counted(self):
+        machine = self.make_machine()
+        before = machine._tlb_flushes
+        machine._flush_tlb()
+        self.assertGreaterEqual(machine._tlb_flushes, before)
+
+    def test_do_page_fault_frame_capture(self):
+        machine = self.make_machine()
+        addr = 0x0DC20000
+        machine.uc.reg_write(UC_ARM_REG_R0, 0x04031AF0)
+        machine.uc.reg_write(UC_ARM_REG_R1, 0x805)
+        machine.uc.reg_write(UC_ARM_REG_R2, addr)
+        machine.uc.reg_write(UC_ARM_REG_SP, 0x0DC10000)
+        words = [0x11110000 + i for i in range(18)]
+        machine.uc.mem_write(addr, struct.pack('<18I', *words))
+        machine._capture_fault_frame(0x60116D94)
+        frame = machine.do_page_fault_frames[-1]
+        self.assertEqual(frame['r0'], '0x04031af0')
+        self.assertEqual(frame['r1'], '0x00000805')
+        self.assertEqual(frame['r2'], '0x0dc20000')
+        self.assertEqual(frame['sp'], '0x0dc10000')
+        self.assertEqual(frame['pt_regs'][0], '0x11110000')
+        self.assertEqual(frame['pt_regs'][17], '0x11110011')
+
+    def test_on_interrupt_ignores_unknown_exceptions(self):
+        machine = self.make_machine()
+        machine.uc.reg_write(UC_ARM_REG_PC, 0x12345678)
+        before_pc = machine.uc.reg_read(UC_ARM_REG_PC)
+        machine._on_interrupt(machine.uc, 5)
+        self.assertEqual(machine.svc_hits, 0)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), before_pc)
 
     def test_abort_delivery_sets_armv7_abort_state(self):
         machine = self.make_machine()

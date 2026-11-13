@@ -158,6 +158,8 @@ def main():
         unmapped_mmio_policy=args.unmapped_mmio_policy,
         exclusive_fallback=not args.no_exclusive_fallback,
         data_abort_fsr=args.fsr,
+        virtual_tlb_enabled=True,
+        virtual_tlb_on_userspace=True,
         data_abort_delivery=not args.no_data_abort_delivery,
         uart_base=args.uart_base,
         serial_input=args.serial_input.encode('latin1'),
