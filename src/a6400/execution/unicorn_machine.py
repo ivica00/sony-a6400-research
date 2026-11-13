@@ -29,8 +29,10 @@ import json
 import struct
 from collections import Counter
 
-from unicorn import (UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_MEM_READ,
-                     UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE, UC_MODE_ARM, Uc)
+from unicorn import (UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_INTR,
+                     UC_HOOK_MEM_READ, UC_HOOK_MEM_READ_UNMAPPED,
+                     UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE,
+                     UC_HOOK_MEM_WRITE_UNMAPPED, UC_MODE_ARM, Uc)
 from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
                                UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2,
                                UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5,
@@ -79,6 +81,12 @@ DEFAULT_SRAM = (0xFE000000, 0x00100000)
 DEFAULT_STUBS = {0xF800277C: 0x100}  # observed early clock/power status poll
 
 
+_R_REG = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
+          UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7,
+          UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
+          UC_ARM_REG_R12]
+
+
 class MachineError(RuntimeError):
     pass
 
@@ -92,7 +100,8 @@ class UnicornMachine:
                  ram_banks=DEFAULT_RAM_BANKS, mmio_ranges=DEFAULT_MMIO_RANGES,
                  sram=DEFAULT_SRAM, uart_base: int = UART0,
                  mmio_read_stubs: dict[int, int] | None = None,
-                 timer_irq_model: bool = True,
+                 timer_irq_model: bool = True, virtual_tlb_enabled: bool = False,
+                 virtual_tlb_on_userspace: bool = False,
                  timer_ticks_per_instruction: int = 1,
                  timer_ticks_per_jiffy: int = TIMER_TICKS_PER_JIFFY,
                  timer_irq_start_instructions: int = 5_000_000,
@@ -144,6 +153,14 @@ class UnicornMachine:
         self.patch_hits: Counter = Counter()
         # Timer/GIC model state (E0417).
         self.timer_irq_model = timer_irq_model
+        self.virtual_tlb_enabled = virtual_tlb_enabled
+        self.virtual_tlb_on_userspace = virtual_tlb_on_userspace
+        self._vtlb_requested = False
+        self._user_refresh_requested = False
+        self._user_refresh_done = False
+        self._activation_pgd = None
+        self.pt_regs_frames: list[dict] = []
+        self.pt_regs_user_frames: list[dict] = []
         self.timer_ticks_per_instruction = timer_ticks_per_instruction
         self.timer_ticks_per_jiffy = timer_ticks_per_jiffy
         self.timer_irq_start_instructions = timer_irq_start_instructions
@@ -208,11 +225,68 @@ class UnicornMachine:
         # modes) and prefetch-abort support.
         self.mode_sp: dict[str, int | None] = {'svc': None, 'irq': None,
                                               'abt': None, 'usr': None}
+        self.tls_value = 0
+        self.do_page_fault_frames: list[dict] = []
+        self.capture_page_fault = False
+        self.svc_hits = 0
+        self.svc_trace: list[dict] = []
+        self.kuser_hits = 0
+        self.kuser_entries: list[dict] = []
         self.mode_lr: dict[str, int | None] = {'svc': None, 'irq': None,
                                               'abt': None, 'usr': None}
         self.user_sp: int | None = None
         self._restore_user_sp = False
         self._pending_exception = ''
+        self.last_ifar = 0
+        self.last_ifsr = 0
+        self.last_dfar = 0
+        self.last_dfsr = 0
+        self.pabt_mrc_hits = 0
+        self.dabt_mrc_hits = 0
+        self._tlb_flushes = 0
+        self._svc_stack_refreshes = 0
+        self._last_thread_info = 0
+        self._last_thread_task = 0
+        self.stack_delivery_trace: list[dict] = []
+        self.max_same_fault_repeats = 8
+        self._fault_guard_key = None
+        self._fault_guard_count = 0
+        self._last_unmapped = None
+        self._last_unmapped_write = False
+        self.live_fault_dumps: list[dict] = []
+        self.pte_rewalks: list[dict] = []
+        self.cputlb_flushes = 0
+        self._last_fault_page = None
+        self.virtual_tlb = False
+        self.virtual_tlb_error = ''
+        self._mmu_enabled = False
+        self._cached_ttbr0 = None
+        self._cached_ttbr1 = None
+        self.switch_mm_hooked = False
+        self.switch_mm_hits = 0
+        self.ttbr0_write_sites: list[int] = []
+        self.ttbr0_write_hits = 0
+        self.switch_mm_values: list[int] = []
+        self._last_switch_mm_pgd = None
+        self.mm_resolve_trace: list[dict] = []
+        self.tlb_fills = 0
+        self.tlb_fill_misses = 0
+        self.tlb_fill_samples: list[dict] = []
+
+
+
+
+        self.fault_classification_trace: list[dict] = []
+
+        self._pte_dirty = False
+        self.mm_fault_returns: list[dict] = []
+        self._page_cache_drops = 0
+
+
+
+
+        self.banked_store_hits = 0
+        self.banked_restore_hits = 0
         self.prefetch_aborts_delivered = 0
         self.prefetch_abort_trace: list[dict] = []
         # E0428: user-access helpers whose faults must be delivered to the
@@ -221,6 +295,8 @@ class UnicornMachine:
         self.demand_page_helpers = {
             '__clear_user_std', '__copy_to_user_std', '__copy_from_user_std',
             '__clear_user', '__copy_to_user', '__copy_from_user',
+            'strncpy_from_user', 'strnlen_user', 'copy_from_user',
+            'copy_to_user', '__get_user', '__put_user',
             'padzero', 'copy_strings', 'copy_strings_kernel',
             'create_elf_tables', 'load_elf_binary'}
         self._uart_regs: dict[int, int] = {}
@@ -297,6 +373,44 @@ class UnicornMachine:
         self._patch_exclusive_instructions()
         self._build_ex_table()
         self._install_hooks()
+        if self.virtual_tlb_enabled and not self.virtual_tlb_on_userspace:
+            self._install_virtual_tlb()
+        self._install_switch_mm_hook()
+        self._install_ttbr0_write_hooks()
+        try:
+            for _pc, _tag in ((0x601085EC, 'do_PrefetchAbort'),
+                              (0x60116D94, 'do_page_fault')):
+                def _abort_frame_hook(uc, address, size, user, tag=_tag):
+                    try:
+                        self._record_user_frame(tag, uc.reg_read(UC_ARM_REG_SP))
+                    except Exception:
+                        pass
+                self.uc.hook_add(UC_HOOK_CODE, _abort_frame_hook,
+                                 begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+        if self.virtual_tlb_on_userspace:
+            def first_user_hook(uc, address, size, user):
+                if self._user_refresh_done or not self.virtual_tlb:
+                    return
+                try:
+                    if (uc.reg_read(UC_ARM_REG_CPSR) & 0x1F) != 0x10:
+                        return
+                except Exception:
+                    return
+                self._user_refresh_done = True
+                self._user_refresh_requested = True
+                try:
+                    uc.emu_stop()
+                except Exception:
+                    pass
+            try:
+                self.uc.hook_add(UC_HOOK_CODE, first_user_hook,
+                                 begin=0x1000, end=0x60000000)
+            except Exception:
+                pass
+
 
     # ------------------------------------------------- exclusive pre-translation
     #: RAM area used for per-site STREX trampolines (VA = PA + PAGE_OFFSET).
@@ -559,6 +673,8 @@ class UnicornMachine:
             except Exception:
                 pass
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, unmapped)
+        self.uc.hook_add(UC_HOOK_MEM_READ_UNMAPPED, self._on_unmapped_read)
+        self.uc.hook_add(UC_HOOK_MEM_WRITE_UNMAPPED, self._on_unmapped_write)
         for begin, end in self.probe_write_ranges:
             def probe_write(uc, access, address, size, value, user):
                 stream = self.mmio_write_bytes.setdefault(address, bytearray())
@@ -590,9 +706,121 @@ class UnicornMachine:
             if handler_pc is not None:
                 banked_pc = handler_pc + 0x1C
                 def banked_store(uc, address, size, user, pc=banked_pc):
+                    self.banked_store_hits += 1
                     self._emulate_banked_store(pc)
                 self.uc.hook_add(UC_HOOK_CODE, banked_store,
                                  begin=banked_pc, end=banked_pc + 3)
+        # ret_to_user's banked-restore instruction: ldmdb sp, {r0..ip, sp, lr}^
+        if False and ret_to_user is not None:  # E0432: gated off (early-boot crash)
+            restore_pc = ret_to_user + 0x24
+            def banked_restore(uc, address, size, user, pc=restore_pc):
+                self._emulate_banked_restore(pc)
+            self.uc.hook_add(UC_HOOK_CODE, banked_restore,
+                             begin=restore_pc, end=restore_pc + 3)
+        # E0436: SWI dispatch implemented but gated off (it stalled early boot at
+        # cmpxchg_futex_value_locked under the current ABT/futex handling).
+        if getattr(self, 'enable_svc_dispatch', False):
+            self.uc.hook_add(UC_HOOK_INTR, self._on_interrupt)
+        ret_to_user = self._symbol_address('ret_to_user')
+        if ret_to_user is not None:
+            def ret_flush_hook(uc, address, size, user, pc=ret_to_user):
+                try:
+                    self._record_frame('ret', uc.reg_read(UC_ARM_REG_SP))
+                    self._record_user_frame('ret', uc.reg_read(UC_ARM_REG_SP))
+                except Exception:
+                    pass
+                # E0452: keep UC_TLB_CPU through kernel init; switch to the
+                # virtual TLB on the first ret_to_user (userspace entry).
+                if (self.virtual_tlb_on_userspace and not self.virtual_tlb
+                        and not self._vtlb_requested):
+                    # E0457: only switch on a real user-mode return.  Kernel
+                    # thread/usermodehelper returns still have TTBR0 =
+                    # swapper_pg_dir and a kernel user_pc; skip those.
+                    try:
+                        sp = uc.reg_read(UC_ARM_REG_SP)
+                        user_pc = self._read32_phys(sp + 0x3C)
+                        pgd = self._resolve_user_pgd()
+                    except Exception:
+                        user_pc, pgd = 0x60000000, None
+                    if 0x1000 <= user_pc < 0x60000000 and pgd:
+                        self._activation_pgd = pgd
+                        self._vtlb_requested = True
+                        try:
+                            uc.emu_stop()
+                        except Exception:
+                            pass
+                        return
+                if self._pte_dirty:
+                    # E0446: prefetch-abort page installs need the same real
+                    # SoftMMU flush as decoded Data Aborts.
+                    page = self._last_fault_page
+                    if page is not None and len(self.pte_rewalks) < 128:
+                        try:
+                            self.pte_rewalks.append(self._pte_report(page))
+                        except Exception:
+                            pass
+                    self._flush_cputlb()
+                    self._flush_tlb()
+                    if page is not None:
+                        remove = getattr(self.uc, 'ctl_remove_cache', None)
+                        if remove is not None:
+                            try:
+                                remove(page, page + 0x1000)
+                                self._page_cache_drops += 1
+                            except Exception:
+                                pass
+                    self._pte_dirty = False
+                    if self.virtual_tlb:
+                        try:
+                            self._refresh_user_ttbr0()
+                            self._read_cp15_ttbr1()
+                        except Exception:
+                            pass
+                # E0440: refresh the live SVC stack and validate thread_info->task
+                sp = uc.reg_read(UC_ARM_REG_SP)
+                self.mode_sp['svc'] = sp
+                self._svc_stack_refreshes += 1
+                ti = sp & ~0x1FFF
+                try:
+                    raw = bytes(uc.mem_read(self._kernel_phys(ti + 0xC), 4))
+                    task = struct.unpack('<I', raw)[0]
+                except Exception:
+                    task = 0
+                self._last_thread_info = ti
+                self._last_thread_task = task
+            self.uc.hook_add(UC_HOOK_CODE, ret_flush_hook,
+                             begin=ret_to_user, end=ret_to_user + 3)
+        mm_return = 0x60116E9C  # return PC after `bl handle_mm_fault` in do_page_fault
+        def mm_return_hook(uc, address, size, user, pc=mm_return):
+            ret = uc.reg_read(UC_ARM_REG_R0)
+            addr = self.last_ifar
+            if len(self.mm_fault_returns) < 32:
+                self.mm_fault_returns.append({
+                    'pc': f'0x{pc:08x}',
+                    'ret': f'0x{ret:08x}',
+                    'addr': f'0x{addr:08x}',
+                    'task': f'0x{self._last_thread_task:08x}'})
+            # E0441: handle_mm_fault returned success (VM_FAULT_MINOR=0); the new
+            # PTE is in guest RAM but Unicorn may still hold a stale translation
+            # for that page.  Drop the cached translation for the page explicitly.
+            if ret & 0xFFF == 0 and addr:
+                page = addr & ~0xFFF
+                remove = getattr(uc, 'ctl_remove_cache', None)
+                if remove is not None:
+                    try:
+                        remove(page, page + 0x1000)
+                        self._page_cache_drops += 1
+                    except Exception:
+                        pass
+        self.uc.hook_add(UC_HOOK_CODE, mm_return_hook, begin=mm_return, end=mm_return + 3)
+        page_fault = self._symbol_address('do_page_fault')
+        if page_fault is not None:
+            def page_fault_hook(uc, address, size, user, pc=page_fault):
+                self._capture_fault_frame(pc)
+            self.uc.hook_add(UC_HOOK_CODE, page_fault_hook,
+                             begin=page_fault, end=page_fault + 3)
+        self._install_fault_mrc_hooks()
+        self._install_kuser_hooks()
         if self.trace_user_mode:
             # Wide low-user window: ld-linux (0x04000000+) and busybox (0x8000+).
             self.uc.hook_add(UC_HOOK_CODE, user_code, begin=0x1000, end=0x60000000)
@@ -825,20 +1053,880 @@ class UnicornMachine:
                 return value
         return None
 
-    def _flush_tlb(self) -> None:
-        """Flush Unicorn's software TLB after a guest PTE/TTBR0 update (E0431)."""
+    def _emulate_banked_restore(self, pc: int) -> None:
+        """Emulate ret_to_user's `ldmdb sp, {r0..ip, sp, lr}^` (E0432).
+
+        On real ARMv7 the `^` form loads the USR-bank SP/LR, leaving the SVC LR
+        (which holds pt_regs->ARM_pc) intact so `movs pc, lr` returns to user.
+        Unicorn shares the registers, so we restore r0..r12 directly and keep
+        the user SP/LR in our banked state for the user-mode restore hook.
+        """
+        sp = self.uc.reg_read(UC_ARM_REG_SP)
+        count = 15
+        pa = self._kernel_phys(sp)
         try:
-            flush = getattr(self.uc, 'ctl_flush_tlb', None)
-            if flush is not None:
+            raw = self.uc.mem_read(pa - 4 * count, 4 * count)
+        except Exception:
+            self.uc.reg_write(UC_ARM_REG_PC, pc + 4)
+            return
+        values = list(struct.unpack('<%dI' % count, bytes(raw)))
+        for index in range(13):
+            self.uc.reg_write(_R_REG[index], values[index])
+        self.mode_sp['usr'] = values[13]
+        self.mode_lr['usr'] = values[14]
+        self.user_sp = values[13]
+        self._restore_user_sp = True
+        self.banked_restore_hits += 1
+        self.uc.reg_write(UC_ARM_REG_PC, pc + 4)
+
+    def _install_kuser_hooks(self) -> None:
+        """Emulate the ARM kuser helpers (E0434).
+
+        The vector page helpers are user-callable code at 0xFFFF0FA0..0xFFFF0FFC.
+        Under Unicorn the page is zero-backed, so a user call would fault; the
+        common helpers (memory barrier, cmpxchg, get_tls, helper version) are
+        emulated and returned to LR.
+        """
+        def record(pc, name):
+            self.kuser_hits += 1
+            if len(self.kuser_entries) < 32:
+                self.kuser_entries.append({'pc': f'0x{pc:08x}', 'name': name})
+
+        def memory_barrier(uc, address, size, user):
+            record(0xFFFF0FA0, 'memory_barrier')
+            uc.reg_write(UC_ARM_REG_R0, 0)
+            uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
+
+        def cmpxchg(uc, address, size, user):
+            ptr = uc.reg_read(UC_ARM_REG_R0)
+            old = uc.reg_read(UC_ARM_REG_R1)
+            new = uc.reg_read(UC_ARM_REG_R2)
+            try:
+                current = struct.unpack('<I', uc.mem_read(ptr, 4))[0]
+            except Exception:
+                uc.reg_write(UC_ARM_REG_R0, 0xFFFFFFFF)
+                uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
+                return
+            if current == old:
+                try:
+                    uc.mem_write(ptr, struct.pack('<I', new))
+                except Exception:
+                    uc.reg_write(UC_ARM_REG_R0, 0xFFFFFFFF)
+                else:
+                    uc.reg_write(UC_ARM_REG_R0, 0)
+            else:
+                uc.reg_write(UC_ARM_REG_R0, 0xFFFFFFFF)
+            record(0xFFFF0FC0, 'cmpxchg')
+            uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
+
+        def get_tls(uc, address, size, user):
+            record(0xFFFF0FE0, 'get_tls')
+            uc.reg_write(UC_ARM_REG_R0, self.tls_value & 0xFFFFFFFF)
+            uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
+
+        def helper_version(uc, address, size, user):
+            record(0xFFFF0FFC, 'helper_version')
+            uc.reg_write(UC_ARM_REG_R0, 5)
+            uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
+
+        for pc, handler in ((0xFFFF0FA0, memory_barrier), (0xFFFF0FC0, cmpxchg),
+                            (0xFFFF0FE0, get_tls), (0xFFFF0FFC, helper_version)):
+            self.uc.hook_add(UC_HOOK_CODE, handler, begin=pc, end=pc + 3)
+
+    def _on_interrupt(self, uc, intno, user_data=None) -> None:
+        """Dispatch ARM supervisor calls to the kernel SWI vector (E0436).
+
+        Unicorn raises UC_ERR_EXCEPTION for SVC/SWI instead of modelling the
+        exception; without this hook a user syscall is misclassified as an
+        abort.  Real ARM semantics: switch to SVC, LR_svc = pc+4,
+        SPSR_svc = old CPSR, PC = 0xFFFF0008 (vector_swi).
+        """
+        if intno in (3, 4):
+            # When UC_HOOK_INTR is registered Unicorn routes CPU exceptions to
+            # this hook instead of raising UC_ERR_EXCEPTION.  Re-dispatch them
+            # into the normal fault-delivery paths so demand paging/fixups work.
+            pc = uc.reg_read(UC_ARM_REG_PC)
+            cpsr = uc.reg_read(UC_ARM_REG_CPSR)
+            if intno == 3:
+                self._deliver_prefetch_abort(pc, cpsr, pc)
+            else:
+                address = self.last_dfar
+                self._deliver_data_abort(pc, cpsr, address, write=False)
+            return
+        if intno != 2:  # UC_ARM_EXCEPTION_SUPERVISOR_CALL
+            return
+        pc = uc.reg_read(UC_ARM_REG_PC)
+        cpsr = uc.reg_read(UC_ARM_REG_CPSR)
+        self.svc_hits += 1
+        if len(self.svc_trace) < 32:
+            self.svc_trace.append({'pc': f'0x{pc:08x}', 'r7': uc.reg_read(UC_ARM_REG_R7)})
+        thumb = bool(cpsr & 0x20)
+        target = (cpsr & 0xF0000000) | 0x13 | 0x80   # SVC, IRQ masked, ARM state
+        uc.reg_write(UC_ARM_REG_CPSR, target)
+        uc.reg_write(UC_ARM_REG_SPSR, cpsr & 0xFFFFFFFF)
+        uc.reg_write(UC_ARM_REG_LR, (pc + (2 if thumb else 4)) & 0xFFFFFFFF)
+        uc.reg_write(UC_ARM_REG_PC, 0xFFFF0008)
+
+    def _capture_fault_frame(self, pc: int) -> None:
+        """Dump r0/r1/r2, SP and the 18-word pt_regs [r2] at do_page_fault entry."""
+        if len(self.do_page_fault_frames) >= 16:
+            return
+        r2 = self.uc.reg_read(UC_ARM_REG_R2)
+        frame = {
+            'pc': f'0x{pc:08x}',
+            'r0': f'0x{self.uc.reg_read(UC_ARM_REG_R0):08x}',
+            'r1': f'0x{self.uc.reg_read(UC_ARM_REG_R1):08x}',
+            'r2': f'0x{r2:08x}',
+            'sp': f'0x{self.uc.reg_read(UC_ARM_REG_SP):08x}',
+            'cpsr': f'0x{self.uc.reg_read(UC_ARM_REG_CPSR):08x}',
+        }
+        # pt_regs lives in kernel virtual space (0x60000000+); translate the
+        # kernel linear map to its physical address for Unicorn mem_read.
+        pa = r2
+        if self.PAGE_OFFSET and self.PAGE_OFFSET <= r2 < self.PAGE_OFFSET + 0x80000000:
+            pa = r2 - self.PAGE_OFFSET
+        try:
+            raw = bytes(self.uc.mem_read(pa, 0x48))
+            frame['pt_regs'] = [f'0x{v:08x}'
+                                for v in struct.unpack('<18I', raw)]
+        except Exception as error:
+            frame['pt_regs_error'] = str(error)
+        self.do_page_fault_frames.append(frame)
+
+    def _install_fault_mrc_hooks(self) -> None:
+        """Inject saved IFAR/IFSR/DFAR/DFSR into the kernel v7_* helpers (E0433).
+
+        Unicorn does not expose the CP15 fault registers written by our emulated
+        exceptions to the kernel's later MRC reads, so patch the four read sites
+        directly: r0/r1 are filled from the saved fault state and the MRC is
+        skipped.
+        """
+        pabt_ifar = self._symbol_address('__pabt_usr')
+        dabt_ifar = self._symbol_address('__dabt_usr')
+        # Fall back to the verified constants when symbols are absent.
+        pabt_mrc_r0, pabt_mrc_r1 = 0x60119B60, 0x60119B64
+        dabt_mrc_r1, dabt_mrc_r0 = 0x60119B44, 0x60119B48
+
+        def make_hook(reg, getter, counter):
+            def hook(uc, address, size, user):
+                uc.reg_write(reg, getter() & 0xFFFFFFFF)
+                setattr(self, counter, getattr(self, counter) + 1)
+                uc.reg_write(UC_ARM_REG_PC, address + 4)
+            return hook
+
+        self.uc.hook_add(UC_HOOK_CODE,
+                         make_hook(UC_ARM_REG_R0, lambda: self.last_ifar,
+                                   'pabt_mrc_hits'),
+                         begin=pabt_mrc_r0, end=pabt_mrc_r0 + 3)
+        self.uc.hook_add(UC_HOOK_CODE,
+                         make_hook(UC_ARM_REG_R1, lambda: self.last_ifsr,
+                                   'pabt_mrc_hits'),
+                         begin=pabt_mrc_r1, end=pabt_mrc_r1 + 3)
+        self.uc.hook_add(UC_HOOK_CODE,
+                         make_hook(UC_ARM_REG_R1, lambda: self.last_dfsr,
+                                   'dabt_mrc_hits'),
+                         begin=dabt_mrc_r1, end=dabt_mrc_r1 + 3)
+        self.uc.hook_add(UC_HOOK_CODE,
+                         make_hook(UC_ARM_REG_R0, lambda: self.last_dfar,
+                                   'dabt_mrc_hits'),
+                         begin=dabt_mrc_r0, end=dabt_mrc_r0 + 3)
+
+    def _deliver_svc_exception(self, pc: int, cpsr: int, kind: str) -> bool:
+        """Emulate vector_stub entry for SVC-mode aborts (E0435).
+
+        __dabt_svc/__pabt_svc expect r0 = 12-byte scratch frame {r0, pc, spsr}
+        and run on the live SVC kernel stack.  Unicorn banks SP, so the current
+        SP is the correct kernel stack and must be preserved; LR still holds the
+        fault-time kernel LR and must not be touched.
+        """
+        handler = self._symbol_address(
+            '__dabt_svc' if kind == 'dabt' else '__pabt_svc')
+        if handler is None:
+            return False
+        scratch_pa = self.VECTOR_SCRATCH_PA + 0x10
+        scratch_va = scratch_pa + self.PAGE_OFFSET
+        r0 = self.uc.reg_read(UC_ARM_REG_R0)
+        self.uc.mem_write(scratch_pa, struct.pack(
+            '<3I', r0 & 0xFFFFFFFF, pc & 0xFFFFFFFF, cpsr & 0xFFFFFFFF))
+        current_mode = cpsr & 0x1F
+        if current_mode == 0x10:
+            self.user_sp = self.uc.reg_read(UC_ARM_REG_SP)
+            self._restore_user_sp = True
+        self.uc.reg_write(UC_ARM_REG_CPSR, 0x13 | 0xC0)
+        self.uc.reg_write(UC_ARM_REG_R0, scratch_va)
+        self.uc.reg_write(UC_ARM_REG_PC, handler)
+        return True
+
+    def _flush_tlb(self) -> None:
+        """Drop Unicorn's cached translations so guest PTE writes take effect (E0438).
+
+        Unicorn's `ctl_flush_tb` invalidates the translated-block cache (the ARM
+        TLB equivalent here); the older CTL name is kept as a fallback.
+        """
+        flush = getattr(self.uc, 'ctl_flush_tb', None)
+        if flush is not None:
+            try:
                 flush()
+                self._tlb_flushes += 1
+                return
+            except Exception:
+                pass
+        try:
+            import unicorn
+            self.uc.ctl(getattr(unicorn, 'UC_CTL_TLB_FLUSH', 0))
+            self._tlb_flushes += 1
+        except Exception:
+            pass
+
+    def _read_cp15_ttbr0(self) -> int:
+        helper_va = self.ABORT_HELPER_PA + 0x200 + self.PAGE_OFFSET
+        code = struct.pack('<3I', 0xEE120F10, 0xEAFFFFFE, 0xEAFFFFFE)
+        saved = {}
+        try:
+            self.uc.mem_write(self.ABORT_HELPER_PA + 0x200, code)
+            saved = {name: self.uc.reg_read(reg) for name, reg in
+                     (('r0', UC_ARM_REG_R0), ('r1', UC_ARM_REG_R1),
+                      ('r2', UC_ARM_REG_R2), ('r3', UC_ARM_REG_R3),
+                      ('lr', UC_ARM_REG_LR), ('pc', UC_ARM_REG_PC),
+                      ('cpsr', UC_ARM_REG_CPSR))}
+            self.uc.reg_write(UC_ARM_REG_CPSR, 0xD3)
+            self.uc.emu_start(helper_va, 0, count=1)
+            value = self.uc.reg_read(UC_ARM_REG_R0)
+            for reg in (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2,
+                        UC_ARM_REG_R3, UC_ARM_REG_LR):
+                key = {UC_ARM_REG_R0: 'r0', UC_ARM_REG_R1: 'r1',
+                       UC_ARM_REG_R2: 'r2', UC_ARM_REG_R3: 'r3',
+                       UC_ARM_REG_LR: 'lr'}[reg]
+                self.uc.reg_write(reg, saved[key])
+            # Unicorn couples the CPSR T bit to the PC LSB: writing an even PC
+            # clears Thumb state.  Restore PC with the correct LSB (E0443).
+            thumb = bool(saved['cpsr'] & 0x20)
+            self.uc.reg_write(UC_ARM_REG_CPSR,
+                              saved['cpsr'] & ~(0x20 if thumb else 0))
+            self.uc.reg_write(UC_ARM_REG_PC, saved['pc'] | (1 if thumb else 0))
+            self._cached_ttbr0 = value & 0xFFFFC000
+            return value
+        except Exception:
+            return 0
+
+    _REG_BY_NAME = {'r0': UC_ARM_REG_R0, 'r1': UC_ARM_REG_R1, 'r2': UC_ARM_REG_R2,
+                    'r3': UC_ARM_REG_R3, 'r4': UC_ARM_REG_R4, 'r5': UC_ARM_REG_R5,
+                    'r6': UC_ARM_REG_R6, 'r7': UC_ARM_REG_R7, 'r8': UC_ARM_REG_R8,
+                    'r9': UC_ARM_REG_R9, 'r10': UC_ARM_REG_R10, 'r11': UC_ARM_REG_R11,
+                    'r12': UC_ARM_REG_R12, 'sp': UC_ARM_REG_SP, 'lr': UC_ARM_REG_LR}
+
+    def _decode_fault_address(self, pc: int, pa: int) -> tuple[int, bool] | None:
+        """Decode the faulting load/store [base,offset] and return (VA, is_write)."""
+        thumb = bool(self.uc.reg_read(UC_ARM_REG_CPSR) & 0x20)
+        if pa is None:
+            return None
+        try:
+            import capstone
+            raw = bytes(self.uc.mem_read(int(pa), 4))
+            md = capstone.Cs(capstone.CS_ARCH_ARM,
+                             capstone.CS_MODE_THUMB if thumb else capstone.CS_MODE_ARM)
+            insn = next(iter(md.disasm(raw, pc)), None)
+            if insn is None or '[' not in insn.op_str:
+                return None
+            mem = insn.op_str.split('[', 1)[1].split(']', 1)[0]
+            parts = [part.strip() for part in mem.split(',')]
+            base_name = parts[0]
+            base_reg = self._REG_BY_NAME.get(base_name)
+            if base_reg is None:
+                return None
+            address = self.uc.reg_read(base_reg)
+            if len(parts) > 1:
+                off = parts[1]
+                if off.startswith('#'):
+                    address += int(off[1:], 0)
+                elif off in self._REG_BY_NAME:
+                    address += self.uc.reg_read(self._REG_BY_NAME[off])
+                else:
+                    return None
+            mnemonic = insn.mnemonic.lower()
+            is_write = mnemonic.startswith(('str', 'stm', 'push'))
+            return address & 0xFFFFFFFF, is_write
+        except Exception:
+            return None
+
+    def _pte_report(self, va: int) -> dict:
+        """Re-walk TTBR0 -> L1 -> L2 for a VA and decode the ARMv7 PTE bits."""
+        ttbr0 = self._read_cp15_ttbr0() & 0xFFFFC000
+        report = {'va': f'0x{va:08x}', 'ttbr0': f'0x{ttbr0:08x}'}
+        try:
+            l1 = struct.unpack('<I', self.uc.mem_read(
+                ttbr0 + ((va >> 20) & 0xFFF) * 4, 4))[0]
+            report['l1'] = f'0x{l1:08x}'
+            if l1 & 2:
+                pa = (l1 & 0xFFF00000) | (va & 0x000FFFFF)
+                report.update({'section': True, 'pa': f'0x{pa:08x}'})
+                return report
+            if not (l1 & 1):
+                report['valid'] = False
+                return report
+            l2pa = l1 & 0xFFFFFC00
+            l2 = struct.unpack('<I', self.uc.mem_read(
+                l2pa + ((va >> 12) & 0xFF) * 4, 4))[0]
+            report['l2'] = f'0x{l2:08x}'
+            report['valid'] = bool(l2 & 2)
+            if l2 & 2:
+                pa = (l2 & 0xFFFFF000) | (va & 0xFFF)
+                report['pa'] = f'0x{pa:08x}'
+                hw = l2 - 0x800 if (l2 & 0xFFF) >= 0x800 else l2
+                report['hw_pte'] = f'0x{hw:08x}'
+                report['ap'] = f'0x{(l2 >> 4) & 3:02x}'
+                report['tex'] = f'0x{(l2 >> 12) & 7:02x}'
+                report['xn'] = bool(l2 & (1 << 4)) if False else None
+                report['c'] = bool(l2 & 8)
+                report['b'] = bool(l2 & 4)
+        except Exception as error:
+            report['error'] = str(error)
+        return report
+
+    def _flush_cputlb(self) -> None:
+        """Force a real Unicorn/QEMU SoftMMU flush: TLBIALL + TTBR0 rewrite + ISB."""
+        helper_va = self.ABORT_HELPER_PA + 0x300 + self.PAGE_OFFSET
+        # E0447 note: an SCTLR-changing write (even with M still set) makes
+        # QEMU sctlr_write() call tlb_flush(cs); that experiment broke early
+        # boot and was reverted.  Kept: TTBR0 rewrite + TLBIALL + DSB + ISB.
+        code = struct.pack('<6I', 0xEE121F10, 0xEE021F10, 0xEE080F17,
+                           0xF57FF04F, 0xF57FF06F, 0xEAFFFFFE)
+        saved = {}
+        try:
+            self.uc.mem_write(self.ABORT_HELPER_PA + 0x300, code)
+            saved = {'r0': self.uc.reg_read(UC_ARM_REG_R0),
+                     'r1': self.uc.reg_read(UC_ARM_REG_R1),
+                     'r2': self.uc.reg_read(UC_ARM_REG_R2),
+                     'r3': self.uc.reg_read(UC_ARM_REG_R3),
+                     'lr': self.uc.reg_read(UC_ARM_REG_LR),
+                     'pc': self.uc.reg_read(UC_ARM_REG_PC),
+                     'cpsr': self.uc.reg_read(UC_ARM_REG_CPSR)}
+            self.uc.reg_write(UC_ARM_REG_CPSR, 0xD3)
+            self.uc.emu_start(helper_va, 0, count=5)
+            thumb = bool(saved['cpsr'] & 0x20)
+            for reg, key in ((UC_ARM_REG_R0, 'r0'), (UC_ARM_REG_R1, 'r1'),
+                             (UC_ARM_REG_R2, 'r2'), (UC_ARM_REG_R3, 'r3'),
+                             (UC_ARM_REG_LR, 'lr')):
+                self.uc.reg_write(reg, saved[key])
+            self.uc.reg_write(UC_ARM_REG_CPSR,
+                              saved['cpsr'] & ~(0x20 if thumb else 0))
+            self.uc.reg_write(UC_ARM_REG_PC, saved['pc'] | (1 if thumb else 0))
+            self.cputlb_flushes += 1
+        except Exception:
+            pass
+
+    def _walk_kernel_pt(self, vaddr: int) -> int | None:
+        """Walk the kernel L1 tables (TTBR1 and/or swapper_pg_dir) for a high VA.
+
+        The exact TTBR1 L1 base/index encoding depends on TTBCR.N, so a small set
+        of candidate bases/indices is tried and only a translation that lands in
+        mapped RAM/MMIO is accepted (E0449).
+        """
+        candidates = []
+        idx = (vaddr >> 20) & 0xFFF
+        for base in (self._cached_ttbr1,):
+            if base:
+                candidates.append((base & ~0x3FFF, idx))
+                candidates.append((base & ~0x3FFF, idx & 0x3FF))
+        sym = self._symbol_address('swapper_pg_dir')
+        if sym is not None:
+            try:
+                pgd = self._kernel_phys(sym) & 0xFFFFC000
+                candidates.append((pgd, idx))
+                candidates.append((pgd, idx & 0x3FF))
+                candidates.append((pgd - 0x2000, idx))
+                candidates.append((pgd - 0x4000, idx))
+            except Exception:
+                pass
+        for base, index in candidates:
+            try:
+                entry_addr = (base + index * 4) & 0xFFFFFFFF
+                l1 = struct.unpack('<I', self.uc.mem_read(entry_addr, 4))[0]
+            except Exception:
+                continue
+            pa = None
+            if l1 & 2:
+                pa = (l1 & 0xFFF00000) | (vaddr & 0x000FFFFF)
+            elif l1 & 1:
+                try:
+                    l2 = struct.unpack('<I', self.uc.mem_read(
+                        (l1 & 0xFFFFFC00) + ((vaddr >> 12) & 0xFF) * 4, 4))[0]
+                except Exception:
+                    l2 = 0
+                if l2 & 2:
+                    pa = (l2 & 0xFFFFF000) | (vaddr & 0xFFF)
+            if pa is not None and self._pa_mapped(pa):
+                return pa
+        return None
+
+    def _read32_phys(self, va: int) -> int:
+        try:
+            return struct.unpack('<I', self.uc.mem_read(self._kernel_phys(va), 4))[0]
+        except Exception:
+            return 0
+
+    def _read32_kernel(self, va: int) -> int:
+        return struct.unpack('<I', self.uc.mem_read(self._kernel_phys(va), 4))[0]
+
+    def _find_pt_regs_base(self, sp: int) -> int | None:
+        """E0461: locate the user pt_regs frame base near SP."""
+        candidates = []
+        ti = sp & ~0x1FFF
+        candidates.extend((ti + 0x1FB0, ti + 0x1FB8, ti + 0x1FA8))
+        for delta in range(-0x100, 0x104, 4):
+            candidates.append(sp + delta)
+        seen = set()
+        for base in candidates:
+            if base in seen:
+                continue
+            seen.add(base)
+            try:
+                cpsr = self._read32_phys(base + 0x40)
+                pc = self._read32_phys(base + 0x3C)
+            except Exception:
+                continue
+            if (cpsr & 0x1F) != 0x10:
+                continue
+            if 0x8000 <= pc < 0x60000000:
+                return base
+        return None
+
+    def _record_user_frame(self, tag: str, sp: int) -> None:
+        if len(self.pt_regs_user_frames) >= 64:
+            return
+        # debug: log near-miss frames whose cpsr slot looks like USR mode
+        try:
+            ti = sp & ~0x1FFF
+            for probe in (ti + 0x1FB0, ti + 0x1FB8, ti + 0x1FA8):
+                cpsr = self._read32_phys(probe + 0x40)
+                pc = self._read32_phys(probe + 0x3C)
+                lr = self._read32_phys(probe + 0x38)
+                if (cpsr & 0x1F) == 0x10:
+                    self.pt_regs_user_frames.append({
+                        'tag': 'probe:' + tag, 'base': f'0x{probe:08x}',
+                        'pc_slot': f'0x{pc:08x}', 'lr_slot': f'0x{lr:08x}',
+                        'cpsr_slot': f'0x{cpsr:08x}'})
+        except Exception:
+            pass
+        base = self._find_pt_regs_base(sp)
+        if base is None:
+            return
+        words = [self._read32_phys(base + off) for off in range(0, 0x44, 4)]
+        self.pt_regs_user_frames.append({
+            'tag': tag, 'sp': f'0x{sp:08x}', 'base': f'0x{base:08x}',
+            'r0': f'0x{words[0]:08x}', 'r1': f'0x{words[1]:08x}',
+            'sp_slot': f'0x{words[0x34 // 4]:08x}',
+            'lr_slot': f'0x{words[0x38 // 4]:08x}',
+            'pc_slot': f'0x{words[0x3C // 4]:08x}',
+            'cpsr_slot': f'0x{words[0x40 // 4]:08x}'})
+
+    def _read_pt_regs_frame(self, sp: int, bias: int = 0) -> list[int]:
+        return [self._read32_phys((sp - bias + off) & 0xFFFFFFFF)
+                for off in range(0, 0x48, 4)]
+
+    def _record_frame(self, tag: str, sp: int, bias: int = 0) -> None:
+        if len(self.pt_regs_frames) >= 24:
+            return
+        try:
+            words = self._read_pt_regs_frame(sp, bias)
+            self.pt_regs_frames.append({
+                'tag': tag, 'sp': f'0x{sp:08x}',
+                'sp_slot': f'0x{words[0x34 // 4]:08x}',
+                'lr_slot': f'0x{words[0x38 // 4]:08x}',
+                'pc_slot': f'0x{words[0x3C // 4]:08x}',
+                'cpsr_slot': f'0x{words[0x40 // 4]:08x}',
+                'words': [f'0x{w:08x}' for w in words]})
+        except Exception:
+            pass
+
+    def _resolve_user_pgd(self) -> int | None:
+        """Resolve current->mm->pgd (E0453): thread_info = SP & ~0x1FFF,
+        task = [ti+0xC], mm = [task+0xCC], pgd = [mm+8]."""
+        try:
+            sp = self.uc.reg_read(UC_ARM_REG_SP)
+            ti = sp & ~0x1FFF
+            task = self._read32_kernel(ti + 0xC)
+            if not task:
+                return None
+            mm = self._read32_kernel(task + 0xCC)
+            if not mm:
+                mm = self._read32_kernel(task + 0xD0)  # active_mm fallback
+            if not mm:
+                return None
+            pgd_va = self._read32_kernel(mm + 8)
+            pgd_pa = self._kernel_phys(pgd_va) & 0xFFFFC000
+            if 0x1000 <= pgd_pa < 0x80000000 and pgd_pa != 0x00104000:
+                return pgd_pa
+        except Exception:
+            return None
+        return None
+
+    def _refresh_user_ttbr0(self) -> None:
+        """Prefer the live CP15 TTBR0, fall back to current->mm->pgd."""
+        try:
+            value = self._read_cp15_ttbr0() & 0xFFFFC000
+            if value and value != 0x00104000:
+                self._cached_ttbr0 = value
+                return
+            if self._last_switch_mm_pgd and self._last_switch_mm_pgd != 0x00104000:
+                self._cached_ttbr0 = self._last_switch_mm_pgd
                 return
         except Exception:
             pass
+        fallback = self._resolve_user_pgd()
+        if fallback:
+            self._cached_ttbr0 = fallback
+        elif len(self.mm_resolve_trace) < 8:
+            try:
+                sp = self.uc.reg_read(UC_ARM_REG_SP)
+                ti = sp & ~0x1FFF
+                task = self._read32_kernel(ti + 0xC)
+                mm = self._read32_kernel(task + 0xCC) if task else 0
+                pgd_va = self._read32_kernel(mm + 8) if mm else 0
+                self.mm_resolve_trace.append({
+                    'sp': f'0x{sp:08x}', 'ti': f'0x{ti:08x}',
+                    'task': f'0x{task:08x}', 'mm': f'0x{mm:08x}',
+                    'pgd_va': f'0x{pgd_va:08x}',
+                    'ttbr0_read': f'0x{value:08x}',
+                    'last_switch': (f'0x{self._last_switch_mm_pgd:08x}'
+                                    if self._last_switch_mm_pgd else None)})
+            except Exception:
+                pass
+
+    @staticmethod
+    def scan_ttbr0_write_sites(code: bytes, base: int) -> list[tuple[int, int]]:
+        """Find mcr p15,0,Rt,c2,c0,0 (TTBR0 write) sites: (addr, Rt)."""
+        sites = []
+        for offset in range(0, len(code) - 3, 4):
+            word = struct.unpack_from('<I', code, offset)[0]
+            if (word & 0xFFFF0FFF) == 0xEE020F10:
+                sites.append((base + offset, (word >> 12) & 0xF))
+        # E0456: Thumb-2 32-bit encoding 0xEE02 / 0x0F10 (Rt in hw2[15:12])
+        for offset in range(0, len(code) - 3, 2):
+            hw1 = struct.unpack_from('<H', code, offset)[0]
+            if hw1 != 0xEE02:
+                continue
+            hw2 = struct.unpack_from('<H', code, offset + 2)[0]
+            if (hw2 & 0x0FFF) == 0x0F10:
+                site = base + offset
+                rt = (hw2 >> 12) & 0xF
+                if (site, rt) not in sites:
+                    sites.append((site, rt))
+        sites.sort()
+        return sites
+
+    def _install_ttbr0_write_hooks(self) -> None:
+        """Hook every TTBR0 write site and cache the pgd physical value (E0455)."""
+        regs = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3,
+                UC_ARM_REG_R4, UC_ARM_REG_R5, UC_ARM_REG_R6, UC_ARM_REG_R7,
+                UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
+                UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC]
         try:
-            import unicorn
-            self.uc.ctl(unicorn.UC_CTL_TLB_FLUSH, 0)
+            code = self.kernel_raw
+            base = self.kernel_load
+            if base < 0x60000000:
+                # the raw image is loaded at a physical address; scan/hook it at
+                # its kernel virtual address (E0455)
+                base += 0x60000000
+            sites = self.scan_ttbr0_write_sites(code, base)
         except Exception:
-            pass
+            return
+        self.ttbr0_write_sites = [site for site, _ in sites][:16]
+        for site, rt in sites[:16]:
+            def hook(uc, hook_address, size, user, pc=site, rt=rt):
+                try:
+                    value = uc.reg_read(regs[rt]) & ~0x3FFF
+                    self.ttbr0_write_hits += 1
+                    if len(self.switch_mm_values) < 8:
+                        self.switch_mm_values.append(value)
+                    if 0x00100000 <= value < 0x80000000 and value != 0x00104000:
+                        self._cached_ttbr0 = value
+                        self._last_switch_mm_pgd = value
+                except Exception:
+                    pass
+            try:
+                self.uc.hook_add(UC_HOOK_CODE, hook, begin=site, end=site + 4)
+            except Exception:
+                pass
+
+    def _install_switch_mm_hook(self) -> None:
+        """Hook cpu_v7_switch_mm(r0 = pgd phys) to track TTBR0 (E0453)."""
+        try:
+            address = self._symbol_address('cpu_v7_switch_mm')
+        except Exception:
+            address = None
+        if address is None:
+            # E0454: the decoded kallsyms used by the runner does not expose
+            # cpu_v7_switch_mm; use the verified image address instead.
+            address = 0x6011A26C
+        self.switch_mm_address = address
+        try:
+            def switch_mm_hook(uc, hook_address, size, user, pc=address):
+                try:
+                    pgd = uc.reg_read(UC_ARM_REG_R0) & 0xFFFFC000
+                    self.switch_mm_hits += 1
+                    if len(self.switch_mm_values) < 8:
+                        self.switch_mm_values.append(pgd)
+                    if 0x1000 <= pgd < 0x80000000:
+                        self._last_switch_mm_pgd = pgd
+                        self._cached_ttbr0 = pgd
+                except Exception:
+                    pass
+            self.uc.hook_add(UC_HOOK_CODE, switch_mm_hook,
+                            begin=address, end=address + 0x20)
+            self.switch_mm_hooked = True
+        except Exception:
+            self.switch_mm_hooked = False
+
+    def _read_cp15_ttbr1(self) -> int:
+        helper_va = self.ABORT_HELPER_PA + 0x240 + self.PAGE_OFFSET
+        code = struct.pack('<3I', 0xEE120F30, 0xEAFFFFFE, 0xEAFFFFFE)
+        saved = {}
+        try:
+            self.uc.mem_write(self.ABORT_HELPER_PA + 0x240, code)
+            saved = {name: self.uc.reg_read(reg) for name, reg in
+                     (('r0', UC_ARM_REG_R0), ('r1', UC_ARM_REG_R1),
+                      ('r2', UC_ARM_REG_R2), ('r3', UC_ARM_REG_R3),
+                      ('lr', UC_ARM_REG_LR), ('pc', UC_ARM_REG_PC),
+                      ('cpsr', UC_ARM_REG_CPSR))}
+            self.uc.reg_write(UC_ARM_REG_CPSR, 0xD3)
+            self.uc.emu_start(helper_va, 0, count=1)
+            value = self.uc.reg_read(UC_ARM_REG_R0)
+            for reg, key in ((UC_ARM_REG_R0, 'r0'), (UC_ARM_REG_R1, 'r1'),
+                             (UC_ARM_REG_R2, 'r2'), (UC_ARM_REG_R3, 'r3'),
+                             (UC_ARM_REG_LR, 'lr')):
+                self.uc.reg_write(reg, saved[key])
+            thumb = bool(saved['cpsr'] & 0x20)
+            self.uc.reg_write(UC_ARM_REG_CPSR,
+                              saved['cpsr'] & ~(0x20 if thumb else 0))
+            self.uc.reg_write(UC_ARM_REG_PC, saved['pc'] | (1 if thumb else 0))
+            self._cached_ttbr1 = value & 0x7FFFFFFF & ~0x3FFF
+            return value
+        except Exception:
+            return 0
+
+    def _pa_mapped(self, pa: int) -> bool:
+        for begin, end in self._mapped:
+            if begin <= pa < end:
+                return True
+        return False
+
+    def _walk_page_tables_phys(self, vaddr: int) -> int | None:
+        """Walk live TTBR0 -> L1 -> L2 using physical mem_read only (no guest exec)."""
+        ttbr0 = self._cached_ttbr0
+        if not ttbr0:
+            return None
+        try:
+            l1 = struct.unpack('<I', self.uc.mem_read(
+                (ttbr0 & 0xFFFFC000) + ((vaddr >> 20) & 0xFFF) * 4, 4))[0]
+            if l1 & 2:
+                return (l1 & 0xFFF00000) | (vaddr & 0x000FFFFF)
+            if not (l1 & 1):
+                return None
+            l2pa = l1 & 0xFFFFFC00
+            l2 = struct.unpack('<I', self.uc.mem_read(
+                l2pa + ((vaddr >> 12) & 0xFF) * 4, 4))[0]
+            if l2 & 2:
+                return (l2 & 0xFFFFF000) | (vaddr & 0xFFF)
+            return None
+        except Exception:
+            return None
+
+    def _translate_virtual(self, vaddr: int) -> int | None:
+        """Map a VA to a PA for the UC_TLB_VIRTUAL fill hook (E0448)."""
+        if vaddr >= 0xFFFF0000:
+            # high vectors and the identity-mapped MMIO/SRAM window
+            return vaddr
+        if vaddr >= 0x60000000:
+            if vaddr < 0x80000000:
+                return vaddr - 0x60000000
+            # vmalloc/ioremap: use the kernel page tables (E0448); the plain
+            # identity guess is only a last resort for stubbed MMIO pages.
+            pa = self._walk_kernel_pt(vaddr)
+            if pa is not None:
+                return pa
+            if vaddr >= 0xF0000000:
+                # known CXD90045 hardware MMIO/SRAM window: identity-mapped stubs
+                return vaddr
+            # unmapped vmalloc/fixmap must surface as a real fault, not a bogus PA
+            return None
+        if not self._mmu_enabled:
+            # pre-MMU early boot: the kernel runs from physical addresses
+            return vaddr
+        return self._walk_page_tables_phys(vaddr)
+
+    def _on_tlb_fill(self, uc, vaddr, access, entry, user_data=None) -> bool:
+        self.tlb_fills += 1
+        try:
+            if access == 18 and vaddr >= 0x60000000:  # UC_MEM_FETCH
+                self._mmu_enabled = True
+            target = self._translate_virtual(vaddr)
+            if target is None:
+                self.tlb_fill_misses += 1
+                if len(self.tlb_fill_samples) < 64:
+                    sample = {'vaddr': f'0x{vaddr:08x}', 'access': access,
+                              'ttbr0': (f'0x{self._cached_ttbr0:08x}'
+                                        if self._cached_ttbr0 else None),
+                              'ttbr1': (f'0x{self._cached_ttbr1:08x}'
+                                        if self._cached_ttbr1 else None)}
+                    sym = self._symbol_address('swapper_pg_dir')
+                    sample['swapper_pg_dir'] = f'0x{sym:08x}' if sym else None
+                    probes = []
+                    idx = (vaddr >> 20) & 0xFFF
+                    bases = []
+                    if self._cached_ttbr1:
+                        bases.append(self._cached_ttbr1 & ~0x3FFF)
+                    if sym:
+                        try:
+                            bases.append(self._kernel_phys(sym) & 0xFFFFC000)
+                        except Exception:
+                            pass
+                    for base in bases[:2]:
+                        for index in (idx, idx & 0x3FF):
+                            try:
+                                word = struct.unpack('<I', self.uc.mem_read(
+                                    (base + index * 4) & 0xFFFFFFFF, 4))[0]
+                                probes.append({'base': f'0x{base:08x}',
+                                               'index': index,
+                                               'l1': f'0x{word:08x}'})
+                            except Exception as error:
+                                probes.append({'base': f'0x{base:08x}',
+                                               'index': index,
+                                               'error': str(error)[:40]})
+                    sample['probes'] = probes[:8]
+                    self.tlb_fill_samples.append(sample)
+                return False
+            entry.paddr = target
+            entry.perms = 7  # UC_PROT_ALL
+            return True
+        except Exception:
+            return False
+
+    def _install_virtual_tlb(self) -> None:
+        """Enable Unicorn's virtual TLB and the live page-table fill hook (E0448)."""
+        try:
+            from unicorn import UC_HOOK_TLB_FILL, UC_TLB_VIRTUAL
+            self.uc.ctl_set_tlb_mode(UC_TLB_VIRTUAL)
+            self.uc.hook_add(UC_HOOK_TLB_FILL, self._on_tlb_fill)
+            self.virtual_tlb = True
+        except Exception as error:
+            self.virtual_tlb = False
+            self.virtual_tlb_error = f'{type(error).__name__}: {error}'
+
+    def _walk_user_va(self, pc: int) -> dict | None:
+        """Resolve a user VA through TTBR0 -> L1 -> L2 and return its page info."""
+        ttbr0 = self._read_cp15_ttbr0() & 0xFFFFC000
+        info = {'pc': f'0x{pc:08x}', 'ttbr0': f'0x{ttbr0:08x}'}
+        try:
+            l1 = struct.unpack('<I', self.uc.mem_read(
+                ttbr0 + ((pc >> 20) & 0xFFF) * 4, 4))[0]
+            info['l1'] = f'0x{l1:08x}'
+            pa = None
+            if l1 & 2:
+                pa = (l1 & 0xFFF00000) | (pc & 0x000FFFFF)
+            elif l1 & 1:
+                l2pa = l1 & 0xFFFFFC00
+                l2 = struct.unpack('<I', self.uc.mem_read(
+                    l2pa + ((pc >> 12) & 0xFF) * 4, 4))[0]
+                info['l2'] = f'0x{l2:08x}'
+                if l2 & 2:
+                    pa = (l2 & 0xFFFFF000) | (pc & 0xFFF)
+            if pa is not None:
+                info['pa'] = f'0x{pa:08x}'
+            return info
+        except Exception as error:
+            info['error'] = str(error)
+            return info
+
+    def _capture_live_fault_page(self, pc: int) -> dict | None:
+        """Optional capped diagnostic dump (bytes/regs) for a user fault PC."""
+        info = self._walk_user_va(pc) or {'pc': f'0x{pc:08x}'}
+        dump = dict(info)
+        dump['cpsr'] = f'0x{self.uc.reg_read(UC_ARM_REG_CPSR):08x}'
+        for name, reg in (('r0', UC_ARM_REG_R0), ('r1', UC_ARM_REG_R1),
+                          ('r2', UC_ARM_REG_R2), ('lr', UC_ARM_REG_LR),
+                          ('sp', UC_ARM_REG_SP)):
+            dump[name] = f'0x{self.uc.reg_read(reg):08x}'
+        if len(self.live_fault_dumps) < 8 and 'pa' in dump:
+            try:
+                raw = bytes(self.uc.mem_read(int(dump['pa'], 16) - 8, 24))
+                dump['bytes'] = raw.hex()
+                dump['halfword_at_pc'] = f'0x{int.from_bytes(raw[8:10], "little"):04x}'
+                dump['halfword_before'] = f'0x{int.from_bytes(raw[6:8], "little"):04x}'
+            except Exception as error:
+                dump['error'] = str(error)
+            self.live_fault_dumps.append(dump)
+        return dump
+
+    def _unused_capture(self, pc: int) -> dict | None:
+        ttbr0 = self._read_cp15_ttbr0() & 0xFFFFC000
+        dump = {'pc': f'0x{pc:08x}', 'cpsr': f'0x{self.uc.reg_read(UC_ARM_REG_CPSR):08x}',
+                'ttbr0': f'0x{ttbr0:08x}', 'r0': f'0x{self.uc.reg_read(UC_ARM_REG_R0):08x}',
+                'r1': f'0x{self.uc.reg_read(UC_ARM_REG_R1):08x}',
+                'r2': f'0x{self.uc.reg_read(UC_ARM_REG_R2):08x}',
+                'lr': f'0x{self.uc.reg_read(UC_ARM_REG_LR):08x}',
+                'sp': f'0x{self.uc.reg_read(UC_ARM_REG_SP):08x}'}
+        try:
+            l1 = struct.unpack('<I', self.uc.mem_read(
+                ttbr0 + ((pc >> 20) & 0xFFF) * 4, 4))[0]
+            dump['l1'] = f'0x{l1:08x}'
+            pa = None
+            if l1 & 2:
+                pa = (l1 & 0xFFF00000) | (pc & 0x000FFFFF)
+            elif l1 & 1:
+                l2pa = l1 & 0xFFFFFC00
+                l2 = struct.unpack('<I', self.uc.mem_read(
+                    l2pa + ((pc >> 12) & 0xFF) * 4, 4))[0]
+                dump['l2'] = f'0x{l2:08x}'
+                if l2 & 2:
+                    pa = (l2 & 0xFFFFF000) | (pc & 0xFFF)
+            if pa is not None:
+                dump['pa'] = f'0x{pa:08x}'
+                raw = bytes(self.uc.mem_read(pa - 8, 24))
+                dump['bytes'] = raw.hex()
+                dump['halfword_at_pc'] = f'0x{int.from_bytes(raw[8:10], "little"):04x}'
+                dump['halfword_before'] = f'0x{int.from_bytes(raw[6:8], "little"):04x}'
+        except Exception as error:
+            dump['error'] = str(error)
+        self.live_fault_dumps.append(dump)
+        return dump
+
+    def _on_unmapped_read(self, uc, access, address, size, value, user_data=None) -> bool:
+        self._last_unmapped = address
+        self._last_unmapped_write = False
+        return False
+
+    def _on_unmapped_write(self, uc, access, address, size, value, user_data=None) -> bool:
+        self._last_unmapped = address
+        self._last_unmapped_write = True
+        return False
+
+    def _note_fault(self, pc: int, address: int, cpsr: int) -> bool:
+        """Repeated-fault circuit breaker (E0441).
+
+        Returns True when the exact same (pc, faulting VA, mode) fault has been
+        delivered `max_same_fault_repeats` times in a row, so diagnostic runs
+        stop quickly instead of burning the whole instruction budget.
+        """
+        key = (pc & ~1, address, cpsr & 0x1F)
+        if key == self._fault_guard_key:
+            self._fault_guard_count += 1
+        else:
+            self._fault_guard_key = key
+            self._fault_guard_count = 1
+        return self._fault_guard_count >= self.max_same_fault_repeats
+
+    def _kernel_phys(self, va: int) -> int:
+        """Translate a kernel linear-map VA to its physical address (E0437).
+
+        Unicorn's mem_read/mem_write operate on the physical address space, but
+        kernel stacks/pt_regs live at 0x60000000+ (PAGE_OFFSET).  All kernel-VA
+        accesses from the emulator must translate first.
+        """
+        if (self.PAGE_OFFSET and self.PAGE_OFFSET <= va
+                < self.PAGE_OFFSET + 0x80000000):
+            return va - self.PAGE_OFFSET
+        return va
 
     def _emulate_banked_store(self, pc: int) -> None:
         """Emulate `stmdb r0, {sp, lr}^` using the saved USR bank values.
@@ -851,9 +1939,10 @@ class UnicornMachine:
         user_lr = self.mode_lr.get('usr')
         if user_sp is None:
             user_sp = self.user_sp
+        pa = self._kernel_phys(base)
         try:
-            self.uc.mem_write(base - 8, struct.pack('<I', (user_sp or 0) & 0xFFFFFFFF))
-            self.uc.mem_write(base - 4, struct.pack('<I', (user_lr or 0) & 0xFFFFFFFF))
+            self.uc.mem_write(pa - 8, struct.pack('<I', (user_sp or 0) & 0xFFFFFFFF))
+            self.uc.mem_write(pa - 4, struct.pack('<I', (user_lr or 0) & 0xFFFFFFFF))
         except Exception:
             pass
         self.uc.reg_write(UC_ARM_REG_PC, pc + 4)
@@ -871,8 +1960,6 @@ class UnicornMachine:
             '__pabt_usr' if self._pending_exception == 'pabt' else '__dabt_usr')
         if handler is None:
             return False
-        if self.mode_sp.get('svc') is None:
-            return False
         scratch_pa = self.VECTOR_SCRATCH_PA
         scratch_va = scratch_pa + self.PAGE_OFFSET
         r0 = self.uc.reg_read(UC_ARM_REG_R0)
@@ -883,7 +1970,33 @@ class UnicornMachine:
         self.mode_lr['usr'] = self.uc.reg_read(UC_ARM_REG_LR)
         self._restore_user_sp = True
         self.uc.reg_write(UC_ARM_REG_CPSR, 0x13 | 0xC0)  # SVC, IRQ/FIQ masked
-        self.uc.reg_write(UC_ARM_REG_SP, self.mode_sp['svc'])
+        # E0440: Unicorn banks SP, so after the mode switch R13 already holds
+        # the live SVC bank value (the kernel stack it returned to user on).
+        # Do NOT overwrite it with a stale capture; validate thread_info->task.
+        live_sp = self.uc.reg_read(UC_ARM_REG_SP)
+        ti = live_sp & ~0x1FFF
+        task = 0
+        try:
+            raw = bytes(self.uc.mem_read(self._kernel_phys(ti + 0xC), 4))
+            task = struct.unpack('<I', raw)[0]
+        except Exception:
+            task = 0
+        if task == 0 and self.mode_sp.get('svc') is not None:
+            # fall back to the last value captured at ret_to_user
+            self.uc.reg_write(UC_ARM_REG_SP, self.mode_sp['svc'])
+            live_sp = self.mode_sp['svc']
+            ti = live_sp & ~0x1FFF
+            try:
+                raw = bytes(self.uc.mem_read(self._kernel_phys(ti + 0xC), 4))
+                task = struct.unpack('<I', raw)[0]
+            except Exception:
+                task = 0
+        if len(self.stack_delivery_trace) < 32:
+            self.stack_delivery_trace.append({
+                'pc': f'0x{pc:08x}', 'sp': f'0x{live_sp:08x}',
+                'thread_info': f'0x{ti:08x}', 'task': f'0x{task:08x}'})
+        self._last_thread_info = ti
+        self._last_thread_task = task
         self.uc.reg_write(UC_ARM_REG_R0, scratch_va)
         self.uc.reg_write(UC_ARM_REG_LR, pc)
         self.uc.reg_write(UC_ARM_REG_PC, handler)
@@ -925,6 +2038,22 @@ class UnicornMachine:
         """Deliver an ARMv7 Prefetch Abort to vector 0xFFFF000C (E0429)."""
         if not self.data_abort_delivery:
             return False
+        self.last_ifar = address & 0xFFFFFFFF
+        self.last_ifsr = 0x5
+        self._pte_dirty = True
+        self._last_fault_page = address & ~0xFFF
+        if ((cpsr & 0x1F) == 0x13
+                and self._symbol_address('__pabt_svc') is not None):
+            if not self._set_cp15_prefetch_fault(address, 0x5):
+                return False
+            self._pending_exception = 'pabt'
+            if self._deliver_svc_exception(pc, cpsr, 'pabt'):
+                self.prefetch_aborts_delivered += 1
+                if len(self.prefetch_abort_trace) < 64:
+                    self.prefetch_abort_trace.append({
+                        'pc': f'0x{pc:08x}', 'address': f'0x{address:08x}',
+                        'ifsr': '0x00000005', 'user': False, 'svc': True})
+                return True
         if (cpsr & 0x1F) == 0x10 and self._symbol_address('__pabt_usr') is not None:
             if not self._set_cp15_prefetch_fault(address, 0x5):
                 return False
@@ -938,6 +2067,8 @@ class UnicornMachine:
                 return True
         if self.prefetch_aborts_delivered >= self.data_abort_limit:
             return False
+        self.last_ifar = address & 0xFFFFFFFF
+        self.last_ifsr = 0x5
         if not self._set_cp15_prefetch_fault(address, 0x5):
             return False
         current_mode = cpsr & 0x1F
@@ -989,6 +2120,12 @@ class UnicornMachine:
         """Deliver an ARMv7 Data Abort to 0xFFFF0010 with DFAR/DFSR populated."""
         if not self.data_abort_delivery:
             return False
+        # E0445: the kernel reads DFAR/DFSR through the v7_early_abort MRC hooks,
+        # so the saved fault state MUST be updated before the user-mode delivery
+        # (previously it was only set on the kernel-mode path -> stale DFAR).
+        fsr = self.data_abort_fsr | (0x800 if write else 0)
+        self.last_dfar = address & 0xFFFFFFFF
+        self.last_dfsr = fsr & 0xFFFFFFFF
         if (cpsr & 0x1F) == 0x10 and self._symbol_address('__dabt_usr') is not None:
             if not self._set_cp15_fault(address, 0x5 | (0x800 if write else 0)):
                 return False
@@ -1005,6 +2142,27 @@ class UnicornMachine:
             self._abort_last_pc = pc
             self._abort_same_pc = 1
         fsr = self.data_abort_fsr | (0x800 if write else 0)
+        self.last_dfar = address & 0xFFFFFFFF
+        self.last_dfsr = fsr & 0xFFFFFFFF
+        self._pte_dirty = True
+        self._last_fault_page = address & ~0xFFF
+        if ((cpsr & 0x1F) == 0x13
+                and self._symbol_address('__dabt_svc') is not None):
+            # Live SVC-mode fault: emulate the vector stub into __dabt_svc and
+            # keep the current kernel SP/LR (do_DataAbort still runs the kernel
+            # exception-table lookup for genuine invalid probes).
+            if not self._set_cp15_fault(address, fsr):
+                return False
+            self._pending_exception = 'dabt'
+            delivered = self._deliver_svc_exception(pc, cpsr, 'dabt')
+            if delivered:
+                self.data_aborts_delivered += 1
+                if len(self.data_abort_trace) < 64:
+                    self.data_abort_trace.append({
+                        'pc': f'0x{pc:08x}', 'address': f'0x{address:08x}',
+                        'fsr': f'0x{fsr:08x}', 'write': bool(write),
+                        'user': False, 'svc': True})
+            return delivered
         if not self._set_cp15_fault(address, fsr):
             return False
         # ABT mode with I/F masked; banked SPSR_abt/LR_abt after the CPSR switch.
@@ -1145,13 +2303,50 @@ class UnicornMachine:
                 # PC after each slice is the sampling record.
                 remaining = limit
                 while remaining > 0:
+                    if (self.virtual_tlb and self._cached_ttbr1 is None
+                            and (self.uc.reg_read(UC_ARM_REG_PC) >= 0x60000000)):
+                        try:
+                            self._read_cp15_ttbr1()
+                        except Exception:
+                            pass
                     self._try_inject_irq()
                     slice_size = min(self.slice_size, remaining)
                     pc_now = self.uc.reg_read(UC_ARM_REG_PC)
                     thumb = self.uc.reg_read(UC_ARM_REG_CPSR) & 0x20
+                    self._last_unmapped = None
                     try:
                         self.uc.emu_start(pc_now | (1 if thumb else 0), 0,
                                           count=slice_size)
+                        if self._user_refresh_requested:
+                            self._user_refresh_requested = False
+                            try:
+                                self._refresh_user_ttbr0()
+                                self._read_cp15_ttbr1()
+                            except Exception:
+                                pass
+                        if self._user_refresh_requested:
+                            self._user_refresh_requested = False
+                        if self._vtlb_requested and not self.virtual_tlb:
+                            self._install_virtual_tlb()
+                            self._vtlb_requested = False
+                            self._mmu_enabled = True
+                            # Prime the page-table caches before any user fetch.
+                            if self._activation_pgd:
+                                self._cached_ttbr0 = self._activation_pgd
+                            try:
+                                self.uc.reg_write(UC_ARM_REG_CPSR, 0xD3)
+                                self._refresh_user_ttbr0()
+                                self._read_cp15_ttbr1()
+                            except Exception:
+                                pass
+                            if self._activation_pgd:
+                                self._cached_ttbr0 = self._activation_pgd
+                            remove = getattr(self.uc, 'ctl_remove_cache', None)
+                            if remove is not None:
+                                try:
+                                    remove(0, 0x100000000 - 0x1000)
+                                except Exception:
+                                    pass
                     except Exception as error:
                         message = str(error)
                         if ('UNMAPPED' in message or 'UC_ERR_EXCEPTION' in message
@@ -1162,17 +2357,118 @@ class UnicornMachine:
                             effective = info.get('effective_address')
                             mnemonic = info.get('mnemonic', '')
                             fault_va = int(effective, 16) if effective else None
+                            # E0442: use the exact unmapped access captured by the
+                            # READ/WRITE_UNMAPPED hooks; only FETCH faults (or a
+                            # fault whose address equals PC) are prefetch aborts.
+                            upper = message.upper()
+                            is_fetch = 'FETCH' in upper or 'INSN' in upper
+                            captured = self._last_unmapped is not None
+                            if (not captured and self.unmapped
+                                    and self.unmapped[-1].get('pc') == pc):
+                                # generic UC_HOOK_MEM_UNMAPPED fired for this PC
+                                entry = self.unmapped[-1]
+                                self._last_unmapped = entry.get('address')
+                                self._last_unmapped_write = (
+                                    entry.get('access') == 1)
+                                captured = True
+                            is_mem = (captured or 'READ' in upper
+                                      or 'WRITE' in upper)
+                            access_addr = fault_va
+                            if captured:
+                                access_addr = self._last_unmapped
+                            write = (self._last_unmapped_write
+                                     or mnemonic.startswith(('str', 'stm', 'push')))
                             user_mode_cpsr = (cpsr & 0x1F) == 0x10
-                            prefetch = ('FETCH' in message
-                                        or (fault_va is not None and fault_va == pc)
-                                        or (user_mode_cpsr
-                                            and (fault_va is None or mnemonic == '')))
+                            # Prefetch only for instruction fetch or an unknown
+                            # user-mode fault with no captured memory access; a
+                            # captured READ/WRITE_UNMAPPED is always a Data Abort.
+                            prefetch = is_fetch or (not is_mem and user_mode_cpsr)
+                            if len(self.fault_classification_trace) < 64:
+                                self.fault_classification_trace.append({
+                                    'pc': f'0x{pc:08x}',
+                                    'address': (f'0x{access_addr:08x}'
+                                                if access_addr is not None else None),
+                                    'kind': 'prefetch' if prefetch else 'data',
+                                    'write': bool(write),
+                                    'msg': message[:40]})
                             user_mode = (cpsr & 0x1F) == 0x10
+                            if (not is_mem and not is_fetch and user_mode
+                                    and 0x1000 <= pc < 0x60000000):
+                                # E0443: distinguish a real CPU exception (SWI/UNDEF)
+                                # from an instruction-fetch page fault by checking
+                                # whether the faulting page is mapped in the guest
+                                # page tables.  Mapped -> dispatch as supervisor call;
+                                # unmapped -> fall through to the prefetch abort path.
+                                # E0444: decode is unconditional for a mapped page;
+                                # the capped dump is only for diagnostics.
+                                info = self._walk_user_va(pc)
+                                self._capture_live_fault_page(pc)
+                                page_pa = None
+                                if info is not None and 'pa' in info:
+                                    page_pa = int(info['pa'], 16)
+                                is_svc = False
+                                if page_pa is not None:
+                                    try:
+                                        raw = bytes(self.uc.mem_read(page_pa, 2))
+                                        is_svc = (int.from_bytes(raw, 'little')
+                                                  == 0xDF00)
+                                    except Exception:
+                                        is_svc = False
+                                if page_pa is not None and not is_svc:
+                                    # register-indirect load/store whose guest
+                                    # translation fault has no captured READ/WRITE
+                                    # address; decode base+offset and deliver a real
+                                    # Data Abort so the kernel demand-pages it.
+                                    decoded = self._decode_fault_address(pc, page_pa)
+                                    if decoded is not None:
+                                        target, is_write = decoded
+                                        if len(self.fault_classification_trace) < 256:
+                                            self.fault_classification_trace.append({
+                                                'pc': f'0x{pc:08x}',
+                                                'address': f'0x{target:08x}',
+                                                'kind': 'data-decoded',
+                                                'write': bool(is_write)})
+                                        if self._deliver_data_abort(
+                                                pc, cpsr, target, is_write):
+                                            page = target & ~0xFFF
+                                            try:
+                                                if len(self.pte_rewalks) < 64:
+                                                    self.pte_rewalks.append(
+                                                        self._pte_report(page))
+                                            except Exception:
+                                                pass
+                                            # E0445: ctl_remove_cache only drops code
+                                            # TBs; force a true SoftMMU flush.
+                                            self._flush_cputlb()
+                                            remove = getattr(self.uc, 'ctl_remove_cache', None)
+                                            if remove is not None:
+                                                try:
+                                                    remove(page, page + 0x1000)
+                                                    self._page_cache_drops += 1
+                                                except Exception:
+                                                    pass
+                                            executed += 1
+                                            remaining = max(0, remaining - 1)
+                                            if self._note_fault(pc, target, cpsr):
+                                                stop_reason = 'repeated_fault'
+                                                break
+                                            continue
+                                if page_pa is not None and is_svc:
+                                    self._on_interrupt(self.uc, 2)
+                                    executed += 1
+                                    remaining = max(0, remaining - 1)
+                                    if self._note_fault(pc, pc, cpsr):
+                                        stop_reason = 'repeated_fault'
+                                        break
+                                    continue
                             if prefetch:
-                                address = fault_va if fault_va is not None else pc
+                                address = access_addr if access_addr is not None else pc
                                 if self._deliver_prefetch_abort(pc, cpsr, address):
                                     executed += 1
                                     remaining = max(0, remaining - 1)
+                                    if self._note_fault(pc, address, cpsr):
+                                        stop_reason = 'repeated_fault'
+                                        break
                                     continue
                             # Demand-paged user VAs (stack/BSS/args) must be reported
                             # to the kernel's do_DataAbort so handle_mm_fault can
@@ -1180,29 +2476,33 @@ class UnicornMachine:
                             # accesses (e.g. the futex probe at VA 0) fall back to the
                             # __ex_table fixup.  E0428 fix.
                             user_fault = (self.data_abort_delivery
-                                          and fault_va is not None
-                                          and 0x1000 <= fault_va < 0x60000000
+                                          and access_addr is not None
+                                          and 0x1000 <= access_addr < 0x60000000
                                           and (user_mode
                                                or (pc >= 0x60000000
                                                    and self._in_demand_page_helper(pc))))
                             if user_fault:
-                                write = mnemonic.startswith(('str', 'stm', 'push'))
-                                if self._deliver_data_abort(pc, cpsr, fault_va, write):
+                                if self._deliver_data_abort(pc, cpsr, access_addr, write):
                                     executed += 1
                                     remaining = max(0, remaining - 1)
+                                    if self._note_fault(pc, access_addr, cpsr):
+                                        stop_reason = 'repeated_fault'
+                                        break
                                     continue
                             if self._try_ex_table_fixup(pc) is not None:
                                 executed += 1
                                 remaining = max(0, remaining - 1)
                                 continue
-                            if (not user_fault and fault_va is not None and mnemonic
-                                    and 0x1000 <= fault_va < 0x60000000):
+                            if (not user_fault and access_addr is not None
+                                    and 0x1000 <= access_addr < 0x60000000):
                                 # Non-user-mapped fault that still looks like user VA:
                                 # let do_DataAbort process it (e.g. vmalloc probes).
-                                write = mnemonic.startswith(('str', 'stm', 'push'))
-                                if self._deliver_data_abort(pc, cpsr, fault_va, write):
+                                if self._deliver_data_abort(pc, cpsr, access_addr, write):
                                     executed += 1
                                     remaining = max(0, remaining - 1)
+                                    if self._note_fault(pc, access_addr, cpsr):
+                                        stop_reason = 'repeated_fault'
+                                        break
                                     continue
                         if (self.exclusive_fallback
                                 and 'UC_ERR_EXCEPTION' in message):
@@ -1235,6 +2535,8 @@ class UnicornMachine:
                 self.exception_state = {}
             if not self.unmapped:
                 stop_reason = 'unicorn_error'
+        if stop_reason is None and executed >= limit:
+            stop_reason = 'instruction_limit'
         if self.unmapped and stop_reason is None:
             stop_reason = ('instruction_limit'
                            if self.unmapped_mmio_policy == 'observe-zero'
@@ -1266,6 +2568,47 @@ class UnicornMachine:
             'stop_symbol': self.nearest_symbol(pc),
             'user_mode_entries': list(self.user_mode_entries),
             'prefetch_aborts_delivered': self.prefetch_aborts_delivered,
+            'do_page_fault_frames': list(self.do_page_fault_frames),
+            'tlb_flushes': self._tlb_flushes,
+            'svc_stack_refreshes': self._svc_stack_refreshes,
+            'last_thread_info': f'0x{self._last_thread_info:08x}',
+            'last_thread_task': f'0x{self._last_thread_task:08x}',
+            'stack_delivery_trace': list(self.stack_delivery_trace),
+            'fault_guard_key': (list(self._fault_guard_key)
+                                if self._fault_guard_key else None),
+            'fault_guard_count': self._fault_guard_count,
+            'fault_classification_trace': list(self.fault_classification_trace),
+            'live_fault_dumps': list(self.live_fault_dumps),
+            'pte_rewalks': list(self.pte_rewalks),
+            'virtual_tlb': self.virtual_tlb,
+            'virtual_tlb_on_userspace': self.virtual_tlb_on_userspace,
+            'switch_mm_hooked': self.switch_mm_hooked,
+            'switch_mm_hits': self.switch_mm_hits,
+            'ttbr0_write_sites': [f'0x{s:08x}' for s in self.ttbr0_write_sites],
+            'ttbr0_write_hits': self.ttbr0_write_hits,
+            'pt_regs_frames': list(self.pt_regs_frames),
+            'pt_regs_user_frames': list(self.pt_regs_user_frames),
+            'activation_pgd': (f'0x{self._activation_pgd:08x}'
+                               if self._activation_pgd else None),
+            'switch_mm_values': [f'0x{v:08x}' for v in self.switch_mm_values],
+            'mm_resolve_trace': list(self.mm_resolve_trace),
+            'virtual_tlb_error': self.virtual_tlb_error,
+            'tlb_fills': self.tlb_fills,
+            'tlb_fill_misses': self.tlb_fill_misses,
+            'tlb_fill_samples': list(self.tlb_fill_samples),
+            'cputlb_flushes': self.cputlb_flushes,
+            'mm_fault_returns': list(self.mm_fault_returns),
+            'page_cache_drops': self._page_cache_drops,
+            'svc_hits': self.svc_hits,
+            'svc_trace': list(self.svc_trace),
+            'kuser_hits': self.kuser_hits,
+            'kuser_entries': list(self.kuser_entries),
+            'pabt_mrc_hits': self.pabt_mrc_hits,
+            'dabt_mrc_hits': self.dabt_mrc_hits,
+            'last_ifar': f'0x{self.last_ifar:08x}',
+            'last_dfar': f'0x{self.last_dfar:08x}',
+            'banked_store_hits': self.banked_store_hits,
+            'banked_restore_hits': self.banked_restore_hits,
             'prefetch_abort_trace': list(self.prefetch_abort_trace),
             'mode_lr': {key: (hex(value) if value is not None else None)
                         for key, value in self.mode_lr.items()},
