@@ -319,5 +319,7 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
         probe.mu.reg_write(arm.UC_ARM_REG_PC, probe.entry)
         if getattr(probe, 'threads', None) is not None:
             probe.threads.save_context(probe.mu)
+    if hasattr(probe, 'rearm_checkpoint_hooks'):
+        probe.rearm_checkpoint_hooks()
     probe.report['checkpoint_resume'] = {'version': payload['version'], 'exact': exact,
                                          **resume}
