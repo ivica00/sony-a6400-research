@@ -20,6 +20,13 @@ of "full firmware compatibility."
 
 ## Latest progress
 
+- **Update chain measured ([E0489](docs/evidence/0489-update-chain-integrity-is-crc32-and-md5.md), and the IPC edge inventory in [E0483](docs/evidence/0483-ipc-edge-inventory-libobj.md), and the platform model in [E0490](docs/evidence/0490-platform-model-and-flash-boundary.md)):**
+  The image is **not** AES-encrypted. 484 files under the a6400 tree are ELF objects readable
+  as-is; integrity is CRC32 (`uc_crc32sum.elf`, which imports no crypto at all) and MD5
+  (`md5sum -c` in `loader_writer.sh`), and none of the updater tree's 18 scripts verifies a
+  signature. The one AES helper uses the first 16 bytes of `sha256('')` as its key in ECB, and
+  that key is identical on all thirteen bodies. Whether the bootloader accepts a recomputed CRC
+  is still unknown and needs a camera.
 - **Cross-Model BIONZ X Platform Map ([E0477](docs/evidence/0477-bionz-x-platform-map-13-updaters.md)–[E0482](docs/evidence/0482-three-stubs-gain-sourced-values.md)):**
   Thirteen official updaters unpacked offline: a6400, a6600, a6100A, ZV-E10, A7 III, A7C,
   A7R III, A7R IV, A7R IVA, A9, A9 II, ZV-1 and RX0 II. They run **nine kernels**, not thirteen:
@@ -58,10 +65,10 @@ of "full firmware compatibility."
 
 ## Status overview
 
-Recorded suite: 1595 tests. Each result is bounded by its own dated evidence record; no
+Recorded suite: 1720 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=cb688498e345)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=802271cb5cef)
 
 ### Subsystem status
 
@@ -76,7 +83,7 @@ UVC video frame, no flash write, and no full firmware boot is claimed.
 | **USB Debugger v2** | Persistent Mass Storage debugger for reading live/warm-reboot kernel logs and USB state | Deploying the always-on WinUSB vendor interface | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
 | **Test UVC video pattern** | Streams a synthetic 720p MJPEG pattern at ~30 FPS; ZV-E10 USB video stack cataloged as reference | Wiring the live camera sensor feed | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
 | **Multi-camera profiles** | Verified a6400 profile and ZV-E10 reference chain | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
-| **Automated checks** | 1595 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
+| **Automated checks** | 1720 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
 
 ## How to help (no camera needed)
 
