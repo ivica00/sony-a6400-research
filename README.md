@@ -68,7 +68,7 @@ of "full firmware compatibility."
 Recorded suite: 1595 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=01408b5d5347)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=bdacc16838e1)
 
 ### Subsystem status
 

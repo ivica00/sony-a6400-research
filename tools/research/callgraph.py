@@ -146,12 +146,25 @@ def build_callgraph(path: Path) -> dict[str, Any]:
     plt_names = _plt_symbol_names(path)
 
     pairs = direct_calls(code, code_base)
+    # A call's address is the address of the `bl` instruction, which sits *inside* its function,
+    # not at its start. Looking it up exactly therefore never matched and every caller read as
+    # `sub_XXXXXXXX` — 555,069 callers, zero named, which made path tracing impossible.
+    starts = sorted(names)
+    import bisect
+
+    def enclosing(address: int) -> str:
+        index = bisect.bisect_right(starts, address)
+        if index:
+            start = starts[index - 1]
+            return names[start]
+        return f"sub_{address:08X}"
+
     edges: list[tuple[str, str]] = []
     unresolved = 0
     named_edges = 0
     for caller, callee in pairs:
         callee_name = plt_names.get(callee) or _name_for(callee, names)
-        edges.append((_name_for(caller, names), callee_name))
+        edges.append((enclosing(caller), callee_name))
         if callee in names or callee in plt_names:
             named_edges += 1
         else:
