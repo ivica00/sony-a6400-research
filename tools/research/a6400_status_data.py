@@ -233,7 +233,11 @@ STATUS_SNAPSHOT = StatusSnapshot(
             "direct IPC call sites, 17 of which pass a constant queue id matched to its mov/movw "
             "immediate (E0483). Two classes of fabricated result were found and removed while "
             "building that table: 28 bogus call sites from an unconfirmed branch decode, and "
-            "invented argument values from reading instruction bytes as a literal pool."
+            "invented argument values from reading instruction bytes as a literal pool. With "
+            "callers resolved to their enclosing symbol the graph carries 6,713 named-to-named "
+            "edges, and tracing input to display shows the display entry points have no direct "
+            "caller at all: their addresses are stored as data, so the route is a function "
+            "pointer (E0484)."
         ),
         boundary=(
             "The update-chain work establishes what the packaged files contain and what the "
