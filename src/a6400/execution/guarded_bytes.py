@@ -8,6 +8,11 @@ class UnverifiedGuestData(RuntimeError):
         self.details = details
 
 
+# Opt-in (set by --fast-hooks runs): page-range hooks instead of global ones. Global hooks stay the
+# default because exact-mode instruction counts shift by one without them.
+PAGE_HOOKS = False
+
+
 class GuardedGuestBytes:
     def __init__(self, mu, unverified_fields, stop, domain):
         self.mu, self.stop, self.domain = mu, stop, domain
@@ -15,6 +20,9 @@ class GuardedGuestBytes:
         self._bytes = {}
         self.read_fields = {}
         self.hooked_pages = set()
+        if not PAGE_HOOKS:
+            mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read)
+            mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write)
 
     @property
     def bytes(self):
@@ -29,6 +37,8 @@ class GuardedGuestBytes:
         """Invariant: an access that touches a tracked byte always starts on a hooked page.
         Accesses outside hooked pages cost no Python callback overhead.
         Hooks are never deleted; at most one read/write pair exists per page."""
+        if not PAGE_HOOKS:
+            return
         PAGE = 0x1000
         needed_pages = set()
         for a in self._bytes:
