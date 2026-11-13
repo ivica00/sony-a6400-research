@@ -652,7 +652,21 @@ class InterpreterProbe:
         self.mu.hook_add(unicorn.UC_HOOK_CODE, repair, begin=base + 0x59c00, end=base + 0x59c00)
         self.report['relocated_libc_it_repair'] = {'base': base, 'hook': base + 0x59c00, 'literal': literal}
 
-    def _arm_mondrv_output_seed(self, event):
+    def rearm_checkpoint_hooks(self):
+        """Re-arm the mmap-time probe hooks from the restored mmap records after a checkpoint load."""
+        mappings = list(getattr(getattr(self, 'mmap', None), 'mappings', []))
+        for m in mappings:
+            if m.get('offset') != 0 or not m.get('path'):
+                continue
+            event = {'mapping': m, 'returned': m['address']}
+            self._arm_relocated_libc_repair(event)
+            if str(m['path']).endswith('/libMWF.so'):
+                # The fd is usually closed by now: take the ELF bytes from the image cache or a live fd.
+                data = self.filesystem.cache.get(m['path']) or next(
+                    (d.get('data') for d in self.filesystem.fds.values() if d.get('path') == m['path']), None)
+                self._arm_mondrv_output_seed(event, elf_bytes=data or b'', adopt_queue=True)
+
+    def _arm_mondrv_output_seed(self, event, elf_bytes=None, adopt_queue=False):
         """Seed MonDrv::mp_output once libMWF.so is mapped (replaces the fixed-address checkpoint seed).
 
         Symbols come from the ELF bytes the guest opened. Hooks on PutcharSub and
@@ -667,8 +681,9 @@ class InterpreterProbe:
         entry = {'armed': False, 'base': base, 'mp_output': None, 'queue': None,
                  'capacity': MONDRV_QUEUE_CAPACITY, 'seeded': 0, 'first_pc': None}
         self.report['mondrv_output_seed'] = entry
-        fd = (event.get('arguments') or [None] * 5)[4]
-        elf_bytes = self.filesystem.fds.get(fd, {}).get('data')
+        if elf_bytes is None:
+            fd = (event.get('arguments') or [None] * 5)[4]
+            elf_bytes = self.filesystem.fds.get(fd, {}).get('data')
         try:
             segments, symbols = inspect_elf_load_and_symbols(elf_bytes or b'', MONDRV_OUTPUT_SYMBOLS)
         except Exception as error:
@@ -681,6 +696,16 @@ class InterpreterProbe:
             return
         mp_output = base + symbols[MONDRV_OUTPUT_SYMBOLS[0]]['value']
         entry.update(armed=True, mp_output=mp_output)
+        if adopt_queue:
+            # Restored mp_output may already point at the seeded queue (a probe-allocated anonymous
+            # region): keep it so draining works and no second queue is allocated.
+            try:
+                current = int.from_bytes(bytes(self.mu.mem_read(mp_output, 4)), 'little')
+            except unicorn.UcError:
+                current = 0
+            if any(m.get('anonymous') and m['address'] == current and m['length'] == MONDRV_REGION_SIZE
+                   for m in self.mmap.mappings):
+                entry['queue'] = current
 
         def seed_hook(uc, address, size, user_data):
             if entry['first_pc'] is None:
