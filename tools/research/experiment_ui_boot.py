@@ -190,9 +190,9 @@ def build_parser():
                         help='stop on /dev/dmpgles2 (default); kernel-bound binds /dev/dmpgles2 with verified '
                              'TASK_SIZE 0x5f000000; kernel-bound-decoded additionally uses the grm_gles.ko-decoded '
                              'GPES ioctl semantics (E0337/E0341: 0x8004820A suspend-status, 0xC004820D wait-completion)')
-    parser.add_argument('--nanosleep-policy', choices=('immediate', 'block'), default='immediate',
+    parser.add_argument('--nanosleep-policy', choices=('immediate', 'block', 'timed'), default='immediate',
                         help='threads policy sleep handling: immediate return (default baseline) or block the '
-                             'caller in blocked_sleep (no virtual deadline; opt-in for E0310/E0339 monitor loops)')
+                             'caller in blocked_sleep (no virtual deadline; opt-in for E0310/E0339 monitor loops), or timed: park until the guest clock reaches the deadline')
     parser.add_argument('--mmap-base', type=lambda x: int(x, 0), default=None,
                         help='explicit mmap allocation base; defaults to 0x04000000 when gles-device is kernel-bound')
     parser.add_argument('--log-interval', type=int, default=5000000,
