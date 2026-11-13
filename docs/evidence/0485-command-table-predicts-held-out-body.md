@@ -16,7 +16,7 @@ the result.
    not fitted at all — the fitted rule carries only command ids — so scoring them 0 is honest
    rather than a failure of prediction: there is no rule to fail.
 3. **The a7 III is the body the rule does worst on**, at 0.885, and that is the body whose USB id
-   set diverges from the others (E0487). Prediction quality tracks shared lineage, which is what
+   set diverges from the others (E0482). Prediction quality tracks shared lineage, which is what
    a model built on a family should show.
 4. **An empty prediction scores 0, not 1.** A rule that predicts nothing has nothing wrong with it
    and everything missing; the test pins that so the metric cannot be gamed.
@@ -56,7 +56,7 @@ bodies do not share, which is consistent with the a7 III being the body whose US
 compares an empty set against a real one. That is not a prediction problem — it is the honest
 statement that no rule was derived for those two surfaces. A rule for the USB set would have to
 explain why the a6400's six pairs are a subset of the a6600's ten and a subset of the a6100A's
-twelve while the a7 III shares four and adds four of its own (E0487); that is a lineage question,
+twelve while the a7 III shares four and adds four of its own (E0482); that is a lineage question,
 not a counting one, and inventing a rule to make the column look better would be exactly the
 fabrication this record's metric is designed to expose.
 
