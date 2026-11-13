@@ -163,7 +163,10 @@ class TestKpiDerivation(unittest.TestCase):
     def test_target_pill_matches_the_registry(self):
         pill = self._pill("BIONZ X targets")
         self.assertEqual(pill.value, registered_target_label())
-        self.assertEqual(pill.value, "ILCE-6400 + ZV-E10")
+        # E0436 filled the three declared stubs from their own packaged updaters, so the pill
+        # lists every body that now carries evidence rather than only the two it listed before.
+        self.assertEqual(
+            pill.value, "ILCE-6100 + ILCE-6400 + ILCE-6600 + ILCE-7M3 + ZV-E10")
         self.assertEqual(pill.tone, "violet")
 
     def test_pills_cover_the_required_kpis(self):
