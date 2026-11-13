@@ -29,7 +29,7 @@ through a function pointer that no direct-call graph can follow.
 | measurement | value |
 | --- | --- |
 | `.text` | `0x104910`, 13,849,456 bytes |
-| defined code symbols | 1,852 |
+| defined code symbols | 1,853 at 1,851 distinct addresses |
 | direct calls | 555,069 |
 | named → named edges | **6,713** after the fix, 0 before |
 | distinct named callers | 1,386 |

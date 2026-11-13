@@ -42,8 +42,8 @@ filled to look better.
 ## 3. What the application layer looks like
 
 `libObj.so` on the a6400 is 20,860,436 bytes with SHA-256
-`60ffd2b0f31f4bc139a7c13a4f62c25cdeb6a531ad5ef35df48471e6e36e88b1` (E0483), defining 1,852 code
-symbols — the other 1,444 of its 3,297 FUNC entries are imports.
+`60ffd2b0f31f4bc139a7c13a4f62c25cdeb6a531ad5ef35df48471e6e36e88b1` (E0483), defining 1,853
+code symbols at 1,851 distinct addresses; the other 1,444 of its 3,297 FUNC entries are imports.
 
 - **29 direct IPC call sites** across `osal_snd_msg`, `osal_rcv_msg_tmo`, `osal_snd_sync_msg` and
   `ioctl`. 17 pass a constant argument, matched to the `mov`/`movw` immediate that loads it; 12
@@ -51,8 +51,8 @@ symbols — the other 1,444 of its 3,297 FUNC entries are imports.
   `docs/evidence/cross_model/ipc-edges-a6400.tsv`, bound to the image above by SHA-256
   `60ffd2b0…e88b1`.
 - **6,713 named-to-named call edges** once a call is resolved to the symbol containing it (E0484).
-- **The display entry points are indirect.** `ObjDisplay_Create`, `DestDestroy`, `RegisterCommand`
-  and `UnregisterCommand` exist on every body examined; `ObjDisplay_Start` does not exist at all,
+- **The display entry points are indirect.** `ObjDisplay_Create`, `ObjDisplay_Destroy`,
+  `ObjDisplay_RegisterCommand` and `ObjDisplay_UnregisterCommand` exist on every body examined; `ObjDisplay_Start` does not exist at all,
   despite appearing in an earlier string scan. The four have **zero direct callers** and their
   addresses appear once each as data, which is the shape of a stored function pointer (E0484).
 
