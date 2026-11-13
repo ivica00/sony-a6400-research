@@ -13,6 +13,8 @@ UIPC_CMD_STAT_MSGQ = 0x80000003
 UIPC_CMD_SND_MSG = 0x80000004
 UIPC_CMD_SND_SYNC_MSG = 0x80000005
 UIPC_CMD_SND_SYNC_DIRECT = 0x80000006
+TIMER_COUNTER_QUEUE = 0x910042  # utimer_kif_counter: u64 microsecond counter
+TIMER_DELAY_QUEUE = 0x910041    # utimer delay queue: wait until absolute u64 deadline at message +24
 UIPC_CMD_RCV_MSG_TMO = 0x80000007
 UIPC_CMD_REG_MSG_QUEUE_CB = 0x80000008
 UIPC_CMD_UNREG_MSG_QUEUE_CB = 0x80000009
@@ -61,6 +63,9 @@ class GuestUipc:
     # Class defaults so checkpoints pickled before these attributes existed still load.
     sync_direct_mode = 'return'   # 'yield': ask the interpreter to switch threads after snd_sync_direct
     yield_requested = False
+    timer_service = 'off'         # 'emulated': queue 0x910042 counter reply, 0x910041 timed wait (interpreter blocks)
+    timer_wait = None             # absolute deadline (us) the interpreter must block the caller until
+    now_us = 0                    # guest time (us), set by the interpreter before each ioctl
 
     def __init__(self,
                  total_pool_size: int = DEFAULT_TOTAL_POOL_SIZE,
@@ -402,7 +407,7 @@ class GuestUipc:
         self.transactions.append({'type': 'unreg_cb', 'queue': queue, 'handle': handle})
         return 0
 
-    def handle_snd_sync_direct(self, memory_reader, arg_ptr: int) -> int:
+    def handle_snd_sync_direct(self, memory_reader, arg_ptr: int, memory_writer=None) -> int:
         """Handles ioctl 0x80000006 (__k_4u_snd_sync_direct).
         
         arg_ptr points to struct { uint32_t queue; void *buf; }.
@@ -423,6 +428,17 @@ class GuestUipc:
             'payload_hex': payload.hex(),
             'payload_ascii': payload.decode('latin1', errors='replace')
         })
+        if self.timer_service == 'emulated' and queue in (TIMER_COUNTER_QUEUE, TIMER_DELAY_QUEUE):
+            # Body = message +16 (evidence 0041); libObj 0x862c92 reads the u64 at message +24.
+            if queue == TIMER_COUNTER_QUEUE and total_size >= 32 and memory_writer is not None:
+                selector = struct.unpack('<I', payload[:4])[0]
+                memory_writer(buf_ptr + 20, struct.pack('<i', 0 if selector in (0, 1) else -1024))
+                if selector in (0, 1):
+                    memory_writer(buf_ptr + 24, struct.pack('<Q', self.now_us))
+            elif queue == TIMER_DELAY_QUEUE and total_size >= 40:
+                deadline = struct.unpack('<Q', memory_reader(buf_ptr + 24, 8))[0]
+                self.timer_wait = deadline if deadline > self.now_us else None
+            return 0
         # Only the interpreter owns the thread switch; it consumes this after the ioctl returns.
         self.yield_requested = self.sync_direct_mode == 'yield'
         return 0
@@ -766,7 +782,7 @@ class GuestUipc:
         elif cmd == UIPC_CMD_UNREG_MSG_QUEUE_CB:
             return self.handle_unreg_msg_queue_cb(memory_reader, arg)
         elif cmd == UIPC_CMD_SND_SYNC_DIRECT:
-            return self.handle_snd_sync_direct(memory_reader, arg)
+            return self.handle_snd_sync_direct(memory_reader, arg, memory_writer)
         elif cmd == UIPC_CMD_WAI_SEM_TMO:
             return self.handle_wai_sem_tmo(memory_reader, memory_writer, arg)
         elif cmd == UIPC_CMD_SIG_SEM:
