@@ -20,6 +20,13 @@ of "full firmware compatibility."
 
 ## Latest progress
 
+- **Update chain measured ([E0489](docs/evidence/0489-update-chain-integrity-is-crc32-and-md5.md)):**
+  The image is **not** AES-encrypted. 484 files under the a6400 tree are ELF objects readable
+  as-is; integrity is CRC32 (`uc_crc32sum.elf`, which imports no crypto at all) and MD5
+  (`md5sum -c` in `loader_writer.sh`), and none of the updater tree's 18 scripts verifies a
+  signature. The one AES helper uses the first 16 bytes of `sha256('')` as its key in ECB, and
+  that key is identical on all thirteen bodies. Whether the bootloader accepts a recomputed CRC
+  is still unknown and needs a camera.
 - **Cross-Model BIONZ X Platform Map ([E0477](docs/evidence/0477-bionz-x-platform-map-13-updaters.md)–[E0482](docs/evidence/0482-three-stubs-gain-sourced-values.md)):**
   Thirteen official updaters unpacked offline: a6400, a6600, a6100A, ZV-E10, A7 III, A7C,
   A7R III, A7R IV, A7R IVA, A9, A9 II, ZV-1 and RX0 II. They run **nine kernels**, not thirteen:
@@ -61,7 +68,7 @@ of "full firmware compatibility."
 Recorded suite: 1595 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=cb688498e345)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=ff1eae70a2ee)
 
 ### Subsystem status
 

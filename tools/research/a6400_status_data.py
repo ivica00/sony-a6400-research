@@ -220,29 +220,26 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-13",
     latest=EvidenceRef(
-        evidence_id="E0482",
-        path="docs/evidence/0482-three-stubs-gain-sourced-values.md",
+        evidence_id="E0489",
+        path="docs/evidence/0489-update-chain-integrity-is-crc32-and-md5.md",
         date="2026-11-13",
-        title="Three declared stubs become evidence-backed profiles",
+        title="The update chain checks CRC32 and MD5, not a per-model cipher",
         demonstrated=(
-            "The ILCE-6100A, ILCE-6600 and ILCE-7M3 profiles were declared stubs carrying no "
-            "claims. Each now carries seven kernel symbol addresses decoded from its own "
-            "vmlinux.bin, its full stock USB id set read from its own config.yaml, a confirmed "
-            "CXD90045 identity, and its verified device-node table. Thirteen packages unpack "
-            "offline into nine kernels: ZV-E10 and ILCE-7C put all 14,460 function symbols at the "
-            "same address and differ in 9 data addresses, while a6400/ILCE-6600 share all 14,401 "
-            "function symbols. The av-cam command table is a monotone ladder (285 records on the "
-            "a6400, 286 on the a6600 with exactly 0x413b added, 337 on the ZV-E10). None of the "
-            "three new bodies publishes a /dev/usb/video or audio node, so kernel-side UVC is "
-            "answered no for them rather than unknown."
+            "The ecosystem claim that the image is AES-encrypted with per-model keys and three "
+            "integrity layers does not hold for the packaged files. 484 files under the a6400 "
+            "tree are ELF objects readable as-is, with working symbol tables. Integrity is CRC32 "
+            "in uc_crc32sum.elf, which imports no cryptographic function at all, plus md5sum -c in "
+            "loader_writer.sh; across the updater tree's 41 files, 18 of them scripts, none "
+            "verifies a signature. The only AES helper, libupdatertalk.so, uses the first 16 bytes "
+            "of sha256('') as its key in ECB with no IV, and that key is identical on all thirteen "
+            "bodies across its three library variants."
         ),
         boundary=(
-            "uipc_queues stays empty on the three new profiles: those handles come from a live "
-            "/proc/osal/uipc read and are per-boot, so no offline value is claimed. Three of the "
-            "ten profile symbols are module exports and cannot come from kallsyms. USB PIDs are "
-            "the package's stock descriptor set, not a host-observed identity. Older updater "
-            "files are gone (404), so a within-model version diff is not obtainable. Offline "
-            "addresses are for the packaged build, which may be older than a camera's."
+            "This establishes what the packaged files contain and what the updater scripts check. "
+            "It does not establish that the bootloader accepts an image whose CRC list was "
+            "recomputed; that needs a camera or a preserved boot log and is recorded as unknown, "
+            "not as impossible. What the boot ROM does with firmware.fdat before the updater runs "
+            "is also outside this measurement."
         ),
         tier="OFFLINE PACKAGED FIRMWARE",
     ),
