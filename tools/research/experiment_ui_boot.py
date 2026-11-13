@@ -34,8 +34,8 @@ def build_parser():
                         help='image-driver selects verified 249:7 ABI; physical stream bytes remain guarded')
     parser.add_argument('--stream2-device', choices=('stop', 'open-only'), default='stop',
                         help='open-only accepts the observed /dev/stream2 (249:8) O_RDWR|O_DSYNC open and stops at the first ioctl/mmap')
-    parser.add_argument('--nflasha4-device', choices=('stop', 'open-only', 'observed-dump'), default='stop',
-                        help='stop on /dev/nflasha4 (default); open-only accepts the observed O_RDWR open and stops at the first data/ioctl/mmap; observed-dump serves reads from the hash-checked 12 MiB MPR dump and answers only the observed read-only ioctl 0x80014123 (writes/mmap/other ioctls stay boundaries)')
+    parser.add_argument('--nflasha4-device', choices=('stop', 'open-only', 'observed-dump', 'synthetic-erased'), default='stop',
+                        help='stop on /dev/nflasha4 (default); open-only accepts the observed O_RDWR open and stops at the first data/ioctl/mmap; observed-dump serves reads from the hash-checked 12 MiB MPR dump and answers only the observed read-only ioctl 0x80014123 (writes/mmap/other ioctls stay boundaries); synthetic-erased serves an all-zero (erased, E0305 B=00) image through the same paths')
     parser.add_argument('--mount-service', choices=('stop', 'observed-nflasha1'), default='stop',
                         help='stop on mount(2) (default); observed-nflasha1 serves only the observed read-only mount("/dev/nflasha1","/mnt","vfat",...,"posix_attr") and materializes the hash-checked nflasha1 vfat dump as read-only guest nodes')
     parser.add_argument('--setting-service', choices=('stop', 'observed-nflasha2'), default='stop',
