@@ -761,8 +761,9 @@ class InterpreterProbe:
         self.uipc.timer_wait = None
         current.state = 'blocked_timer'
         next_tid = threads.get_next_runnable_tid()
+        self.instructions = max(self.instructions, getattr(threads, 'clock_floor', 0))
         if next_tid is None:  # idle: advance the guest clock like a real idle CPU would
-            self.instructions = max(self.instructions, min(threads.timer_waiters.values()))
+            self.instructions = max(self.instructions, min(threads.timer_waiters.values(), default=self.instructions))
             threads.wake_due(self.instructions)
             next_tid = current.tid if current.state == 'runnable' else threads.get_next_runnable_tid()
         if next_tid == current.tid:
@@ -1724,6 +1725,9 @@ class InterpreterProbe:
         return records
 
     def _interrupt(self, uc, interrupt, user_data):
+        clock_floor = getattr(getattr(self, 'threads', None), 'clock_floor', 0)
+        if clock_floor > self.instructions:  # idle fast-forward chosen by the scheduler
+            self.instructions = clock_floor
         pc = uc.reg_read(arm.UC_ARM_REG_PC)
         thumb = bool(uc.reg_read(arm.UC_ARM_REG_CPSR) & 0x20)
         size = 2 if thumb else 4
