@@ -19,6 +19,8 @@ def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--instructions', type=int, default=15000000)
     parser.add_argument('--timeout-us', type=int, default=60000000)
+    parser.add_argument('--stall-syscalls', type=int, default=50000,
+                        help='stop after this many syscalls with no open/openat/mmap2 (0 disables)')
     parser.add_argument('--trace-library-activation', action='store_true', help='passively record original im.elf dlopen call/return arguments')
     parser.add_argument('--madvise-dontneed', action='store_true', help='discard verified private anonymous pages on MADV_DONTNEED')
     parser.add_argument('--fast-hooks', action='store_true', help='accelerate emulation using block hooks and address-filtered IT workarounds (~100x speedup)')
@@ -436,6 +438,7 @@ def main():
             probe.report['uipc_objmsg_injection_error'] = str(error)
             print(f'[!] SETCONFIG ObjMsg injection failed: {error}')
 
+    probe.stall_syscalls = args.stall_syscalls
     print(f"[*] Running probe (budget: {args.instructions} instructions)...")
     report = probe.run(instruction_budget=args.instructions, timeout_us=args.timeout_us)
     if args.save_checkpoint:
