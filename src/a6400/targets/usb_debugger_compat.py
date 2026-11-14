@@ -32,6 +32,24 @@ VERIFIED_LIBUSBCMD_SHA256 = (
 DEFAULT_PAYLOAD_DAEMON = "devcrashday_a6400/a6400_usb_debugd.elf"
 DEFAULT_PAYLOAD_LAUNCHER = "devcrashday_a6400/hook/usb_debug_launcher.so"
 
+DEBUGGER_RELEASE_REPO = "ivica00/sony-a6400-research"
+DEBUGGER_RELEASE_TAG = "usb-debugger-binaries-v1"
+PAYLOAD_ASSETS: Mapping[str, Mapping[str, object]] = {
+    DEFAULT_PAYLOAD_DAEMON: {
+        "filename": "a6400_usb_debugd.elf",
+        "size": 11384,
+        "sha256": "c5bb9c143a0e354c6474c186f61afb1fca2fd775742372a38a0f1301e1838f5f",
+        "url": f"https://github.com/{DEBUGGER_RELEASE_REPO}/releases/download/{DEBUGGER_RELEASE_TAG}/a6400_usb_debugd.elf",
+    },
+    DEFAULT_PAYLOAD_LAUNCHER: {
+        "filename": "usb_debug_launcher.so",
+        "size": 6284,
+        "sha256": "a6f368cc3ce4efc00c1b4f094271a0b99aebba9a7940492c60dd7c50033fa5e4",
+        "url": f"https://github.com/{DEBUGGER_RELEASE_REPO}/releases/download/{DEBUGGER_RELEASE_TAG}/usb_debug_launcher.so",
+    },
+}
+PMCA_ARCHIVE_URL = "https://github.com/ma1co/Sony-PMCA-RE/archive/refs/heads/master.zip"
+
 
 @dataclass(frozen=True)
 class DebuggerTargetSpec:
@@ -75,7 +93,7 @@ USB_DEBUGGER_TARGETS: Mapping[str, DebuggerTargetSpec] = {
         target_id="ilce_7c",
         model_name="ILCE-7C",
         firmware_versions=("2.00",),
-        qualification="qualified_offline",
+        qualification="verified",
         usb_extcmd_size=VERIFIED_USB_EXTCMD_SIZE,
         usb_extcmd_normalized_sha256=VERIFIED_USB_EXTCMD_NORMALIZED_SHA256,
         usb_extcmd_exact_sha256s=(
@@ -88,8 +106,8 @@ USB_DEBUGGER_TARGETS: Mapping[str, DebuggerTargetSpec] = {
         libusbcmd_size=VERIFIED_LIBUSBCMD_SIZE,
         libusbcmd_sha256=VERIFIED_LIBUSBCMD_SHA256,
         notes=(
-            "Live Senser pull (FW 2.00): libusbcmd.so is byte-identical to ILCE-6400; "
-            "usb_extcmd.ko is metadata-only equivalent (.note.gnu.build-id and .comment only)."
+            "Verified on live ILCE-7C (FW 2.00): libusbcmd.so is byte-identical to ILCE-6400; "
+            "usb_extcmd.ko is metadata-only equivalent; info/ps/exec verified in normal MSC."
         ),
     ),
 }
@@ -109,6 +127,28 @@ def get_debugger_target(target_id: str) -> DebuggerTargetSpec:
             f"Unknown debugger target {target_id!r}; qualified targets: {known}"
         )
     return USB_DEBUGGER_TARGETS[key]
+
+
+def find_debugger_target_by_model(
+    model_name: str,
+    firmware_version: str | None = None,
+) -> DebuggerTargetSpec | None:
+    """Match a camera MSC model string (and optional firmware) to a registered spec."""
+    normalized_model = model_name.strip().upper()
+    if not normalized_model:
+        return None
+    fw = firmware_version.strip() if firmware_version else None
+    candidates = [
+        spec for spec in USB_DEBUGGER_TARGETS.values()
+        if spec.model_name.upper() == normalized_model
+    ]
+    if not candidates:
+        return None
+    if fw is not None:
+        for spec in candidates:
+            if fw in spec.firmware_versions:
+                return spec
+    return candidates[0]
 
 
 def load_reference_usb_extcmd(spec: DebuggerTargetSpec, root: Path) -> tuple[Path | None, bytes | None]:

@@ -19,20 +19,61 @@ from src.a6400.targets.usb_debugger_compat import (  # noqa: E402
 )
 
 
+def read_preload_safe(cam) -> tuple[bytes, bool]:
+    """Read ``/etc/ld.so.preload``, treating Senser error 130 (absent) as empty."""
+    try:
+        return cam.readFile('/etc/ld.so.preload'), True
+    except Exception as exc:
+        if 'Senser file control error 130' not in str(exc):
+            raise
+        return b'', False
+
+
+def upload_and_verify_debugger(
+    cam,
+    spec: DebuggerTargetSpec,
+    previous_preload: bytes,
+    destination: Path,
+    manifest: dict,
+) -> None:
+    """Upload debugger binaries to ``/setting`` and update ``/etc/ld.so.preload``."""
+    for local, remote in [
+        (spec.payload_daemon, '/setting/a6400_usb_debugd.elf'),
+        (spec.payload_launcher, '/setting/usb_debug_launcher.so'),
+    ]:
+        data = (ROOT / local).read_bytes()
+        if len(data) >= 32768:
+            raise RuntimeError('Payload exceeds verified small-transfer bound')
+        cam.writeFile(remote, data)
+        if cam.readFile(remote) != data:
+            raise RuntimeError('Upload verification failed; preload unchanged')
+        manifest['files'][remote] = {
+            'bytes': len(data),
+            'sha256': hashlib.sha256(data).hexdigest(),
+            'readback_verified': True,
+        }
+
+    desired = previous_preload
+    if b'/setting/usb_debug_launcher.so' not in previous_preload.split():
+        prefix = previous_preload.rstrip()
+        desired = (prefix + b'\n/setting/usb_debug_launcher.so\n') if prefix else b'/setting/usb_debug_launcher.so\n'
+    cam.writeFile('/etc/ld.so.preload', desired)
+    actual = cam.readFile('/etc/ld.so.preload')
+    (destination / 'ld.so.preload.after').write_bytes(actual)
+    if actual != desired:
+        raise RuntimeError('Preload read-back mismatch')
+    manifest['preload_verified'] = True
+    manifest['state'] = 'deployed_and_verified'
+    (destination / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+
+
 def deploy(cam, spec: DebuggerTargetSpec, *, check_only: bool = False):
     destination = ROOT / 'artifacts/hardware' / (
         f"native-usb-debug-{'check' if check_only else 'deploy'}-{spec.target_id}-"
         + datetime.now().strftime('%Y%m%d-%H%M%S')
     )
     destination.mkdir(parents=True, exist_ok=False)
-    preload_existed_before = True
-    try:
-        previous = cam.readFile('/etc/ld.so.preload')
-    except Exception as exc:
-        if 'Senser file control error 130' not in str(exc):
-            raise
-        previous = b''
-        preload_existed_before = False
+    previous, preload_existed_before = read_preload_safe(cam)
     (destination / 'ld.so.preload.before').write_bytes(previous)
 
     manifest = {
@@ -73,34 +114,7 @@ def deploy(cam, spec: DebuggerTargetSpec, *, check_only: bool = False):
         print(destination)
         return
 
-    for local, remote in [
-        (spec.payload_daemon, '/setting/a6400_usb_debugd.elf'),
-        (spec.payload_launcher, '/setting/usb_debug_launcher.so'),
-    ]:
-        data = (ROOT / local).read_bytes()
-        if len(data) >= 32768:
-            raise RuntimeError('Payload exceeds verified small-transfer bound')
-        cam.writeFile(remote, data)
-        if cam.readFile(remote) != data:
-            raise RuntimeError('Upload verification failed; preload unchanged')
-        manifest['files'][remote] = {
-            'bytes': len(data),
-            'sha256': hashlib.sha256(data).hexdigest(),
-            'readback_verified': True,
-        }
-
-    desired = previous
-    if b'/setting/usb_debug_launcher.so' not in previous.split():
-        prefix = previous.rstrip()
-        desired = (prefix + b'\n/setting/usb_debug_launcher.so\n') if prefix else b'/setting/usb_debug_launcher.so\n'
-    cam.writeFile('/etc/ld.so.preload', desired)
-    actual = cam.readFile('/etc/ld.so.preload')
-    (destination / 'ld.so.preload.after').write_bytes(actual)
-    if actual != desired:
-        raise RuntimeError('Preload read-back mismatch')
-    manifest['preload_verified'] = True
-    manifest['state'] = 'deployed_and_verified'
-    (destination / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+    upload_and_verify_debugger(cam, spec, previous, destination, manifest)
     print('Uploaded and verified; native USB registration/runtime permissions still need testing.')
     print(destination)
 
