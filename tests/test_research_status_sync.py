@@ -9,12 +9,14 @@ import re
 import unittest
 from pathlib import Path
 
-from tools.research.a6400_status_data import STATUS_SNAPSHOT, TELEMETRY
+from tools.research.a6400_status_data import DAILY_TEST_HISTORY, STATUS_SNAPSHOT, TELEMETRY
 from tools.research.render_research_status import (
+    GROWTH_IMAGE_REL,
     first_difference,
     readme_image_url,
     readme_image_url_in,
     render_svg,
+    render_test_growth_svg,
     svg_cache_buster,
     sync_readme_cache_buster,
 )
@@ -22,6 +24,7 @@ from tools.research.render_research_status import (
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 STATUS_SVG = ROOT / "docs" / "images" / "research-status.svg"
+GROWTH_SVG = ROOT / "docs" / "images" / "test-growth.svg"
 EVIDENCE_DIR = ROOT / "docs" / "evidence"
 
 EVIDENCE_ID_RE = re.compile(r"\bE(\d{4})\b")
@@ -87,6 +90,14 @@ class TestResearchStatusSync(unittest.TestCase):
                 + first_difference(expected, committed)
                 + "\nrun: python -m tools.research.render_research_status --write"
             )
+        committed_growth = _normalized_text(GROWTH_SVG)
+        expected_growth = render_test_growth_svg(DAILY_TEST_HISTORY)
+        if committed_growth != expected_growth:
+            self.fail(
+                "docs/images/test-growth.svg was not generated from DAILY_TEST_HISTORY: "
+                + first_difference(expected_growth, committed_growth)
+                + "\nrun: python -m tools.research.render_research_status --write"
+            )
 
     def test_generator_is_deterministic(self):
         first = render_svg(TELEMETRY)
@@ -97,6 +108,15 @@ class TestResearchStatusSync(unittest.TestCase):
         self.assertIn('<title id="title">', first)
         self.assertIn('<desc id="desc">', first)
         self.assertEqual(first, _normalized_text(STATUS_SVG))
+
+        growth_first = render_test_growth_svg(DAILY_TEST_HISTORY)
+        self.assertEqual(growth_first, render_test_growth_svg(DAILY_TEST_HISTORY))
+        self.assertNotIn("\r", growth_first)
+        self.assertTrue(growth_first.startswith("<svg "))
+        self.assertTrue(growth_first.endswith("\n"))
+        self.assertIn('<title id="title">', growth_first)
+        self.assertIn('<desc id="desc">', growth_first)
+        self.assertEqual(growth_first, _normalized_text(GROWTH_SVG))
 
     def test_latest_evidence_record_exists_and_matches(self):
         record = ROOT / STATUS_SNAPSHOT.latest.path
@@ -146,9 +166,25 @@ class TestResearchStatusSync(unittest.TestCase):
         self.assertRegex(embedded, r"^docs/images/research-status\.svg\?v=[0-9a-f]{12}$")
         self.assertIn(f"?v={svg_cache_buster(committed)}", readme)
 
+        embedded_growth = readme_image_url_in(readme, GROWTH_IMAGE_REL)
+        committed_growth = _normalized_text(GROWTH_SVG)
+        self.assertEqual(embedded_growth, readme_image_url(committed_growth, GROWTH_IMAGE_REL))
+        self.assertEqual(
+            embedded_growth,
+            readme_image_url(render_test_growth_svg(DAILY_TEST_HISTORY), GROWTH_IMAGE_REL),
+        )
+        self.assertRegex(embedded_growth, r"^docs/images/test-growth\.svg\?v=[0-9a-f]{12}$")
+        self.assertIn(f"?v={svg_cache_buster(committed_growth)}", readme)
+
     def test_cache_buster_sync_is_idempotent(self):
         old_url, new_url = sync_readme_cache_buster(render_svg(TELEMETRY), write=False)
         self.assertEqual(old_url, new_url, "README cache buster is stale; run --write")
+        old_g, new_g = sync_readme_cache_buster(
+            render_test_growth_svg(DAILY_TEST_HISTORY),
+            write=False,
+            image_path=GROWTH_IMAGE_REL,
+        )
+        self.assertEqual(old_g, new_g, "README test-growth cache buster is stale; run --write")
 
     def test_readme_evidence_links_resolve(self):
         readme = _normalized_text(README)

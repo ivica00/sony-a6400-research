@@ -101,10 +101,12 @@ of "full firmware compatibility."
 
 ## Status overview
 
-Recorded suite: 1787 tests. Each result is bounded by its own dated evidence record; no
+Recorded suite: 1895 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=ea20a40fa2dc)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=f32f3382a111)
+
+![Daily automated test suite growth: 1895 tests across 28 days](docs/images/test-growth.svg?v=3de2c9d92e60)
 
 ### Subsystem status
 
@@ -119,7 +121,7 @@ UVC video frame, no flash write, and no full firmware boot is claimed.
 | **USB Debugger v2** | Persistent Mass Storage debugger for reading live/warm-reboot kernel logs and USB state | Deploying the always-on WinUSB vendor interface | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
 | **Test UVC video pattern** | Streams a synthetic 720p MJPEG pattern at ~30 FPS; ZV-E10 USB video stack cataloged as reference | Wiring the live camera sensor feed | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
 | **Multi-camera profiles** | Six sourced profiles, including `ilce_6400a` package/USB evidence | Only original a6400 is a verified execution target; a6400A bootstrap remains unqualified | [E0506](docs/evidence/0506-a6400a-offline-qualification-and-debugger-boundary.md), [`src/a6400/targets/`](src/a6400/targets/catalog.py), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
-| **Automated checks** | 1787 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
+| **Automated checks** | 1895 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
 
 ## How to help (no camera needed)
 

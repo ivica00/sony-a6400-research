@@ -1,0 +1,458 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="844" viewBox="0 0 920 844" role="img" aria-labelledby="title desc">
+<title id="title">Automated Test Suite Growth — 2026-10-18 to 2026-11-14 (1,895 passing)</title>
+<desc id="desc">Daily cumulative test suite growth across 28 days from 204 tests on 2026-10-18 to 1,895 tests on 2026-11-14. Bounded offline and hardware checks, not a firmware compatibility percentage.</desc>
+<defs>
+  <linearGradient id="tg-area-grad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#2ea043" stop-opacity="0.42" />
+    <stop offset="55%" stop-color="#1f6feb" stop-opacity="0.16" />
+    <stop offset="100%" stop-color="#0d1117" stop-opacity="0.02" />
+  </linearGradient>
+  <linearGradient id="tg-line-grad" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="#58a6ff" />
+    <stop offset="45%" stop-color="#39c5cf" />
+    <stop offset="80%" stop-color="#3fb950" />
+    <stop offset="100%" stop-color="#bc8cff" />
+  </linearGradient>
+  <linearGradient id="tg-bar-blue" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#58a6ff" />
+    <stop offset="100%" stop-color="#1f6feb" stop-opacity="0.45" />
+  </linearGradient>
+  <linearGradient id="tg-bar-amber" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#f0883e" />
+    <stop offset="100%" stop-color="#d29922" stop-opacity="0.45" />
+  </linearGradient>
+  <linearGradient id="tg-bar-emerald" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#56d364" />
+    <stop offset="100%" stop-color="#2ea043" stop-opacity="0.45" />
+  </linearGradient>
+  <linearGradient id="tg-bar-peak" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#bc8cff" />
+    <stop offset="100%" stop-color="#8957e5" stop-opacity="0.50" />
+  </linearGradient>
+  <linearGradient id="tg-card-bg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#1c232d" />
+    <stop offset="100%" stop-color="#141921" />
+  </linearGradient>
+  <pattern id="tg-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+    <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#21262d" stroke-width="0.6" opacity="0.55" />
+  </pattern>
+  <filter id="tg-glow" x="-12%" y="-12%" width="124%" height="124%">
+    <feGaussianBlur stdDeviation="2.4" result="blur" />
+    <feMerge>
+      <feMergeNode in="blur" />
+      <feMergeNode in="SourceGraphic" />
+    </feMerge>
+  </filter>
+  <radialGradient id="tg-ambient-green" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#2ea043" stop-opacity="0.16" />
+    <stop offset="100%" stop-color="#2ea043" stop-opacity="0" />
+  </radialGradient>
+  <radialGradient id="tg-ambient-blue" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#1f6feb" stop-opacity="0.15" />
+    <stop offset="100%" stop-color="#1f6feb" stop-opacity="0" />
+  </radialGradient>
+  <clipPath id="tg-canvas-clip">
+    <rect width="920" height="844" rx="16" />
+  </clipPath>
+</defs>
+<rect width="920" height="844" rx="16" fill="#0d1117" />
+<g clip-path="url(#tg-canvas-clip)">
+  <ellipse cx="740" cy="110" rx="240" ry="120" fill="url(#tg-ambient-green)" />
+  <ellipse cx="220" cy="370" rx="260" ry="150" fill="url(#tg-ambient-blue)" />
+</g>
+<g>
+<text x="24" y="38" fill="#f0f6fc" font-size="19" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Automated Test Suite Growth &amp; Daily Velocity</text>
+<text x="24" y="54" fill="#9da7b3" font-size="8.8" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Daily cumulative offline checks &amp; net additions · 2026-10-18 to 2026-11-14 (28 days · deterministic suite)</text>
+<rect x="694.352" y="22" width="201.648" height="24" rx="12" fill="#1c222b" stroke="#30363d" stroke-width="1" />
+<circle cx="707.352" cy="34" r="6.5" fill="#3fb950" opacity="0.2" />
+<circle cx="707.352" cy="34" r="3.5" fill="#3fb950" />
+<text x="885" y="37.5" fill="#f0f6fc" font-size="10" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">2026-11-14 | 1,895 PASSING</text>
+<rect x="24" y="70" width="164" height="68" rx="8" fill="url(#tg-card-bg)" stroke="#30363d" stroke-width="1" />
+<rect x="25" y="71" width="162" height="3" rx="1.5" fill="#3fb950" />
+<text x="36" y="90" fill="#8b949e" font-size="8.2" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">CURRENT SUITE</text>
+<text x="36" y="113" fill="#f0f6fc" font-size="17" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">1,895</text>
+<text x="36" y="129" fill="#3fb950" font-size="8.2" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">+168 today · E0510</text>
+<rect x="201" y="70" width="164" height="68" rx="8" fill="url(#tg-card-bg)" stroke="#30363d" stroke-width="1" />
+<rect x="202" y="71" width="162" height="3" rx="1.5" fill="#39c5cf" />
+<text x="213" y="90" fill="#8b949e" font-size="8.2" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">NET EXPANSION</text>
+<text x="213" y="113" fill="#f0f6fc" font-size="17" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+1,691</text>
+<text x="213" y="129" fill="#39c5cf" font-size="8.2" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">204 -&gt; 1,895 (28d)</text>
+<rect x="378" y="70" width="164" height="68" rx="8" fill="url(#tg-card-bg)" stroke="#30363d" stroke-width="1" />
+<rect x="379" y="71" width="162" height="3" rx="1.5" fill="#bc8cff" />
+<text x="390" y="90" fill="#8b949e" font-size="8.2" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">PEAK DAY SURGE</text>
+<text x="390" y="113" fill="#f0f6fc" font-size="17" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+431</text>
+<text x="390" y="129" fill="#bc8cff" font-size="8.2" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">2026-11-11 · E0369</text>
+<rect x="555" y="70" width="164" height="68" rx="8" fill="url(#tg-card-bg)" stroke="#30363d" stroke-width="1" />
+<rect x="556" y="71" width="162" height="3" rx="1.5" fill="#f0883e" />
+<text x="567" y="90" fill="#8b949e" font-size="8.2" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">7-DAY VELOCITY</text>
+<text x="567" y="113" fill="#f0f6fc" font-size="17" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+1,296</text>
+<text x="567" y="129" fill="#f0883e" font-size="8.2" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">avg +185.1/d · Nov 08-14</text>
+<rect x="732" y="70" width="164" height="68" rx="8" fill="url(#tg-card-bg)" stroke="#30363d" stroke-width="1" />
+<rect x="733" y="71" width="162" height="3" rx="1.5" fill="#58a6ff" />
+<text x="744" y="90" fill="#8b949e" font-size="8.2" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">ACTIVE CADENCE</text>
+<text x="744" y="113" fill="#f0f6fc" font-size="17" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">20 / 28d</text>
+<text x="744" y="129" fill="#58a6ff" font-size="8.2" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">E0510 evidence track</text>
+<rect x="24" y="154" width="872" height="376" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1" />
+<text x="40" y="176" fill="#f0f6fc" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Cumulative Test Trajectory &amp; Daily Additions</text>
+<text x="40" y="192" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Smooth monotone curve (left axis) · daily net delta bars (lower band) · 3 project phases</text>
+<line x1="550" y1="173" x2="565" y2="173" stroke="#3fb950" stroke-width="2.5" />
+<circle cx="557.5" cy="173" r="2.6" fill="#3fb950" />
+<text x="570" y="176" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Cumulative</text>
+<rect x="628" y="168.5" width="8" height="8" rx="2" fill="#58a6ff" />
+<text x="640" y="176" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+1..39</text>
+<rect x="679.76" y="168.5" width="8" height="8" rx="2" fill="#f0883e" />
+<text x="691.76" y="176" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+40..149</text>
+<rect x="741.44" y="168.5" width="8" height="8" rx="2" fill="#3fb950" />
+<text x="753.44" y="176" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+150..299</text>
+<rect x="808.08" y="168.5" width="8" height="8" rx="2" fill="#bc8cff" />
+<text x="820.08" y="176" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+300+</text>
+<rect x="70" y="206" width="806" height="264" rx="6" fill="url(#tg-grid)" stroke="#30363d" stroke-width="1" />
+<rect x="70" y="206" width="518.143" height="264" rx="0" fill="#1f6feb" opacity="0.045" />
+<rect x="70" y="206" width="518.143" height="22" rx="0" fill="#1f6feb" opacity="0.08" />
+<text x="329.071" y="220" fill="#9da7b3" font-size="7.6" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">PHASE I · CORE LOADER, FS &amp; GLES</text>
+<rect x="588.143" y="206" width="172.714" height="264" rx="0" fill="#39c5cf" opacity="0.045" />
+<rect x="588.143" y="206" width="172.714" height="22" rx="0" fill="#39c5cf" opacity="0.08" />
+<line x1="588.143" y1="206" x2="588.143" y2="470" stroke="#30363d" stroke-width="1" stroke-dasharray="3 3" />
+<text x="674.5" y="220" fill="#9da7b3" font-size="7.6" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">PHASE II · DEBUGGER &amp; UVC</text>
+<rect x="760.857" y="206" width="115.143" height="264" rx="0" fill="#8957e5" opacity="0.045" />
+<rect x="760.857" y="206" width="115.143" height="22" rx="0" fill="#8957e5" opacity="0.08" />
+<line x1="760.857" y1="206" x2="760.857" y2="470" stroke="#30363d" stroke-width="1" stroke-dasharray="3 3" />
+<text x="818.429" y="220" fill="#9da7b3" font-size="7.6" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">PHASE III · KERNEL BOOT</text>
+<line x1="70" y1="470" x2="876" y2="470" stroke="#30363d" stroke-width="1" opacity="0.85" />
+<text x="62" y="473" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">0</text>
+<line x1="70" y1="422" x2="876" y2="422" stroke="#30363d" stroke-width="0.75" stroke-dasharray="2 4" opacity="0.55" />
+<text x="62" y="425" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">400</text>
+<line x1="70" y1="374" x2="876" y2="374" stroke="#30363d" stroke-width="0.75" stroke-dasharray="2 4" opacity="0.55" />
+<text x="62" y="377" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">800</text>
+<line x1="70" y1="326" x2="876" y2="326" stroke="#30363d" stroke-width="0.75" stroke-dasharray="2 4" opacity="0.55" />
+<text x="62" y="329" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,200</text>
+<line x1="70" y1="278" x2="876" y2="278" stroke="#30363d" stroke-width="0.75" stroke-dasharray="2 4" opacity="0.55" />
+<text x="62" y="281" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,600</text>
+<line x1="70" y1="230" x2="876" y2="230" stroke="#30363d" stroke-width="0.75" stroke-dasharray="2 4" opacity="0.55" />
+<text x="62" y="233" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">2,000</text>
+<rect x="76.3929" y="429.295" width="16" height="40.7053" rx="3" fill="url(#tg-bar-emerald)" opacity="0.82" />
+<rect x="105.179" y="444.659" width="16" height="25.3411" rx="3" fill="url(#tg-bar-amber)" opacity="0.82" />
+<rect x="133.964" y="463.814" width="16" height="6.18561" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="162.75" y="468" width="16" height="2" rx="1" fill="#30363d" opacity="0.7" />
+<rect x="191.536" y="468" width="16" height="2" rx="1" fill="#30363d" opacity="0.7" />
+<rect x="220.321" y="468" width="16" height="2" rx="1" fill="#30363d" opacity="0.7" />
+<rect x="249.107" y="453.239" width="16" height="16.761" rx="3" fill="url(#tg-bar-amber)" opacity="0.82" />
+<rect x="277.893" y="468" width="16" height="2" rx="1" fill="#30363d" opacity="0.7" />
+<rect x="306.679" y="468" width="16" height="2" rx="1" fill="#30363d" opacity="0.7" />
+<rect x="335.464" y="465.61" width="16" height="4.38979" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="364.25" y="466" width="16" height="4" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="393.036" y="466" width="16" height="4" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="421.821" y="468" width="16" height="2" rx="1" fill="#30363d" opacity="0.7" />
+<rect x="450.607" y="468" width="16" height="2" rx="1" fill="#30363d" opacity="0.7" />
+<rect x="479.393" y="468" width="16" height="2" rx="1" fill="#30363d" opacity="0.7" />
+<rect x="508.179" y="466" width="16" height="4" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="536.964" y="466" width="16" height="4" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="565.75" y="462.019" width="16" height="7.98144" rx="3" fill="url(#tg-bar-amber)" opacity="0.82" />
+<rect x="594.536" y="466" width="16" height="4" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="623.321" y="466" width="16" height="4" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="652.107" y="463.415" width="16" height="6.58469" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="680.893" y="466" width="16" height="4" rx="3" fill="url(#tg-bar-blue)" opacity="0.82" />
+<rect x="709.679" y="435.48" width="16" height="34.5197" rx="3" fill="url(#tg-bar-emerald)" opacity="0.82" />
+<text x="717.679" y="430.48" fill="#f0883e" font-size="7.6" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">+173</text>
+<rect x="738.464" y="449.448" width="16" height="20.5522" rx="3" fill="url(#tg-bar-amber)" opacity="0.82" />
+<text x="746.464" y="444.448" fill="#f0883e" font-size="7.6" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">+103</text>
+<rect x="767.25" y="384" width="16" height="86" rx="3" fill="url(#tg-bar-peak)" opacity="0.82" />
+<text x="775.25" y="379" fill="#bc8cff" font-size="7.6" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">+431</text>
+<rect x="796.036" y="430.492" width="16" height="39.5081" rx="3" fill="url(#tg-bar-emerald)" opacity="0.82" />
+<text x="804.036" y="425.492" fill="#f0883e" font-size="7.6" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">+198</text>
+<rect x="824.821" y="426.701" width="16" height="43.2993" rx="3" fill="url(#tg-bar-emerald)" opacity="0.82" />
+<text x="832.821" y="421.701" fill="#f0883e" font-size="7.6" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">+217</text>
+<rect x="853.607" y="436.478" width="16" height="33.522" rx="3" fill="url(#tg-bar-emerald)" opacity="0.82" />
+<text x="861.607" y="431.478" fill="#f0883e" font-size="7.6" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">+168</text>
+<path d="M 84.39 445.52 C 93.99 440.44, 103.58 432.27, 113.18 430.28 C 122.77 428.29, 132.37 426.56, 141.96 426.56 C 151.56 426.56, 161.15 426.56, 170.75 426.56 C 180.35 426.56, 189.94 426.56, 199.54 426.56 C 209.13 426.56, 218.73 426.56, 228.32 426.56 C 237.92 426.56, 247.51 416.48, 257.11 416.48 C 266.70 416.48, 276.30 416.48, 285.89 416.48 C 295.49 416.48, 305.08 416.48, 314.68 416.48 C 324.27 416.48, 333.87 414.31, 343.46 413.84 C 353.06 413.37, 362.65 413.24, 372.25 412.88 C 381.85 412.52, 391.44 411.68, 401.04 411.68 C 410.63 411.68, 420.23 411.68, 429.82 411.68 C 439.42 411.68, 449.01 411.68, 458.61 411.68 C 468.20 411.68, 477.80 411.68, 487.39 411.68 C 496.99 411.68, 506.58 410.62, 516.18 410.24 C 525.77 409.86, 535.37 409.81, 544.96 409.28 C 554.56 408.75, 564.15 405.35, 573.75 404.48 C 583.35 403.61, 592.94 402.98, 602.54 402.68 C 612.13 402.38, 621.73 402.43, 631.32 402.08 C 640.92 401.73, 650.51 398.53, 660.11 398.12 C 669.70 397.71, 679.30 397.86, 688.89 397.40 C 698.49 396.94, 708.08 381.80, 717.68 376.64 C 727.27 371.48, 736.87 370.93, 746.46 364.28 C 756.06 357.63, 765.65 323.41, 775.25 312.56 C 784.85 301.71, 794.44 297.08, 804.04 288.80 C 813.63 280.52, 823.23 270.34, 832.82 262.76 C 842.42 255.18, 852.01 249.32, 861.61 242.60 L 861.61 470.00 L 84.39 470.00 Z" fill="url(#tg-area-grad)" />
+<path d="M 84.39 445.52 C 93.99 440.44, 103.58 432.27, 113.18 430.28 C 122.77 428.29, 132.37 426.56, 141.96 426.56 C 151.56 426.56, 161.15 426.56, 170.75 426.56 C 180.35 426.56, 189.94 426.56, 199.54 426.56 C 209.13 426.56, 218.73 426.56, 228.32 426.56 C 237.92 426.56, 247.51 416.48, 257.11 416.48 C 266.70 416.48, 276.30 416.48, 285.89 416.48 C 295.49 416.48, 305.08 416.48, 314.68 416.48 C 324.27 416.48, 333.87 414.31, 343.46 413.84 C 353.06 413.37, 362.65 413.24, 372.25 412.88 C 381.85 412.52, 391.44 411.68, 401.04 411.68 C 410.63 411.68, 420.23 411.68, 429.82 411.68 C 439.42 411.68, 449.01 411.68, 458.61 411.68 C 468.20 411.68, 477.80 411.68, 487.39 411.68 C 496.99 411.68, 506.58 410.62, 516.18 410.24 C 525.77 409.86, 535.37 409.81, 544.96 409.28 C 554.56 408.75, 564.15 405.35, 573.75 404.48 C 583.35 403.61, 592.94 402.98, 602.54 402.68 C 612.13 402.38, 621.73 402.43, 631.32 402.08 C 640.92 401.73, 650.51 398.53, 660.11 398.12 C 669.70 397.71, 679.30 397.86, 688.89 397.40 C 698.49 396.94, 708.08 381.80, 717.68 376.64 C 727.27 371.48, 736.87 370.93, 746.46 364.28 C 756.06 357.63, 765.65 323.41, 775.25 312.56 C 784.85 301.71, 794.44 297.08, 804.04 288.80 C 813.63 280.52, 823.23 270.34, 832.82 262.76 C 842.42 255.18, 852.01 249.32, 861.61 242.60" fill="none" stroke="url(#tg-line-grad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#tg-glow)" />
+<circle cx="84.3929" cy="445.52" r="3.8" fill="#3fb950" stroke="#0d1117" stroke-width="1.5" />
+<circle cx="113.179" cy="430.28" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="141.964" cy="426.56" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="170.75" cy="426.56" r="1.8" fill="#8b949e" opacity="0.7" />
+<circle cx="199.536" cy="426.56" r="1.8" fill="#8b949e" opacity="0.7" />
+<circle cx="228.321" cy="426.56" r="1.8" fill="#8b949e" opacity="0.7" />
+<circle cx="257.107" cy="416.48" r="3.8" fill="#3fb950" stroke="#0d1117" stroke-width="1.5" />
+<circle cx="285.893" cy="416.48" r="1.8" fill="#8b949e" opacity="0.7" />
+<circle cx="314.679" cy="416.48" r="1.8" fill="#8b949e" opacity="0.7" />
+<circle cx="343.464" cy="413.84" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="372.25" cy="412.88" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="401.036" cy="411.68" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="429.821" cy="411.68" r="1.8" fill="#8b949e" opacity="0.7" />
+<circle cx="458.607" cy="411.68" r="1.8" fill="#8b949e" opacity="0.7" />
+<circle cx="487.393" cy="411.68" r="1.8" fill="#8b949e" opacity="0.7" />
+<circle cx="516.179" cy="410.24" r="3.8" fill="#3fb950" stroke="#0d1117" stroke-width="1.5" />
+<circle cx="544.964" cy="409.28" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="573.75" cy="404.48" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="602.536" cy="402.68" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="631.321" cy="402.08" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="660.107" cy="398.12" r="3.8" fill="#3fb950" stroke="#0d1117" stroke-width="1.5" />
+<circle cx="688.893" cy="397.4" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="717.679" cy="376.64" r="3.8" fill="#3fb950" stroke="#0d1117" stroke-width="1.5" />
+<circle cx="746.464" cy="364.28" r="2.3" fill="#39c5cf" stroke="#0d1117" stroke-width="1" />
+<circle cx="775.25" cy="312.56" r="3.8" fill="#bc8cff" stroke="#0d1117" stroke-width="1.5" />
+<circle cx="804.036" cy="288.8" r="3.8" fill="#3fb950" stroke="#0d1117" stroke-width="1.5" />
+<circle cx="832.821" cy="262.76" r="3.8" fill="#3fb950" stroke="#0d1117" stroke-width="1.5" />
+<circle cx="861.607" cy="242.6" r="9" fill="#3fb950" opacity="0.22" />
+<circle cx="861.607" cy="242.6" r="4.8" fill="#3fb950" stroke="#0d1117" stroke-width="2" />
+<text x="84.3929" y="420.52" fill="#f0f6fc" font-size="8.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">204</text>
+<text x="257.107" y="404.48" fill="#f0f6fc" font-size="8.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">446</text>
+<text x="516.179" y="398.24" fill="#f0f6fc" font-size="8.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">498</text>
+<text x="660.107" y="386.12" fill="#f0f6fc" font-size="8.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">599</text>
+<text x="717.679" y="364.64" fill="#f0f6fc" font-size="8.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">778</text>
+<line x1="770.25" y1="312.56" x2="760.25" y2="312.56" stroke="#8b949e" stroke-width="0.9" opacity="0.7" />
+<text x="757.25" y="314.56" fill="#f0f6fc" font-size="8.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,312</text>
+<line x1="799.036" y1="288.8" x2="789.036" y2="288.8" stroke="#8b949e" stroke-width="0.9" opacity="0.7" />
+<text x="786.036" y="290.8" fill="#f0f6fc" font-size="8.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,510</text>
+<line x1="827.821" y1="262.76" x2="817.821" y2="265.76" stroke="#8b949e" stroke-width="0.9" opacity="0.7" />
+<text x="814.821" y="267.76" fill="#f0f6fc" font-size="8.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,727</text>
+<rect x="799.607" y="229.6" width="48" height="18" rx="5" fill="#2ea043" stroke="#3fb950" stroke-width="1" />
+<text x="823.607" y="241.8" fill="#ffffff" font-size="8.8" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">1,895</text>
+<line x1="473" y1="470" x2="473" y2="496" stroke="#30363d" stroke-width="1" />
+<line x1="84.3929" y1="470" x2="84.3929" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="84.3929" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">18</text>
+<line x1="113.179" y1="470" x2="113.179" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="113.179" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">19</text>
+<line x1="141.964" y1="470" x2="141.964" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="141.964" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">20</text>
+<line x1="170.75" y1="470" x2="170.75" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="170.75" y="485" fill="#8b949e" font-size="7.8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">21</text>
+<line x1="199.536" y1="470" x2="199.536" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="199.536" y="485" fill="#8b949e" font-size="7.8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">22</text>
+<line x1="228.321" y1="470" x2="228.321" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="228.321" y="485" fill="#8b949e" font-size="7.8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">23</text>
+<line x1="257.107" y1="470" x2="257.107" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="257.107" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">24</text>
+<line x1="285.893" y1="470" x2="285.893" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="285.893" y="485" fill="#8b949e" font-size="7.8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">25</text>
+<line x1="314.679" y1="470" x2="314.679" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="314.679" y="485" fill="#8b949e" font-size="7.8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">26</text>
+<line x1="343.464" y1="470" x2="343.464" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="343.464" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">27</text>
+<line x1="372.25" y1="470" x2="372.25" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="372.25" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">28</text>
+<line x1="401.036" y1="470" x2="401.036" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="401.036" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">29</text>
+<line x1="429.821" y1="470" x2="429.821" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="429.821" y="485" fill="#8b949e" font-size="7.8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">30</text>
+<line x1="458.607" y1="470" x2="458.607" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="458.607" y="485" fill="#8b949e" font-size="7.8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">31</text>
+<line x1="487.393" y1="470" x2="487.393" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="487.393" y="485" fill="#8b949e" font-size="7.8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">01</text>
+<line x1="516.179" y1="470" x2="516.179" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="516.179" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">02</text>
+<line x1="544.964" y1="470" x2="544.964" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="544.964" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">03</text>
+<line x1="573.75" y1="470" x2="573.75" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="573.75" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">04</text>
+<line x1="602.536" y1="470" x2="602.536" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="602.536" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">05</text>
+<line x1="631.321" y1="470" x2="631.321" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="631.321" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">06</text>
+<line x1="660.107" y1="470" x2="660.107" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="660.107" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">07</text>
+<line x1="688.893" y1="470" x2="688.893" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="688.893" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">08</text>
+<line x1="717.679" y1="470" x2="717.679" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="717.679" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">09</text>
+<line x1="746.464" y1="470" x2="746.464" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="746.464" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">10</text>
+<line x1="775.25" y1="470" x2="775.25" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="775.25" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">11</text>
+<line x1="804.036" y1="470" x2="804.036" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="804.036" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">12</text>
+<line x1="832.821" y1="470" x2="832.821" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="832.821" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">13</text>
+<line x1="861.607" y1="470" x2="861.607" y2="474" stroke="#30363d" stroke-width="1" />
+<text x="861.607" y="485" fill="#c9d1d9" font-size="7.8" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="middle">14</text>
+<text x="271.5" y="500" fill="#8b949e" font-size="8" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">OCTOBER 2026</text>
+<text x="674.5" y="500" fill="#8b949e" font-size="8" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">NOVEMBER 2026</text>
+<rect x="24" y="546" width="872" height="256" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1" />
+<text x="40" y="568" fill="#f0f6fc" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Complete 28-Day Chronological Ledger</text>
+<text x="40" y="584" fill="#8b949e" font-size="8.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Every day since project start (2026-10-18) · cumulative total, daily net delta (+), and anchor evidence</text>
+<rect x="588" y="559" width="9" height="9" rx="2" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<text x="601" y="567" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+0</text>
+<rect x="620.92" y="559" width="9" height="9" rx="2" fill="#58a6ff" />
+<text x="633.92" y="567" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+1..39</text>
+<rect x="673.68" y="559" width="9" height="9" rx="2" fill="#f0883e" />
+<text x="686.68" y="567" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+40..149</text>
+<rect x="736.36" y="559" width="9" height="9" rx="2" fill="#3fb950" />
+<text x="749.36" y="567" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+150..299</text>
+<rect x="804" y="559" width="9" height="9" rx="2" fill="#bc8cff" />
+<text x="817" y="567" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">+300+</text>
+<rect x="40" y="595" width="26" height="12" rx="3" fill="#3fb950" />
+<rect x="70" y="595" width="26" height="12" rx="3" fill="#f0883e" />
+<rect x="100" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="130" y="595" width="26" height="12" rx="3" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="160" y="595" width="26" height="12" rx="3" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="190" y="595" width="26" height="12" rx="3" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="220" y="595" width="26" height="12" rx="3" fill="#f0883e" />
+<rect x="250" y="595" width="26" height="12" rx="3" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="280" y="595" width="26" height="12" rx="3" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="310" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="340" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="370" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="400" y="595" width="26" height="12" rx="3" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="430" y="595" width="26" height="12" rx="3" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="460" y="595" width="26" height="12" rx="3" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="490" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="520" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="550" y="595" width="26" height="12" rx="3" fill="#f0883e" />
+<rect x="580" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="610" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="640" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="670" y="595" width="26" height="12" rx="3" fill="#58a6ff" />
+<rect x="700" y="595" width="26" height="12" rx="3" fill="#3fb950" />
+<rect x="730" y="595" width="26" height="12" rx="3" fill="#f0883e" />
+<rect x="760" y="595" width="26" height="12" rx="3" fill="#bc8cff" />
+<rect x="790" y="595" width="26" height="12" rx="3" fill="#3fb950" />
+<rect x="820" y="595" width="26" height="12" rx="3" fill="#3fb950" />
+<rect x="850" y="595" width="26" height="12" rx="3" fill="#3fb950" />
+<rect x="40" y="617" width="201" height="18" rx="4" fill="#21262d" />
+<text x="48" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">DATE</text>
+<text x="132" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">TOTAL</text>
+<text x="184" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+DAY</text>
+<text x="233" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">REF</text>
+<text x="48" y="650" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 18</text>
+<text x="132" y="650" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">204</text>
+<text x="184" y="650" fill="#3fb950" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+204</text>
+<text x="233" y="650" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0022</text>
+<rect x="40" y="657" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="48" y="670" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 19</text>
+<text x="132" y="670" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">331</text>
+<text x="184" y="670" fill="#f0883e" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+127</text>
+<text x="233" y="670" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0041</text>
+<text x="48" y="690" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 20</text>
+<text x="132" y="690" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">362</text>
+<text x="184" y="690" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+31</text>
+<text x="233" y="690" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0058</text>
+<rect x="40" y="697" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="48" y="710" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 21</text>
+<text x="132" y="710" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">362</text>
+<text x="184" y="710" fill="#8b949e" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+0</text>
+<text x="233" y="710" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0058</text>
+<text x="48" y="730" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 22</text>
+<text x="132" y="730" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">362</text>
+<text x="184" y="730" fill="#8b949e" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+0</text>
+<text x="233" y="730" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0058</text>
+<rect x="40" y="737" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="48" y="750" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 23</text>
+<text x="132" y="750" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">362</text>
+<text x="184" y="750" fill="#8b949e" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+0</text>
+<text x="233" y="750" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0058</text>
+<text x="48" y="770" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 24</text>
+<text x="132" y="770" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">446</text>
+<text x="184" y="770" fill="#f0883e" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+84</text>
+<text x="233" y="770" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0066</text>
+<rect x="253" y="617" width="201" height="18" rx="4" fill="#21262d" />
+<text x="261" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">DATE</text>
+<text x="345" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">TOTAL</text>
+<text x="397" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+DAY</text>
+<text x="446" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">REF</text>
+<text x="261" y="650" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 25</text>
+<text x="345" y="650" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">446</text>
+<text x="397" y="650" fill="#8b949e" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+0</text>
+<text x="446" y="650" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0066</text>
+<rect x="253" y="657" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="261" y="670" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 26</text>
+<text x="345" y="670" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">446</text>
+<text x="397" y="670" fill="#8b949e" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+0</text>
+<text x="446" y="670" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0066</text>
+<text x="261" y="690" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 27</text>
+<text x="345" y="690" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">468</text>
+<text x="397" y="690" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+22</text>
+<text x="446" y="690" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0067</text>
+<rect x="253" y="697" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="261" y="710" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 28</text>
+<text x="345" y="710" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">476</text>
+<text x="397" y="710" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+8</text>
+<text x="446" y="710" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0068</text>
+<text x="261" y="730" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 29</text>
+<text x="345" y="730" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">486</text>
+<text x="397" y="730" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+10</text>
+<text x="446" y="730" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0070</text>
+<rect x="253" y="737" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="261" y="750" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 30</text>
+<text x="345" y="750" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">486</text>
+<text x="397" y="750" fill="#8b949e" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+0</text>
+<text x="446" y="750" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0070</text>
+<text x="261" y="770" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Oct 31</text>
+<text x="345" y="770" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">486</text>
+<text x="397" y="770" fill="#8b949e" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+0</text>
+<text x="446" y="770" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0070</text>
+<rect x="466" y="617" width="201" height="18" rx="4" fill="#21262d" />
+<text x="474" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">DATE</text>
+<text x="558" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">TOTAL</text>
+<text x="610" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+DAY</text>
+<text x="659" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">REF</text>
+<text x="474" y="650" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 01</text>
+<text x="558" y="650" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">486</text>
+<text x="610" y="650" fill="#8b949e" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+0</text>
+<text x="659" y="650" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0070</text>
+<rect x="466" y="657" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="474" y="670" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 02</text>
+<text x="558" y="670" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">498</text>
+<text x="610" y="670" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+12</text>
+<text x="659" y="670" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0071</text>
+<text x="474" y="690" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 03</text>
+<text x="558" y="690" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">506</text>
+<text x="610" y="690" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+8</text>
+<text x="659" y="690" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0072</text>
+<rect x="466" y="697" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="474" y="710" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 04</text>
+<text x="558" y="710" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">546</text>
+<text x="610" y="710" fill="#f0883e" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+40</text>
+<text x="659" y="710" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0082</text>
+<text x="474" y="730" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 05</text>
+<text x="558" y="730" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">561</text>
+<text x="610" y="730" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+15</text>
+<text x="659" y="730" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0095</text>
+<rect x="466" y="737" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="474" y="750" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 06</text>
+<text x="558" y="750" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">566</text>
+<text x="610" y="750" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+5</text>
+<text x="659" y="750" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0116</text>
+<text x="474" y="770" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 07</text>
+<text x="558" y="770" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">599</text>
+<text x="610" y="770" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+33</text>
+<text x="659" y="770" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0150</text>
+<rect x="679" y="617" width="201" height="18" rx="4" fill="#21262d" />
+<text x="687" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="start">DATE</text>
+<text x="771" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">TOTAL</text>
+<text x="823" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+DAY</text>
+<text x="872" y="629" fill="#8b949e" font-size="7.4" font-weight="700" font-family="Consolas, 'Courier New', monospace" text-anchor="end">REF</text>
+<text x="687" y="650" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 08</text>
+<text x="771" y="650" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">605</text>
+<text x="823" y="650" fill="#58a6ff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+6</text>
+<text x="872" y="650" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0204</text>
+<rect x="679" y="657" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="687" y="670" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 09</text>
+<text x="771" y="670" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">778</text>
+<text x="823" y="670" fill="#3fb950" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+173</text>
+<text x="872" y="670" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0298</text>
+<text x="687" y="690" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 10</text>
+<text x="771" y="690" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">881</text>
+<text x="823" y="690" fill="#f0883e" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+103</text>
+<text x="872" y="690" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0314</text>
+<rect x="679" y="697" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="687" y="710" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 11</text>
+<text x="771" y="710" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,312</text>
+<text x="823" y="710" fill="#bc8cff" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+431</text>
+<text x="872" y="710" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0369</text>
+<text x="687" y="730" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 12</text>
+<text x="771" y="730" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,510</text>
+<text x="823" y="730" fill="#3fb950" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+198</text>
+<text x="872" y="730" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0440</text>
+<rect x="679" y="737" width="201" height="19" rx="3" fill="#1c222b" opacity="0.7" />
+<text x="687" y="750" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 13</text>
+<text x="771" y="750" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,727</text>
+<text x="823" y="750" fill="#3fb950" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+217</text>
+<text x="872" y="750" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0500</text>
+<text x="687" y="770" fill="#c9d1d9" font-size="8.2" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="start">Nov 14</text>
+<text x="771" y="770" fill="#f0f6fc" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">1,895</text>
+<text x="823" y="770" fill="#3fb950" font-size="8.2" font-weight="600" font-family="Consolas, 'Courier New', monospace" text-anchor="end">+168</text>
+<text x="872" y="770" fill="#8b949e" font-size="8" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">E0510</text>
+<text x="24" y="822" fill="#9da7b3" font-size="8.6" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Source: tools/research/a6400_status_data.py (DAILY_TEST_HISTORY) · Git history &amp; docs/evidence/E0001-E0510</text>
+<text x="896" y="822" fill="#9da7b3" font-size="8.6" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="end">Deterministic stdlib SVG · 1,895 total tests</text>
+</g>
+</svg>

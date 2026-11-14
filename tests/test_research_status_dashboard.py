@@ -19,7 +19,9 @@ from tools.research.a6400_status_data import (
     CELL_STATES,
     CELL_UNMAPPED,
     CELL_VERIFIED,
+    DAILY_TEST_HISTORY,
     EP0_CLASS_CASES,
+    STATUS_SNAPSHOT,
     TEARDOWN_PHASES,
     TELEMETRY,
     TRANSPORT_AUDIT_CHECKS,
@@ -27,11 +29,18 @@ from tools.research.a6400_status_data import (
     registered_target_label,
     status_categories,
 )
-from tools.research.render_research_status import WIDTH, estimate_text_width, render_svg, text_box
+from tools.research.render_research_status import (
+    WIDTH,
+    estimate_text_width,
+    render_svg,
+    render_test_growth_svg,
+    text_box,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_DIR = ROOT / "docs" / "evidence"
 SVG = ROOT / "docs" / "images" / "research-status.svg"
+GROWTH_SVG = ROOT / "docs" / "images" / "test-growth.svg"
 SVG_NS = "{http://www.w3.org/2000/svg}"
 
 # Sources that name a bounded inventory rather than a dated E0xxx record.
@@ -72,16 +81,18 @@ def _text_nodes(root):
 
 class TestWellFormed(unittest.TestCase):
     def test_parses_as_xml(self):
-        root = _parse()
-        self.assertEqual(root.tag, f"{SVG_NS}svg")
+        for svg_path in (SVG, GROWTH_SVG):
+            root = _parse(svg_path.read_text(encoding="utf-8"))
+            self.assertEqual(root.tag, f"{SVG_NS}svg", str(svg_path))
 
     def test_canvas_is_920_wide_and_consistent(self):
-        root = _parse()
-        width = int(root.get("width"))
-        height = int(root.get("height"))
-        self.assertEqual(width, WIDTH)
-        self.assertEqual(root.get("viewBox"), f"0 0 {width} {height}")
-        self.assertGreater(height, 700)
+        for svg_path in (SVG, GROWTH_SVG):
+            root = _parse(svg_path.read_text(encoding="utf-8"))
+            width = int(root.get("width"))
+            height = int(root.get("height"))
+            self.assertEqual(width, WIDTH, str(svg_path))
+            self.assertEqual(root.get("viewBox"), f"0 0 {width} {height}", str(svg_path))
+            self.assertGreater(height, 700, str(svg_path))
 
     def test_has_accessible_title_and_description(self):
         root = _parse()
@@ -92,37 +103,48 @@ class TestWellFormed(unittest.TestCase):
         self.assertIn(TELEMETRY.latest_evidence, title.text)
         self.assertIn("not a firmware compatibility percentage", desc.text.lower())
 
+        growth_root = _parse(GROWTH_SVG.read_text(encoding="utf-8"))
+        g_title = growth_root.find(f"{SVG_NS}title")
+        g_desc = growth_root.find(f"{SVG_NS}desc")
+        self.assertIsNotNone(g_title)
+        self.assertIsNotNone(g_desc)
+        self.assertIn(f"{STATUS_SNAPSHOT.suite.test_count:,}", g_title.text)
+        self.assertIn("not a firmware compatibility percentage", g_desc.text.lower())
+
     def test_dimensions_match_the_generated_document(self):
         self.assertEqual(SVG.read_text(encoding="utf-8"), render_svg(TELEMETRY))
+        self.assertEqual(GROWTH_SVG.read_text(encoding="utf-8"), render_test_growth_svg(DAILY_TEST_HISTORY))
 
 
 class TestTextLayout(unittest.TestCase):
     def test_no_text_overlaps(self):
-        nodes = _text_nodes(_parse())
-        self.assertGreater(len(nodes), 40, "dashboard should be text-dense")
-        boxes = []
-        for node in nodes:
-            boxes.append((text_box(node["x"], node["y"], node["text"], node["size"], node["family"],
-                                   node["weight"], node["anchor"]), node["text"]))
-        collisions = []
-        for index, (box, text) in enumerate(boxes):
-            for other_box, other_text in boxes[index + 1:]:
-                if (box[0] < other_box[2] and box[2] > other_box[0]
-                        and box[1] < other_box[3] and box[3] > other_box[1]):
-                    collisions.append(f"{text!r} <-> {other_text!r}")
-        self.assertEqual(collisions, [], "overlapping text boxes: " + "; ".join(collisions[:5]))
+        for svg_path in (SVG, GROWTH_SVG):
+            nodes = _text_nodes(_parse(svg_path.read_text(encoding="utf-8")))
+            self.assertGreater(len(nodes), 40, f"{svg_path} should be text-dense")
+            boxes = []
+            for node in nodes:
+                boxes.append((text_box(node["x"], node["y"], node["text"], node["size"], node["family"],
+                                       node["weight"], node["anchor"]), node["text"]))
+            collisions = []
+            for index, (box, text) in enumerate(boxes):
+                for other_box, other_text in boxes[index + 1:]:
+                    if (box[0] < other_box[2] and box[2] > other_box[0]
+                            and box[1] < other_box[3] and box[3] > other_box[1]):
+                        collisions.append(f"{text!r} <-> {other_text!r}")
+            self.assertEqual(collisions, [], f"{svg_path} overlapping text boxes: " + "; ".join(collisions[:5]))
 
     def test_all_text_stays_inside_the_canvas(self):
-        root = _parse()
-        width = int(root.get("width"))
-        height = int(root.get("height"))
-        for node in _text_nodes(root):
-            left, top, right, bottom = text_box(node["x"], node["y"], node["text"], node["size"],
-                                                node["family"], node["weight"], node["anchor"])
-            self.assertGreaterEqual(left, 0.0, node["text"])
-            self.assertLessEqual(right, width, node["text"])
-            self.assertGreaterEqual(top, 0.0, node["text"])
-            self.assertLessEqual(bottom, height, node["text"])
+        for svg_path in (SVG, GROWTH_SVG):
+            root = _parse(svg_path.read_text(encoding="utf-8"))
+            width = int(root.get("width"))
+            height = int(root.get("height"))
+            for node in _text_nodes(root):
+                left, top, right, bottom = text_box(node["x"], node["y"], node["text"], node["size"],
+                                                    node["family"], node["weight"], node["anchor"])
+                self.assertGreaterEqual(left, 0.0, f"{svg_path}: {node['text']}")
+                self.assertLessEqual(right, width, f"{svg_path}: {node['text']}")
+                self.assertGreaterEqual(top, 0.0, f"{svg_path}: {node['text']}")
+                self.assertLessEqual(bottom, height, f"{svg_path}: {node['text']}")
 
     def test_width_estimator_is_conservative(self):
         # The suite must not silently rely on an optimistic measurement.
@@ -261,10 +283,11 @@ class TestBarsAndBoundaries(unittest.TestCase):
 
 class TestEpistemicHonesty(unittest.TestCase):
     def test_no_percentage_claim_is_rendered(self):
-        root = _parse()
-        texts = ["".join(element.itertext()) for element in root.iter(f"{SVG_NS}text")]
-        self.assertFalse([text for text in texts if "%" in text],
-                         "the dashboard must not display a percentage")
+        for svg_path in (SVG, GROWTH_SVG):
+            root = _parse(svg_path.read_text(encoding="utf-8"))
+            texts = ["".join(element.itertext()) for element in root.iter(f"{SVG_NS}text")]
+            self.assertFalse([text for text in texts if "%" in text],
+                             f"{svg_path} must not display a percentage")
 
     def test_footnote_and_legend_are_present(self):
         root = _parse()
@@ -296,6 +319,15 @@ class TestEpistemicHonesty(unittest.TestCase):
                     self.assertTrue(matches, f"source {token} has no evidence record")
                 else:
                     self.assertIn(token, INVENTORY_SOURCES, f"unknown inventory source {token!r}")
+
+        self.assertEqual(len(DAILY_TEST_HISTORY), 28)
+        self.assertEqual(DAILY_TEST_HISTORY[0].date, "2026-10-18")
+        self.assertEqual(DAILY_TEST_HISTORY[0].total, 204)
+        self.assertEqual(DAILY_TEST_HISTORY[-1].date, STATUS_SNAPSHOT.as_of)
+        self.assertEqual(DAILY_TEST_HISTORY[-1].total, STATUS_SNAPSHOT.suite.test_count)
+        for point in DAILY_TEST_HISTORY:
+            matches = list(EVIDENCE_DIR.glob(f"{int(point.evidence_id[1:]):04d}-*.md"))
+            self.assertTrue(matches, f"history point {point.date} ({point.evidence_id}) has no evidence record")
 
 
 if __name__ == "__main__":

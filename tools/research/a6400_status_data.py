@@ -238,7 +238,7 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
         tier="OFFLINE BOUNDED UNICORN BRING-UP",
     ),
-    headline="1787 tests recorded passing | nflasha1 BusyBox /bin/ash shell | No verified emulator GUI frame",
+    headline="1895 tests recorded passing | nflasha1 BusyBox /bin/ash shell | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0509",
@@ -505,7 +505,7 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1787,
+        test_count=1895,
         recorded_at="2026-11-14",
         evidence_id="E0510",
         command="python -m unittest discover -s tests -q",
@@ -910,3 +910,84 @@ def _build_telemetry() -> TelemetryDashboard:
 
 
 TELEMETRY = _build_telemetry()
+
+
+# ===========================================================================
+# Daily test suite history (single source of truth for docs/images/test-growth.svg)
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class DailyTestPoint:
+    """One calendar day's recorded cumulative suite count and net additions."""
+
+    date: str
+    total: int
+    delta: int
+    evidence_id: str
+    milestone: str = ""
+
+
+DAILY_TEST_HISTORY: tuple[DailyTestPoint, ...] = (
+    DailyTestPoint("2026-10-18", 204, 204, "E0022", "ARM loader, UIPC & task94 boot"),
+    DailyTestPoint("2026-10-19", 331, 127, "E0041", "DMM/timer ABI & preset backup"),
+    DailyTestPoint("2026-10-20", 362, 31, "E0058", "SD DMA/IOCTL & GRM contracts"),
+    DailyTestPoint("2026-10-21", 362, 0, "E0058"),
+    DailyTestPoint("2026-10-22", 362, 0, "E0058"),
+    DailyTestPoint("2026-10-23", 362, 0, "E0058"),
+    DailyTestPoint("2026-10-24", 446, 84, "E0066", "GLES kernel binding & backup decoder"),
+    DailyTestPoint("2026-10-25", 446, 0, "E0066"),
+    DailyTestPoint("2026-10-26", 446, 0, "E0066"),
+    DailyTestPoint("2026-10-27", 468, 22, "E0067", "GPIO contract & GLES ownership"),
+    DailyTestPoint("2026-10-28", 476, 8, "E0068", "USB buspower module boundary"),
+    DailyTestPoint("2026-10-29", 486, 10, "E0070", "Sugilite render loop & surface"),
+    DailyTestPoint("2026-10-30", 486, 0, "E0070"),
+    DailyTestPoint("2026-10-31", 486, 0, "E0070"),
+    DailyTestPoint("2026-11-01", 486, 0, "E0070"),
+    DailyTestPoint("2026-11-02", 498, 12, "E0071", "GuestUsbEvent & MediaCommon"),
+    DailyTestPoint("2026-11-03", 506, 8, "E0072", "GuestUsbOtgCore & HDMI boundary"),
+    DailyTestPoint("2026-11-04", 546, 40, "E0082", "DMP PICA200 rasterizer & CEC/pipe"),
+    DailyTestPoint("2026-11-05", 561, 15, "E0095", "Root USB debugger & menu model"),
+    DailyTestPoint("2026-11-06", 566, 5, "E0116", "Native row entry & allocator"),
+    DailyTestPoint("2026-11-07", 599, 33, "E0150", "Authentic 720p30 CinemaHUD UVC"),
+    DailyTestPoint("2026-11-08", 605, 6, "E0204", "Entry bridge & caller drain"),
+    DailyTestPoint("2026-11-09", 778, 173, "E0298", "Safe OSD capture & monitor rings"),
+    DailyTestPoint("2026-11-10", 881, 103, "E0314", "GPES BAR/IRQ model & UIPC wire"),
+    DailyTestPoint("2026-11-11", 1312, 431, "E0369", "Multi-body targets & sync callbacks"),
+    DailyTestPoint("2026-11-12", 1510, 198, "E0440", "WinUSB debugger v2 & nflasha dump"),
+    DailyTestPoint("2026-11-13", 1727, 217, "E0500", "UC_TLB_VIRTUAL & 13-body map"),
+    DailyTestPoint("2026-11-14", 1895, 168, "E0510", "BusyBox ash shell, A5KU & UI boot"),
+)
+
+
+def _validate_daily_test_history(
+    history: tuple[DailyTestPoint, ...] = DAILY_TEST_HISTORY,
+) -> None:
+    if not history:
+        raise ValueError("DAILY_TEST_HISTORY must not be empty")
+    prev_total = 0
+    for index, point in enumerate(history):
+        if point.total < prev_total:
+            raise ValueError(f"DAILY_TEST_HISTORY regressed at {point.date}: {point.total} < {prev_total}")
+        expected_delta = point.total - prev_total
+        if point.delta != expected_delta:
+            raise ValueError(
+                f"DAILY_TEST_HISTORY delta mismatch at {point.date}: "
+                f"got {point.delta}, expected {expected_delta}"
+            )
+        if index > 0 and point.date <= history[index - 1].date:
+            raise ValueError(f"DAILY_TEST_HISTORY dates not strictly increasing at {point.date}")
+        prev_total = point.total
+    if history[-1].total != STATUS_SNAPSHOT.suite.test_count:
+        raise ValueError(
+            f"DAILY_TEST_HISTORY[-1].total ({history[-1].total}) != "
+            f"STATUS_SNAPSHOT.suite.test_count ({STATUS_SNAPSHOT.suite.test_count})"
+        )
+    if history[-1].date != STATUS_SNAPSHOT.as_of:
+        raise ValueError(
+            f"DAILY_TEST_HISTORY[-1].date ({history[-1].date}) != "
+            f"STATUS_SNAPSHOT.as_of ({STATUS_SNAPSHOT.as_of})"
+        )
+
+
+_validate_daily_test_history()
