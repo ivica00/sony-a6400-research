@@ -25,6 +25,7 @@ def library():
     output=ROOT/'artifacts/analysis'/('menu_touch_policy_test.dll' if os.name=='nt' else 'menu_touch_policy_test.so')
     source=ROOT/'tools/native_camera/menu_touch_policy.c'
     if not (output.exists() and output.stat().st_mtime >= source.stat().st_mtime):
+        output.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run([compiler,'-std=c11','-O2','-Wall','-Wextra','-Werror','-shared']+([] if os.name=='nt' else ['-fPIC'])+['-o',str(output),str(source)],check=True,capture_output=True)
     lib=C.CDLL(str(output));lib.mt_process.argtypes=[C.POINTER(State),C.POINTER(Context),C.POINTER(Event),C.POINTER(Ops)];lib.mt_process.restype=C.c_int
     lib.mt_decode.argtypes=[C.POINTER(C.c_uint8),C.c_uint,C.POINTER(Event)];lib.mt_decode.restype=C.c_int

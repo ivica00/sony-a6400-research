@@ -28,10 +28,13 @@ class InterpreterElfTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from pathlib import Path
-        from src.a6400.execution.nflasha_boot_set import NflashaBootSet
+        from src.a6400.execution.nflasha_boot_set import BootSetError, NflashaBootSet
         from tests.emulator.test_cramfs_busybox import read_blocks, read_symlink
         root = Path(__file__).resolve().parents[2]
-        cls.image = NflashaBootSet.from_evidence(root, 'nflasha1').read('boot/initrd.img')
+        try:
+            cls.image = NflashaBootSet.from_evidence(root, 'nflasha1').read('boot/initrd.img')
+        except BootSetError as exc:
+            raise unittest.SkipTest(str(exc))
         cls.lib = {}
         pos, end = 0x1F50, 0x1F50 + 0x2F4
         while pos + 12 <= end:

@@ -12,6 +12,8 @@ from tools.research.wbi_pagewalk import read_virtual
 class KernelTaskCopyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not (ROOT / 'artifacts/inventory/baseline.json').is_file():
+            raise unittest.SkipTest('Local inventory/firmware not present')
         cls.context = load_context()
 
     def test_original_frame_copy_changes_only_child_r0_and_sp(self):

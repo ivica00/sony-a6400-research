@@ -18,6 +18,8 @@ DRIVER_SHA256 = 'b150c666ee29567e920e156b8a5def8307d04c51b799956cdd74fcf5c55211c
 class TestSdHardwareProfile(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not (PROJECT_ROOT / DRIVER).is_file():
+            raise unittest.SkipTest('Local firmware SD driver not present')
         raw = checked_input(PROJECT_ROOT, DRIVER, DRIVER_SHA256)
         cls.elf = ELFFile(io.BytesIO(raw))
         cls.symbols = {s.name: s for s in cls.elf.get_section_by_name('.symtab').iter_symbols()}

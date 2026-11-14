@@ -7,6 +7,9 @@ from tools.research.gles_contract_trace import run
 class GlesContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        from project_paths import PROJECT_ROOT
+        if not (PROJECT_ROOT / 'artifacts/inventory/elf-inventory.json').is_file():
+            raise unittest.SkipTest('Local inventory/firmware not present')
         cls.report = run()
 
     def test_device_identity_and_original_open_prefix(self):

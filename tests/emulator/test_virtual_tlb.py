@@ -461,6 +461,34 @@ class VirtualTlbTest(unittest.TestCase):
         self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SP), 0x5E864C04)
         self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R0), 0x00055000)
 
+    def test_decode_fault_address_thumb2_pc_relative_ldr(self):
+        machine = make_machine()
+        # 0x0402F666: dff8ec4b = ldr.w r4, [pc, #0xbec] -> ((0x0402F666 + 4) & ~3) + 0xbec = 0x04030254
+        pa = 0x0042F666
+        machine.uc.mem_write(pa, bytes.fromhex('dff8ec4b'))
+        machine._set_pc_and_cpsr(0x0402F666, 0x600000F0)
+        decoded = machine._decode_fault_address(0x0402F666, pa)
+        self.assertEqual(decoded, (0x04030254, False))
+
+    def test_capture_fast_syscall_frame_preserves_live_r0(self):
+        machine = make_machine()
+        sp = 0x60003000
+        # At 0x6010DEC0 (ret_fast_syscall), pt_regs starts at sp + 8, where ARM_r0 is 0,
+        # while the live syscall return value (0x00055000) is in R0.
+        pt_words = [0] * 18
+        pt_words[13] = 0x5E864C04
+        pt_words[14] = 0x0403E98D
+        pt_words[15] = 0x0403EB16
+        pt_words[16] = 0x600000F0
+        import struct
+        machine.uc.mem_write(0x3008, struct.pack('<18I', *pt_words))
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x93)
+        machine.uc.reg_write(UC_ARM_REG_SP, sp)
+        machine.uc.reg_write(UC_ARM_REG_R0, 0x00055000)
+        machine._capture_fast_syscall_frame(machine.uc)
+        self.assertIsNotNone(machine._fast_frame)
+        self.assertEqual(machine._fast_frame['words'][0], 0x00055000)
+
 
 if __name__ == '__main__':
     unittest.main()

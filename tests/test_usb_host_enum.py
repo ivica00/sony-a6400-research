@@ -32,6 +32,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DESCRIPTOR_MANIFEST = (
     PROJECT_ROOT / 'artifacts' / 'native' / 'uvc-ptp-descriptors-e0154'
     / 'manifest.json')
+ENABLEMENT_MANIFEST = (
+    PROJECT_ROOT / 'artifacts' / 'analysis' / 'e0322-uvc-overlay-plan.json')
+MANIFESTS_PRESENT = DESCRIPTOR_MANIFEST.is_file() and ENABLEMENT_MANIFEST.is_file()
 
 
 def _valid_raw() -> bytes:
@@ -50,6 +53,7 @@ def _write_temp_manifest(root: Path,
     return path
 
 
+@unittest.skipUnless(MANIFESTS_PRESENT, 'Local USB descriptor/overlay manifests absent')
 class TestUsbHostEnumDescriptor(unittest.TestCase):
     """Descriptor facts pinned by E0154/E0317/E0321."""
 
@@ -131,6 +135,7 @@ class TestUsbHostEnumDescriptor(unittest.TestCase):
             'manifest.json'))
 
 
+@unittest.skipUnless(MANIFESTS_PRESENT, 'Local USB descriptor/overlay manifests absent')
 class TestUsbHostEnumPlan(unittest.TestCase):
     """SET_CONFIGURATION planning for the decoded UsbControl path."""
 
@@ -173,6 +178,7 @@ class TestUsbHostEnumPlan(unittest.TestCase):
 class TestUsbHostEnumRefusals(unittest.TestCase):
     """Fail-closed behavior: no fallback, no fabricated descriptor."""
 
+    @unittest.skipUnless(DESCRIPTOR_MANIFEST.is_file(), 'Local descriptor manifest absent')
     def test_hash_mismatch_refused_before_parse(self):
         raw = bytearray(_valid_raw())
         raw[3] ^= 0x01  # same length, changed wTotalLength/hash
@@ -194,6 +200,7 @@ class TestUsbHostEnumRefusals(unittest.TestCase):
             with self.assertRaises(UsbHostEnumError):
                 load_descriptor_bytes(enablement_manifest_path=path)
 
+    @unittest.skipUnless(DESCRIPTOR_MANIFEST.is_file(), 'Local descriptor manifest absent')
     def test_unknown_layout_refused(self):
         raw = bytearray(_valid_raw())
         # PTP interface class byte offset: config header 9 + interface class 5.
@@ -202,6 +209,7 @@ class TestUsbHostEnumRefusals(unittest.TestCase):
             select_uvc_ptp_configuration(
                 parse_configuration_descriptor(bytes(raw)))
 
+    @unittest.skipUnless(DESCRIPTOR_MANIFEST.is_file(), 'Local descriptor manifest absent')
     def test_truncated_descriptor_refused(self):
         with self.assertRaises(UnsupportedDescriptorLayout):
             parse_configuration_descriptor(_valid_raw()[:-1])
@@ -210,6 +218,7 @@ class TestUsbHostEnumRefusals(unittest.TestCase):
         with self.assertRaises(UnsupportedDescriptorLayout):
             parse_configuration_descriptor(b'\x09' * 64)
 
+    @unittest.skipUnless(MANIFESTS_PRESENT, 'Local USB descriptor/overlay manifests absent')
     def test_unsupported_configuration_value_in_select(self):
         cfg, _ = load_configuration()
         # A non-1 config value is refused before layout validation.

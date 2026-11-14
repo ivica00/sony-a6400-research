@@ -5,7 +5,7 @@ import zlib
 from pathlib import Path
 
 from src.a6400.execution.arm_atags import build_atags
-from src.a6400.execution.nflasha_boot_set import NflashaBootSet
+from src.a6400.execution.nflasha_boot_set import BootSetError, NflashaBootSet
 from src.a6400.execution.unicorn_machine import UnicornMachine
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,7 +59,10 @@ def read_symlink(image, off, size):
 class CramfsBusyboxTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        boot_set = NflashaBootSet.from_evidence(ROOT, 'nflasha1')
+        try:
+            boot_set = NflashaBootSet.from_evidence(ROOT, 'nflasha1')
+        except BootSetError as exc:
+            raise unittest.SkipTest(str(exc))
         cls.image = boot_set.read('boot/initrd.img')
 
     def test_ash_symlink_target_is_busybox(self):

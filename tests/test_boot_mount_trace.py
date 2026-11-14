@@ -18,7 +18,14 @@ class TestBootMountTrace(unittest.TestCase):
         self.assertEqual(encode_st_dev(252, 15), 0xFC0F)
         self.assertEqual(encode_st_dev(252, 143), 0xFC8F)
 
+    def _require_initrd(self):
+        from project_paths import PROJECT_ROOT
+        init_path = PROJECT_ROOT / "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/initrd.img_unpacked/sbin/init"
+        if not init_path.is_file():
+            self.skipTest("Local firmware initrd not present")
+
     def test_parse_devno_table(self):
+        self._require_initrd()
         nodes = parse_devno_table()
         self.assertEqual(len(nodes), 88)
 
@@ -35,6 +42,7 @@ class TestBootMountTrace(unittest.TestCase):
         self.assertEqual(dnflasha["count"], 32)
 
     def test_parse_init_mounts(self):
+        self._require_initrd()
         mnts, drivers1, drivers2 = parse_init_mounts()
         self.assertEqual(len(mnts), 22)
         self.assertEqual(len(drivers1), 4)
@@ -65,6 +73,7 @@ class TestBootMountTrace(unittest.TestCase):
         self.assertEqual(mnts[21]["data"], "posix_attr")
 
     def test_trace_boot_mounts_resolution(self):
+        self._require_initrd()
         rep = trace_boot_mounts()
         res = rep["device_resolutions"]
 

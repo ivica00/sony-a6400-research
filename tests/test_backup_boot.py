@@ -46,6 +46,11 @@ def _require_elf_inventory_input(test_case: unittest.TestCase, rel_path: str) ->
 
 class BackupBootOptionsTests(unittest.TestCase):
     def test_extract_init_backup_options(self):
+        from project_paths import PROJECT_ROOT
+
+        init_path = PROJECT_ROOT / "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/initrd.img_unpacked/sbin/init"
+        if not init_path.is_file():
+            self.skipTest("Local firmware initrd not present")
         opts = extract_init_backup_options()
         self.assertEqual(opts["module"], "/usr/kmod/backup.ko")
         self.assertIn("Backup_load=0", opts["options"])

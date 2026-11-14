@@ -22,7 +22,10 @@ from src.a6400.execution.guest_uipc import (
 class BackupServiceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.preset_raw = (PROJECT_ROOT / DEFAULT_PRESET_REL).read_bytes()
+        preset_path = PROJECT_ROOT / DEFAULT_PRESET_REL
+        if not preset_path.is_file():
+            raise unittest.SkipTest(f"Local firmware preset not present: {DEFAULT_PRESET_REL}")
+        cls.preset_raw = preset_path.read_bytes()
 
     def test_checked_bk4_valid_and_invalid(self):
         info = checked_bk4(self.preset_raw)

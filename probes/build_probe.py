@@ -69,6 +69,8 @@ def sha256_file(path):
 def linux_path(path):
     """Translate a Windows path under the repo into /mnt/<drive>/... (repo convention)."""
     path = Path(path).resolve()
+    if sys.platform.startswith('linux'):
+        return path.as_posix()
     return '/mnt/' + path.drive[0].lower() + path.as_posix()[2:]
 
 
@@ -85,7 +87,10 @@ def _decode_wsl(data):
 
 
 def wsl(args, *, input_text=None, timeout=300):
-    command = ['wsl', '-d', DISTRO, '--', *[str(a) for a in args]]
+    if sys.platform.startswith('linux'):
+        command = [str(a) for a in args]
+    else:
+        command = ['wsl', '-d', DISTRO, '--', *[str(a) for a in args]]
     try:
         proc = subprocess.run(command,
                              input=None if input_text is None else input_text.encode('utf-8'),

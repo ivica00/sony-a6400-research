@@ -14,6 +14,8 @@ EXPECTED_DIGEST = 'b150c666ee29567e920e156b8a5def8307d04c51b799956cdd74fcf5c5521
 class SdTransferProfileTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not (PROJECT_ROOT / DRIVER).is_file():
+            raise unittest.SkipTest('Local firmware SD driver not present')
         raw = checked_input(PROJECT_ROOT, DRIVER, EXPECTED_DIGEST)
         cls.elf = ELFFile(io.BytesIO(raw))
         cls.symbols = {s.name: s['st_value'] for s in cls.elf.get_section_by_name('.symtab').iter_symbols()}

@@ -19,6 +19,8 @@ MCMN_SHA256 = 'c18e8457cbb8dd993d649d393490de32225cd419d546270b8a0d00af6f027d7b'
 class TestSdDmaProfile(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not (PROJECT_ROOT / MMC_DRIVER).is_file() or not (PROJECT_ROOT / MCMN_DRIVER).is_file():
+            raise unittest.SkipTest('Local firmware SD drivers not present')
         mmc_raw = checked_input(PROJECT_ROOT, MMC_DRIVER, MMC_SHA256)
         mcmn_raw = checked_input(PROJECT_ROOT, MCMN_DRIVER, MCMN_SHA256)
         cls.mmc_elf = ELFFile(io.BytesIO(mmc_raw))

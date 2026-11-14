@@ -26,6 +26,9 @@ class TestCameraLinkAndBootLogger(unittest.TestCase):
         self.assertEqual(usb_ioc['size'], 36)
 
     def test_boundary_analyzer_resolves_libc_and_libinfrahdmi(self):
+        from project_paths import PROJECT_ROOT
+        if not (PROJECT_ROOT / 'firmware').is_dir():
+            self.skipTest('Local firmware tree not present')
         analyzer = BoundaryAnalyzer()
         sample_report = {
             'status': 'syscall_boundary',

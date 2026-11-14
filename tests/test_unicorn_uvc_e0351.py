@@ -14,7 +14,10 @@ FIXTURES = (e0351.SELECTOR_ELF, e0351.BRIDGE_ELF, e0351.REFLASS_ELF)
 class ClassHandlerDecodeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.static = e0351.decode_class_handler()
+        try:
+            cls.static = e0351.decode_class_handler()
+        except FileNotFoundError as exc:
+            raise unittest.SkipTest(f'Local firmware fixture not present: {exc}')
 
     def test_class_handler_identical_in_shipped_build(self):
         self.assertTrue(self.static['class_handler_identical_in_shipped_build'])

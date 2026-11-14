@@ -87,6 +87,10 @@ class VendorInterfaceDiscoveryTests(unittest.TestCase):
             _vendor_interface(FakeConfiguration([no_out]))
     def test_missing_device_returns_none(self):
         from unittest import mock
+        try:
+            import usb.core  # noqa: F401
+        except ImportError:
+            self.skipTest('pyusb not installed')
         with mock.patch('usb.core.find', return_value=[]):
             self.assertIsNone(find_debugger_interface(backend=object()))
 
