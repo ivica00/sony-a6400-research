@@ -17,7 +17,7 @@ class SonyFirmwareParser:
 
     def scan_for_ufu(self):
         """Scans any file (e.g. .exe, .dat, .bin) for the Sony UFU header"""
-        print(f"[*] Analiza datoteke: {os.path.basename(self.filepath)} ({self.filesize:,} bajtova)")
+        print(f"[*] Analyzing file: {os.path.basename(self.filepath)} ({self.filesize:,} bytes)")
         offsets = []
         with open(self.filepath, 'rb') as f:
             chunk_size = 1024 * 1024
@@ -46,7 +46,7 @@ class SonyFirmwareParser:
             f.seek(start_offset)
             magic = f.read(8)
             if magic != self.UFU_MAGIC:
-                raise ValueError("Neispravan UFU magični potpis.")
+                raise ValueError("Invalid UFU magic signature.")
             
             while True:
                 header = f.read(8)
@@ -83,22 +83,22 @@ class SonyFirmwareParser:
                     break
                 dst.write(block)
                 remaining -= len(block)
-        print(f"[+] Chunk '{chunk_info['type']}' uspešno ekstraktovan -> {output_path} ({chunk_info['size']:,} bajtova)")
+        print(f"[+] Chunk '{chunk_info['type']}' successfully extracted -> {output_path} ({chunk_info['size']:,} bytes)")
 
 def run_analysis(file_path):
     parser = SonyFirmwareParser(file_path)
     offsets = parser.scan_for_ufu()
     
     if not offsets:
-        print("[-] Nije pronađen Sony UFU firmware header u ovom fajlu.")
+        print("[-] Sony UFU firmware header not found in this file.")
         return
     
-    print(f"[+] Pronađeno {len(offsets)} UFU zaglavlja na pozicijama: {[hex(o) for o in offsets]}")
+    print(f"[+] Found {len(offsets)} UFU headers at offsets: {[hex(o) for o in offsets]}")
     for idx, off in enumerate(offsets):
-        print_header(f"UFU Kontejner #{idx + 1} (Offset: {hex(off)})")
+        print_header(f"UFU Container #{idx + 1} (Offset: {hex(off)})")
         chunks = parser.parse_dat(off)
         for i, c in enumerate(chunks):
-            print(f" [{i+1:02d}] Tip: {c['type']:<6} | Offset: 0x{c['offset']:08x} | Veličina: {c['size']:>10,} B | Uzorak: {c['sample_hex'][:32]}")
+            print(f" [{i+1:02d}] Type: {c['type']:<6} | Offset: 0x{c['offset']:08x} | Size: {c['size']:>10,} B | Sample: {c['sample_hex'][:32]}")
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
@@ -107,7 +107,7 @@ if __name__ == '__main__':
         # Default test against existing DAT files in the repo as baseline
         sample_dat = os.path.join('Sony-PMCA-RE', 'updatershell', 'fdat', 'CXD90014.dat')
         if os.path.exists(sample_dat):
-            print_header("BENCHMARK TEST NA POSTOJEĆEM CXD90014 FIRMWARE DAT-u")
+            print_header("BENCHMARK TEST ON EXISTING CXD90014 FIRMWARE DAT")
             run_analysis(sample_dat)
         else:
-            print("Upotreba: python -m tools.research.firmware_analyzer <putanja_do_exe_ili_dat>")
+            print("Usage: python -m tools.research.firmware_analyzer <path_to_exe_or_dat>")

@@ -1,99 +1,52 @@
-# E0155: UVC/PTP adapter zahtjeva i endpoint 82
+# E0155: UVC/PTP Request Adapter and Endpoint 82
 
-Datum: 2026-11-08. Nastavak E0154; kompatibilnost sa Sonyjevim host
-programima nije cilj. Sve promjene u ovom koraku su izvanmrežne.
+Date: 2026-11-08. Continuation of E0154; compatibility with Sony host programs is not a goal. All changes in this step are offline.
 
-## Izvorne prepreke
+## Original Obstacles
 
-Originalni referentni usbg_video.ko SHA-256
-d385a051bf01b0e5ea37412623ae85cfe3cda76ab0d11e61d111994ca9fbf4fb:
+Original reference `usbg_video.ko` SHA-256 `d385a051bf01b0e5ea37412623ae85cfe3cda76ab0d11e61d111994ca9fbf4fb`:
 
-- core_cb_class na .text+17b0 zove helper na +1390. Za GET zahtjev A1 helper
-  čita wIndex, prvo odvaja high-byte entity ID, zatim low-byte interface.
-  Interface 0 ulazi u VC put, nenulti interface u VS put. Bez adaptera
-  novo VC sučelje 1 pogrešno ulazi u VS. To je potvrđeno originalnim ARM
-  odsječkom, ne samo tumačenjem disasembliranja.
-- core_cb_start na +10f0 na +116c izvodi `mvn r2,#0x7e`, zatim na +1174
-  upisuje byte 81 u native request tag na extended-context+18. Promjena
-  samo USB deskriptora/endpoint wrappera ne mijenja ovaj tag.
+- `core_cb_class` at `.text+17b0` calls helper at `+1390`. For GET request A1 the helper reads `wIndex`, first splits high-byte entity ID, then low-byte interface. Interface 0 enters VC path, non-zero interface enters VS path. Without an adapter the new VC interface 1 wrongly enters VS. This was confirmed with the original ARM slice, not merely disassembly interpretation.
+- `core_cb_start` at `+10f0` at `+116c` executes `mvn r2,#0x7e`, then at `+1174` writes byte 81 into the native request tag at `extended-context+18`. Changing only USB descriptors/endpoint wrapper does not change this tag.
 
-## Implementacija zasebnih adapter dijelova
+## Implementation of Standalone Adapter Parts
 
-`tools/native_camera/uvc_ptp_adapter.{c,h}` nisu povezani s aktivnim bridgeom.
+`tools/native_camera/uvc_ptp_adapter.{c,h}` are not wired into the active bridge.
 
-`a6400_uvc_ptp_translate_setup` prima caller-owned 8-byte wire i output
-buffere te točan wire shadow (1 ili 2). Za class/interface 21/A1 zahtjeve
-prevodi isključivo wIndex low-byte 1->0 ili 2->1. High-byte entity ID ostaje
-isti, kao i bRequest, selector, length i smjer. PTP interface 0, pogrešan
-shadow, standard/vendor/endpoint recipient, null i preklapajući bufferi
-odbijaju se prije bilo kojeg zapisa. Izvorni zahtjev se ne mijenja.
+`a6400_uvc_ptp_translate_setup` takes caller-owned 8-byte wire and output buffers and the exact wire shadow (1 or 2). For class/interface 21/A1 requests it translates exclusively `wIndex` low-byte 1->0 or 2->1. High-byte entity ID remains unchanged, as do `bRequest`, selector, length, and direction. PTP interface 0, wrong shadow, standard/vendor/endpoint recipient, null, and overlapping buffers are rejected before any write. The original request is not modified.
 
-Caller mora dokazati trajanje output buffera za native callback/completion.
-Ovaj API to sam ne rješava. Nema stack-buffer prosljeđivanja u live driver
-niti pretpostavke da native kod nikad zadržava pointer.
+The caller must prove output buffer lifetime for native callback/completion. This API alone does not solve that. No stack-buffer passing into a live driver and no assumption that native code never retains the pointer.
 
-`a6400_uvc_ptp_select_endpoint` za planirani HS profil zahtijeva:
+`a6400_uvc_ptp_select_endpoint` for the planned HS profile requires:
 
-- Native dwc, native listu i low-byte count 1..16 (padding gornjih bajtova
-  nije count, prema ranijem fizičkom ugovoru).
-- Raw endpoint iz dwc+e4 (0x82 prema originalnom DWC lookup ugovoru),
-  enabled bit u raw+4c, i raw descriptor 7/5/82/Bulk/maxpacket512.
-- Točno jedan gadgetcore wrapper s wrapper+24 jednakim tom raw endpointu.
+- Native `dwc`, native list, and low-byte count 1..16 (upper padding bytes are not count, per earlier physical contract).
+- Raw endpoint from `dwc+e4` (0x82 per original DWC lookup contract), enabled bit in `raw+4c`, and raw descriptor 7/5/82/Bulk/maxpacket512.
+- Exactly one gadgetcore wrapper with `wrapper+24` equal to that raw endpoint.
 
-Nula, pogrešan PTP kanal 81/83, interrupt, pogrešna veličina, pogrešan
-wrapper te duplikat/dvosmisleno vlasništvo vraćaju nulu. Funkcija ne alocira
-endpoint i ne dokazuje legitimnost pointera; mora ih dobiti iz provjerenog
-kernel START ugovora. U provjeri su svi ti objekti eksplicitni predlošci.
+Zero, wrong PTP channel 81/83, interrupt, wrong size, wrong wrapper, and duplicate/ambiguous ownership return zero. The function does not allocate an endpoint and does not prove pointer legitimacy; it must receive them from a verified kernel START contract. In the check all these objects are explicit fixtures.
 
-## Izričita MOD izmjena START taga
+## Explicit MOD Edit of START Tag
 
-Builder čuva originalni modul i proizvodi odvojeni
-`reference-endpoint82.offline.o`. Prije izmjene provjerava cijeli SHA i
-točne bajtove instrukcije na .text+116c (`7e20e0e3`). Mijenja ih u
-`7d20e0e3` (`mvn r2,#0x7d`). U cijeloj datoteci razlikuje se točno jedan
-bajt, na file offsetu 11a0. Relokacije i ostali bajtovi ostaju isti.
+Builder preserves the original module and produces a separate `reference-endpoint82.offline.o`. Before editing it checks full SHA and exact instruction bytes at `.text+116c` (`7e20e0e3`). It changes them to `7d20e0e3` (`mvn r2,#0x7d`). Across the entire file, exactly one byte differs, at file offset 11a0. Relocations and all other bytes remain identical.
 
-Originalni odsječak upisuje 81; izričito izmijenjeni odsječak upisuje 82.
-Nijedan nije izvršen kroz cijeli START. Registri/request memorija eksplicitni
-su predlošci i zaustavljanje je prije daljnjih native poziva.
+Original slice writes 81; explicitly modified slice writes 82. Neither was executed through full START. Registers/request memory are explicit fixtures and execution stops before further native calls.
 
-SHA-256 izmijenjenog offline objekta:
-4e45ec555d284ce5686babbd4a56dcfcbb073e71dc2ffdd2de606a290a2a3307.
-To nije kompletan povezan modul i ne smije se učitati kao gotov UVC+PTP mod.
+SHA-256 of modified offline object: `4e45ec555d284ce5686babbd4a56dcfcbb073e71dc2ffdd2de606a290a2a3307`. This is not a complete linked module and must not be loaded as a finished UVC+PTP mod.
 
-## Provjere
+## Checks
 
-`tools.research.build_uvc_ptp_adapter` gradi samostalan ARM ELF bez
-neriješenih importa. Izvršava stvarni kompajlirani adapter, izvorne ARM
-classification odsječke i zaseban MOD odsječak. Referentni kod je
-write-protected tijekom izvršavanja; host ga između usporednih pokretanja
-izričito mijenja samo za dokumentirani MOD test i invalidira code cache.
-Code/write guardovi ograničavaju izvršavanje i zapise.
+`tools.research.build_uvc_ptp_adapter` builds a standalone ARM ELF without unresolved imports. It executes the real compiled adapter, original ARM classification slices, and separate MOD slice. Reference code is write-protected during execution; the host explicitly modifies it between parallel runs only for the documented MOD test and invalidates code cache. Code/write guards constrain execution and writes.
 
-55 provjera prolazi, uključujući entity ID očuvanje, originalni VC/VS put,
-odbijanja bez zapisa, originalni count low-byte, endpoint identity/descriptor
-negativne slučajeve i jednobajtnu MOD usporedbu. GET classification završava
-prije alokatora/queueing; SET_CUR test potvrđuje samo transformirane bajtove.
-Nema izmišljenih uspješnih firmware allocator ili callback povrata.
+55 checks pass, including entity ID preservation, original VC/VS path, rejections without writes, original count low-byte, endpoint identity/descriptor negative cases, and single-byte MOD comparison. GET classification stops before allocator/queueing; SET_CUR test verifies only transformed bytes. No fabricated successful firmware allocator or callback returns.
 
 ```
 python -m tools.research.build_uvc_ptp_adapter --output-dir artifacts/native/uvc-ptp-adapter-e0155
 ```
 
-Rezultati i hashovi: `artifacts/native/uvc-ptp-adapter-e0155/manifest.json`.
-Postojeći live bridge i builder modula nisu mijenjani. Prethodnih 605
-projektnih testova iz E0154 nije ponavljano jer novi izolirani dijelovi nisu
-povezani s postojećim runtimeom.
+Results and hashes: `artifacts/native/uvc-ptp-adapter-e0155/manifest.json`. Existing live bridge and module builder were not modified. Previous 605 project tests from E0154 were not repeated since the new isolated parts are not wired into existing runtime.
 
-## Preostalo prije kamere
+## Remaining Before Camera
 
-Potrebno je dokazati setup-buffer lifetime/completion i vezati novi wire
-shadow routing bez promjene reference lifetime ugovora. Još nije provedeno
-zajedničko PTP/UVC gadgetcore register/stop/unregister niti rollback u PC
-Remote, FS konfiguracija/Windows grouping, ili native JPEG/DMM ownership.
-Postojeći bridge uspoređuje cijeli wIndex s interface brojem, što odbija
-entity high-byte; njega treba izričito prilagoditi pri integraciji, uz ove
-kontrole. Ne povezivati adapter kao da samo njegovo postojanje to rješava.
+Must prove setup-buffer lifetime/completion and wire new wire shadow routing without changing reference lifetime contract. Shared PTP/UVC gadgetcore register/stop/unregister and rollback to PC Remote are not yet implemented, nor are FS configuration/Windows grouping, or native JPEG/DMM ownership. Existing bridge compares full `wIndex` against interface number, which rejects entity high-byte; it must be explicitly adapted on integration, alongside these checks. Do not wire the adapter as if its mere existence solves this.
 
-U ovom koraku nema pristupa kameri, uploadova, modula, feeder procesa,
-promjene USB načina ili SD/trajnih zapisa. Fizički UVC+PTP nije dokazan.
+In this step there is no camera access, uploads, modules, feeder processes, USB mode change, or SD/persistent writes. Physical UVC+PTP is not proven.

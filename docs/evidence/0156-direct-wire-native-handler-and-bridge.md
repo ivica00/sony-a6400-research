@@ -1,101 +1,61 @@
-# E0156: Izvorni setup pointer kroz bridge i modificirani UVC handler
+# E0156: Original Setup Pointer Through Bridge and Modified UVC Handler
 
-Datum: 2026-11-08. Nastavak E0155. Nema fizičkog učitavanja.
+Date: 2026-11-08. Continuation of E0155. No physical loading.
 
-## Odluka o trajanju zahtjeva
+## Request Lifetime Decision
 
-Umjesto povezivanja kopirajućeg setup adaptera odabran je zaseban, precizno
-ograničen MOD referentnog UVC drivera koji izravno razumije wire sučelja 1/2.
-Time se ne stvara novi setup buffer ni dodatni pointer koji bi native EP0
-completion mogao koristiti nakon isteka. Originalni setup pointer, sadržaj
-zahtjeva i postojeće native trajanje ostaju isti. Ovo ne dokazuje native
-EP0 completion/teardown u zajedničkoj fizičkoj konfiguraciji.
+Instead of wiring a copying setup adapter, a separate, precisely bounded MOD of the reference UVC driver was chosen that directly understands wire interfaces 1/2. This avoids creating a new setup buffer or extra pointer that native EP0 completion could use after expiry. The original setup pointer, request contents, and existing native lifetime remain unchanged. This does not prove native EP0 completion/teardown in a shared physical configuration.
 
-## Dvije izričite MOD instrukcije
+## Two Explicit MOD Instructions
 
-Originalna referenca usbg_video.ko vezana je na SHA-256
-d385a051bf01b0e5ea37412623ae85cfe3cda76ab0d11e61d111994ca9fbf4fb.
+Original reference `usbg_video.ko` is pinned to SHA-256 `d385a051bf01b0e5ea37412623ae85cfe3cda76ab0d11e61d111994ca9fbf4fb`.
 
-| Mjesto u .text | Original | MOD | Učinak |
+| Offset in `.text` | Original | MOD | Effect |
 |---|---|---|---|
-| 116c | 7e20e0e3, mvn r2,#7e | 7d20e0e3, mvn r2,#7d | video request tag 81->82 |
-| 13e8 | ff5015e2, ands r5,r5,#ff | 015055e2, subs r5,r5,#1 | VC wire1->native0, VS wire2->native1 |
+| 116c | `7e20e0e3`, `mvn r2,#7e` | `7d20e0e3`, `mvn r2,#7d` | video request tag 81->82 |
+| 13e8 | `ff5015e2`, `ands r5,r5,#ff` | `015055e2`, `subs r5,r5,#1` | VC wire1->native0, VS wire2->native1 |
 
-Classifier instrukcija izvršava se tek nakon originalne provjere da je
-wIndex high-byte/entity ID nula. Zato SUBS ne mijenja originalni entity put;
-za entity!=0 originalna grana vodi na 16f8 prije MOD instrukcije.
-PTP wire0 mora biti odbačen bridgeom prije UVC callbacka. Samostalno
-pozivanje MOD handlera za nepodržana sučelja nije valjan ugovor.
+The classifier instruction executes only after the original check that `wIndex` high-byte/entity ID is zero. Thus `SUBS` does not alter the original entity path; for `entity!=0` the original branch goes to `16f8` before the MOD instruction. PTP wire0 must be rejected by the bridge before the UVC callback. Calling the MOD handler directly for unsupported interfaces is not a valid contract.
 
-Builder verificira cijeli originalni hash i obje originalne instrukcije.
-U konačnom objektu razlikuju se točno tri bajta, file offsets 11a0, 141c i
-141e. Nema drugih promjena, uključujući relokacije.
+Builder verifies the entire original hash and both original instructions. In the final object exactly three bytes differ, file offsets `11a0`, `141c`, and `141e`. No other changes, including relocations.
 
-`artifacts/native/uvc-ptp-adapter-e0156/reference-wire12-endpoint82.offline.o`
-SHA-256 e2244462fa4c604689113603953781b4ee25569b054d8bdc29b36d1af89c2da8.
-Ovo je offline objekt, ne kompletan/deployable UVC+PTP modul.
+`artifacts/native/uvc-ptp-adapter-e0156/reference-wire12-endpoint82.offline.o` SHA-256 `e2244462fa4c604689113603953781b4ee25569b054d8bdc29b36d1af89c2da8`. This is an offline object, not a complete/deployable UVC+PTP module.
 
-## Ispravak bridgea
+## Bridge Fix
 
-`tools/native_camera/uvc_callback_bridge.c` sada za interface-recipient
-uspoređuje samo setup[4], tj. wIndex low byte, s brojem shadow sučelja.
-setup[5] je UVC entity ID i ne smije uzrokovati pogrešno odbacivanje.
-Izvorni a6400 dispatcher također koristi ldrb na request+4, na 602ba010.
-Bridge ne prepisuje setup pointer niti setup podatke. Ostala registracija,
-callback snapshot, in-flight i START/STOP logika ostaju nepromijenjeni.
+`tools/native_camera/uvc_callback_bridge.c` now for interface-recipient compares only `setup[4]`, i.e., `wIndex` low byte, with the shadow interface number. `setup[5]` is the UVC entity ID and must not cause false rejection. Original a6400 dispatcher also uses `ldrb` at `request+4`, at `602ba010`. Bridge does not overwrite the setup pointer or setup data. Other registration, callback snapshot, in-flight, and START/STOP logic remain unchanged.
 
-Registracija shadow sučelja 1/2 već radi kroz postojeći descriptor ABI kada
-reference interfaces vector sadrži 1/2. Izvanmrežne kontrole provjerile su
-klasne zahtjeve za oba sučelja/entity 0 i 2, odbijanje PTP wire0 i pogrešnog
-shadowa, START VS-a, ignoriranje tuđeg VC STOP-a i quiesce pri unregisteru.
-Registracija/unregistracija u tim kontrolama koristi eksplicitne recordere,
-ne fizički gadgetcore ack.
+Registration of shadow interfaces 1/2 already works through the existing descriptor ABI when reference interfaces vector contains 1/2. Offline checks verified class requests for both interfaces/entity 0 and 2, rejection of PTP wire0 and wrong shadow, START of VS, ignoring foreign VC STOP, and quiesce on unregister. Registration/unregistration in those checks use explicit recorders, not physical gadgetcore ack.
 
-## Izvorni put, ne samo record callback
+## Original Path, Not Just Record Callback
 
-Proširen `tools.research.uvc_callback_bridge_probe` prima opcionalni
-`--reference-wire-object`. Verificira MOD hash prema manifestu, originalni
-SHA i jednake sve bajtove osim tri navedena.
+Extended `tools.research.uvc_callback_bridge_probe` accepts optional `--reference-wire-object`. It verifies MOD hash against manifest, original SHA, and equality of all bytes except the three listed.
 
-Četiri zasebna CPU pokretanja izvršavaju:
+Four separate CPU runs execute:
 
-1. Originalni a6400 dispatcher odsječak na 602ba05c.
-2. Kompajlirani MOD bridge i njegov originalni request pointer.
-3. Stvarni MOD referentni core_cb_class na .text+17b0.
-4. Stvarni referentni classifier na +1390 s navedenom MOD instrukcijom.
+1. Original a6400 dispatcher slice at `602ba05c`.
+2. Compiled MOD bridge and its original request pointer.
+3. Real MOD reference `core_cb_class` at `.text+17b0`.
+4. Real reference classifier at `+1390` with the listed MOD instruction.
 
-VC wire1/entity0 staje na +1410; VS wire2/entity0 na +16a4; entity2 za oba
-staje na +16f8. U sva četiri slučaja helper r6 jest izvorni setup pointer,
-a svih osam bajtova zahtjeva ostaje jednako izvornom zahtjevu.
+VC wire1/entity0 stops at `+1410`; VS wire2/entity0 at `+16a4`; entity2 for both stops at `+16f8`. In all four cases helper `r6` is the original setup pointer, and all eight request bytes remain identical to the original request.
 
-Zaustavljanje je prije alokatora, queueing i completion. Nije izmišljen
-uspješan povrat native callbacka; ova četiri pokretanja namjerno ne završavaju
-callback. Raniji lifecycle/rollback testovi i dalje imaju jasno označene
-record callbackove. Ne predstavljaju fizički zajednički lifecycle.
+Stopping occurs before allocator, queueing, and completion. No fabricated successful return of native callback; these four runs intentionally do not finish the callback. Earlier lifecycle/rollback tests still have clearly marked record callbacks. They do not represent a physical shared lifecycle.
 
-## Rezultati
+## Results
 
-- 65 ARM adapter/MOD kontrola prolazi; uključene ranije 55 i deset novih.
-- 91 bridge/dispatch kontrola prolazi; uključene ranije kontrole i dvadeset
-  provjera četiri stvarna reference-entry puta.
-- Puni projektni skup: 605 testova prolazi u 19.125 s.
+- 65 ARM adapter/MOD checks pass; includes the earlier 55 and ten new ones.
+- 91 bridge/dispatch checks pass; includes earlier checks and twenty checks of four real reference-entry paths.
+- Full project suite: 605 tests pass in 19.125 s.
 
-Artefakti:
+Artifacts:
 
 - `artifacts/native/uvc-ptp-adapter-e0156/manifest.json`.
 - `artifacts/native/uvc-callback-bridge-e0156/manifest.json`.
 - `artifacts/analysis/uvc-callback-reference-e0156-final/manifest.json`.
 
-## Granica i nastavak
+## Boundary and Next Steps
 
-Kopirajući adapter iz E0155 ostaje izoliran i nije potreban za ovaj izravni
-wire pristup. Riješen je dodatni problem trajanja koji bi on uveo, ali nisu
-završeni native kontrolni prijenos ni životni ciklus cijelog zajedničkog
-uređaja. Još treba povezati descriptor bundle, reference MOD, endpoint82
-selector i shadow1/2 u zajedničku gadgetcore registraciju uz originalni PTP
-driver, potvrditi EP0 puni odgovor/IAD/FS i rollback, te vezati native JPEG
-proizvođač i DMA vlasništvo. Originalni PTP driver nije zamijenjen host kodom.
+The copying adapter from E0155 remains isolated and is not needed for this direct wire approach. The extra lifetime problem it would have introduced is resolved, but native control transfer and full shared-device lifecycle are not yet finished. Still needed: wire descriptor bundle, reference MOD, endpoint82 selector, and shadow1/2 into shared gadgetcore registration alongside original PTP driver, confirm EP0 full reply/IAD/FS and rollback, and bind native JPEG producer and DMA ownership. Original PTP driver was not replaced with host code.
 
-U ovom koraku nije pristupano kameri niti pisano na SD/trajnu memoriju.
-Fizička enumeracija UVC+PTP, prijenos senzorskih UVC kadrova i stvarne PTP
-promjene postavki ostaju nepotvrđeni.
+In this step there was no camera access or writes to SD/persistent storage. Physical UVC+PTP enumeration, sensor UVC frame transfer, and real PTP settings changes remain unconfirmed.

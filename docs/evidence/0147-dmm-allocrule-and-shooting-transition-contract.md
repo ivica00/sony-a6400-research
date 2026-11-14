@@ -1,98 +1,98 @@
 # E0147: DMM AllocRule Architecture and Shooting State Transition Contract
 
-Datum: 2026-11-07.  
-Opseg: Sony ILCE-6400 (firmware 2.00, kernel 3.0.27_nl-rt106+).  
-Cilj: Utvrditi mehanizam postavljanja DMM pravila (`AllocRule`), razlog nealociranosti `0x276`/`0x274` u Mass Storage načinu rada te arhitekturu prelaska u aktivno stanje snimanja (Shooting / PC Remote) za preuzimanje izvornog 720p 30 FPS JPEG video toka za CinemaHUD prema Windows inbox `usbvideo.sys`.
+Date: 2026-11-07.  
+Scope: Sony ILCE-6400 (firmware 2.00, kernel 3.0.27_nl-rt106+).  
+Goal: Determine the mechanism for setting DMM rules (`AllocRule`), the reason `0x276`/`0x274` are unallocated in Mass Storage mode, and the architecture for transitioning to an active shooting state (Shooting / PC Remote) to acquire the native 720p 30 FPS JPEG video stream for CinemaHUD via Windows inbox `usbvideo.sys`.
 
 ---
 
-## 1. DMM AllocRule i Struktura Pravila u Kernelu (`dmm.ko`)
+## 1. DMM AllocRule and Rule Structure in Kernel (`dmm.ko`)
 
-Analiza disasembliranog koda modula `dmm.ko` i raspakiranog `DmmConfig.bin` (ilc8g-astra, 77.108 bajtova) utvrdila je točan algoritam provjere pravila alokacije:
+Analysis of disassembled code of module `dmm.ko` and unpacked `DmmConfig.bin` (ilc8g-astra, 77,108 bytes) established the exact allocation rule check algorithm:
 
-1. **Format Zaglavlja Tablice Extenata (`dmm_ext_tbl_Init`, 80 bajtova po zapisu)**:
-   - Svako zaglavlje extenta u `DmmConfig.bin` sadrži 20 riječi (80 bajtova).
-   - Riječi 4 do 19 (od pomaka `+0x10` do `+0x4f`) čine niz od točno 64 bajta koji predstavljaju aktivacijske atribute za 64 moguća pravila alokacije (`rule` od 0 do 63):
+1. **Extent Table Header Format (`dmm_ext_tbl_Init`, 80 bytes per entry)**:
+   - Each extent header in `DmmConfig.bin` contains 20 words (80 bytes).
+   - Words 4 to 19 (offsets `+0x10` to `+0x4f`) form an array of exactly 64 bytes representing activation attributes for 64 possible allocation rules (`rule` from 0 to 63):
      $$\text{rule\_byte} = \text{header}[0x10 + \text{rule}]$$
 
-2. **Verifikacija Pravila u Kernelu (`0x0000a658` unutar `dmm_ext_ctrl_AllocExtent`)**:
-   - Prilikom poziva alokacije extenta, kernel dohvaća trenutno aktivno pravilo pozivom `dmm_ext_ctrl_GetCurrentAllocRule`:
+2. **Rule Verification in Kernel (`0x0000a658` inside `dmm_ext_ctrl_AllocExtent`)**:
+   - When allocating an extent, the kernel retrieves the currently active rule by calling `dmm_ext_ctrl_GetCurrentAllocRule`:
      ```arm
      0x0000b720: add r0, r4, #8
      0x0000b724: bl  dmm_ext_ctrl_GetCurrentAllocRule
      0x0000b738: bl  #0xa658
      ```
-   - Unutar funkcije `0xa658`, kernel provjerava bajt pravila na zaglavlju extenta:
+   - Inside function `0xa658`, the kernel checks the rule byte in the extent header:
      ```arm
-     0x0000a78c: mov  r2, #0x50           ; 80 bajtova po zaglavlju
-     0x0000a790: mla  r3, r2, r0, r3      ; adresa zaglavlja
-     0x0000a794: add  r3, r3, r8          ; r8 = broj pravila (0..63)
+     0x0000a78c: mov  r2, #0x50           ; 80 bytes per header
+     0x0000a790: mla  r3, r2, r0, r3      ; header address
+     0x0000a794: add  r3, r3, r8          ; r8 = rule number (0..63)
      0x0000a798: ldrb sl, [r3, #0x10]     ; sl = header[0x10 + rule]
-     0x0000a79c: cmp  sl, #0              ; je li bajt != 0?
-     0x0000a7a0: bne  #0xa7b0             ; DA: extent je dopušten
-     0x0000a7a4: b    #0xa7d0             ; NE (0): preskoči extent (odbij alokaciju)
+     0x0000a79c: cmp  sl, #0              ; is byte != 0?
+     0x0000a7a0: bne  #0xa7b0             ; YES: extent is allowed
+     0x0000a7a4: b    #0xa7d0             ; NO (0): skip extent (reject allocation)
      ```
-   - Ako je `sl == 0` ili ne zadovoljava minimalni atribut (`sl < r0`), funkcija `0xa658` vraća `-1`, a `dmm_unit_ctrl_Alloc` vraća kod greške `-3` (`ERR_DMM_HANDLE`) uz ručku `0xffff`.
+   - If `sl == 0` or does not meet the minimum attribute (`sl < r0`), function `0xa658` returns `-1`, and `dmm_unit_ctrl_Alloc` returns error code `-3` (`ERR_DMM_HANDLE`) with handle `0xffff`.
 
-3. **Stanje u Mass Storage Načinu Rada (`/proc/udm/dmm_rule`)**:
-   - Na živoj kameri `/proc/udm/dmm_rule` glasi:
+3. **State in Mass Storage Mode (`/proc/udm/dmm_rule`)**:
+   - On the live camera `/proc/udm/dmm_rule` reads:
      ```text
      Information on AllocRule.
      [0000] < ffff < ffff < ffff < ffff < ffff < ffff < ffff
      ```
-   - Aktivno pravilo je isključivo `[0000]` (Rule 0).
-   - Root extent `0005` (tip `0x000004ec`, 96 MB na fizičkoj adresi `0x14000000`) mapiran je u kernelu, ali ima točno nula alociranih pod-extenata jer se cjevovod senzora i ISP-a ne inicijalizira u standby načinu USB pohrane.
+   - Active rule is exclusively `[0000]` (Rule 0).
+   - Root extent `0005` (type `0x000004ec`, 96 MB at physical address `0x14000000`) is mapped in the kernel, but has exactly zero allocated sub-extents because the sensor and ISP pipeline is not initialized in USB storage standby mode.
 
 ---
 
-## 2. Prijelaz Stanja Snimanja u Aplikaciji Kamere (`av-cam-camera-original.bin`)
+## 2. Shooting State Transition in Camera Application (`av-cam-camera-original.bin`)
 
-Dekompilacijom korisničke aplikacije kamere (`av-cam-camera-original.bin`, base `0x635c6000`) lociran je izvorni podsustav video izlaza i postavljanja DMM pravila:
+Decompiling the user-space camera application (`av-cam-camera-original.bin`, base `0x635c6000`) located the original video output and DMM rule-setting subsystem:
 
-1. **Izvorni Kod Video Cjevovoda (`SyncYCOut.cpp`)**:
-   - Niz tekstualnih referenci potvrdio je izvorne C++ komponente:
-     - `SyncYCOut.cpp` (upravljanje sinkronim YCbCr video izlazom)
-     - `ScalarInfraSequenceLiveView.cpp` (LiveView JPEG sekvenca)
-     - `ScalarInfraSequenceJpeg.cpp` (JPEG kodiranje i ring buffer)
-     - `sfmc_enc_timing_i_a1_diadem_streaming_30p25p.cpp` (vremensko vođenje 30 FPS video toka)
-   - U `SyncYCOut.cpp` (`0x63939486`) i povezanim funkcijama:
+1. **Video Pipeline Source References (`SyncYCOut.cpp`)**:
+   - A set of string references confirmed the original C++ components:
+     - `SyncYCOut.cpp` (synchronous YCbCr video output management)
+     - `ScalarInfraSequenceLiveView.cpp` (LiveView JPEG sequence)
+     - `ScalarInfraSequenceJpeg.cpp` (JPEG encoding and ring buffer)
+     - `sfmc_enc_timing_i_a1_diadem_streaming_30p25p.cpp` (30 FPS video stream timing control)
+   - In `SyncYCOut.cpp` (`0x63939486`) and related functions:
      ```arm
      0x63939482: mov  r0, r6
      0x63939484: movs r1, #5              ; Rule 5 (Shooting / LiveView)!
      0x63939486: bl   #0x63d51ff0
      ```
-   - Svih 8 pozivatelja funkcije `0x63d51ff0` (`0x638b812c`, `0x638b821c`, `0x639250c2`, `0x63928834`, `0x63939486`, `0x6393a5b6`, `0x6393ad3a`, `0x6394ab84`) prosljeđuju `r1 = 5`!
+   - All 8 callers of function `0x63d51ff0` (`0x638b812c`, `0x638b821c`, `0x639250c2`, `0x63928834`, `0x63939486`, `0x6393a5b6`, `0x6393ad3a`, `0x6394ab84`) pass `r1 = 5`!
 
-2. **DMM Prijenos i UIPC Red `0x0061003c`**:
-   - `0x63d51ff0` poziva `0x6394f820`, koji šalje poruku s događajem 6 i željenim pravilom na Infra upravljač.
-   - Prijelaz u Rule 5 aktivira DMM alokacije extenata `0x32e` (UnitType `0x274`, 12 slotova po 256 KiB) i `0x333` (UnitType `0x276`, 2 MiB sequence buffer) unutar 96 MB prozora na `0x14000000`.
+2. **DMM Transfer and UIPC Queue `0x0061003c`**:
+   - `0x63d51ff0` calls `0x6394f820`, which sends a message with event 6 and the desired rule to the Infra controller.
+   - Transitioning to Rule 5 activates DMM allocations of extents `0x32e` (UnitType `0x274`, 12 slots of 256 KiB) and `0x333` (UnitType `0x276`, 2 MiB sequence buffer) within the 96 MB window at `0x14000000`.
 
 ---
 
-## 3. Arhitektura USB Načina Rada (`libUsbControl.so` i CinemaHUD)
+## 3. USB Mode Architecture (`libUsbControl.so` and CinemaHUD)
 
-1. **Usporedba Načina Rada**:
+1. **Mode Comparison**:
    - **Mass Storage (MSC)**:
-     - Pokreće se `libInfraMscServer.so` (učitana u PID 149 na `0x0c6d5000`).
-     - Senzor, BIONZ X ISP i video koder miruju. Ekran prikazuje statički natpis "USB Mode: Mass Storage".
-     - DMM drži Rule 0; kružni međuspremnik na `0x643c3708 + 0xf4` je prazan (`ready = 0`).
-   - **PC Remote / PTP (CinemaHUD ugovor iz E0137)**:
-     - Kamera je u punom radnom stanju snimanja (Shooting mode). Senzor i ISP su aktivni.
-     - Pokreće se `libInfraStreamingServer.so` i PTP podsustav (`libptp.so`).
-     - JPEG ring buffer se kontinuirano puni živim sličicama.
-     - CinemaHUD dohvaća sličice putem PTP transakcije `PTP_OC_GetObject(0xFFFFC002)`.
+     - Launches `libInfraMscServer.so` (loaded in PID 149 at `0x0c6d5000`).
+     - Sensor, BIONZ X ISP, and video encoder are idle. Screen displays static text "USB Mode: Mass Storage".
+     - DMM holds Rule 0; circular buffer at `0x643c3708 + 0xf4` is empty (`ready = 0`).
+   - **PC Remote / PTP (CinemaHUD contract from E0137)**:
+     - Camera is in full active shooting state (Shooting mode). Sensor and ISP are active.
+     - Launches `libInfraStreamingServer.so` and PTP subsystem (`libptp.so`).
+     - JPEG ring buffer is continuously filled with live frames.
+     - CinemaHUD fetches frames via PTP transaction `PTP_OC_GetObject(0xFFFFC002)`.
 
-2. **Kompatibilnost s Debuggerom**:
-   - Root debugger (PID 703) koristi Sony vendor ekstenziju (Feature `0x23`) koja je podržana i na MSC (`SonyMscExtCmdDevice`) i na PTP/MTP (`SonyMtpExtCmdDevice`).
-   - Verificirano u E0137: Debugger ostaje u potpunosti dostupan i responzivan u PC Remote načinu rada.
+2. **Debugger Compatibility**:
+   - Root debugger (PID 703) uses Sony vendor extension (Feature `0x23`) which is supported on both MSC (`SonyMscExtCmdDevice`) and PTP/MTP (`SonyMtpExtCmdDevice`).
+   - Verified in E0137: Debugger remains fully accessible and responsive in PC Remote mode.
 
 ---
 
-## 4. Regresijska Verifikacija
+## 4. Regression Verification
 
-- Cjelokupni skup testova emulatora uspješno je izvršen:
+- Full emulator test suite executed successfully:
   ```text
   Ran 599 tests in 14.681s - OK
   ```
-- Fizička kamera: Povezana putem USB-a, Mass Storage način rada, debugger PID 703 aktivan i responzivan.
-- Svi zapisi na kameri i dalje strogo ograničeni na RAM `/tmp_bt`.
+- Physical camera: Connected via USB, Mass Storage mode, debugger PID 703 active and responsive.
+- All camera writes remain strictly limited to RAM `/tmp_bt`.

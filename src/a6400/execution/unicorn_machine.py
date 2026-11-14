@@ -841,6 +841,8 @@ class UnicornMachine:
                     uc.reg_write(UC_ARM_REG_SP, frame['sp'])
                     uc.reg_write(UC_ARM_REG_LR, frame['lr'])
                     self._set_pc_and_cpsr(target, spsr)
+                    self._pending_cputlb_flush = True
+                    self._pte_dirty = False
                     self._pending_user_resume = (
                         self.thumb_pc(target, spsr), spsr)
                     self._pending_user_frame = frame
@@ -1490,7 +1492,34 @@ class UnicornMachine:
             return False
         cpsr = self.uc.reg_read(UC_ARM_REG_CPSR)
         if cpsr & 0x80:  # CPSR.I: interrupts masked
-            return False
+            # ARMv7 WFI wakes on a pending IRQ even with CPSR.I=1; the kernel
+            # then executes the post-WFI return + `cpsie i` to take the IRQ.
+            # Unicorn exits emu_start right after WFI, so step up to 8 insns
+            # until CPSR.I clears rather than stalling indefinitely at WFI+4.
+            pc_now = self.uc.reg_read(UC_ARM_REG_PC)
+            is_wfi = False
+            try:
+                if cpsr & 0x20:
+                    is_wfi = (pc_now >= 2 and int.from_bytes(
+                        self._guest_read(pc_now - 2, 2), 'little') == 0xBF30)
+                else:
+                    is_wfi = (pc_now >= 4 and int.from_bytes(
+                        self._guest_read(pc_now - 4, 4), 'little') == 0xE320F003)
+            except Exception:
+                is_wfi = False
+            if is_wfi:
+                for _ in range(8):
+                    cur_pc = self.uc.reg_read(UC_ARM_REG_PC)
+                    cur_cpsr = self.uc.reg_read(UC_ARM_REG_CPSR)
+                    if not (cur_cpsr & 0x80):
+                        cpsr = cur_cpsr
+                        break
+                    thumb = cur_cpsr & 0x20
+                    self.uc.emu_start(cur_pc | (1 if thumb else 0), 0, count=1)
+                else:
+                    cpsr = self.uc.reg_read(UC_ARM_REG_CPSR)
+            if cpsr & 0x80:
+                return False
         if has_soft:
             irq = min(self._soft_pending_irqs)
             self._soft_pending_irqs.discard(irq)
@@ -1901,11 +1930,10 @@ class UnicornMachine:
         directly: r0/r1 are filled from the saved fault state and the MRC is
         skipped.
         """
-        pabt_ifar = self._symbol_address('__pabt_usr')
-        dabt_ifar = self._symbol_address('__dabt_usr')
-        # Fall back to the verified constants when symbols are absent.
-        pabt_mrc_r0, pabt_mrc_r1 = 0x60119B60, 0x60119B64
-        dabt_mrc_r1, dabt_mrc_r0 = 0x60119B44, 0x60119B48
+        pabt_base = self._symbol_address('v7_pabort') or 0x60119B60
+        dabt_base = self._symbol_address('v7_early_abort') or 0x60119B40
+        pabt_mrc_r0, pabt_mrc_r1 = pabt_base, pabt_base + 4
+        dabt_mrc_r1, dabt_mrc_r0 = dabt_base + 4, dabt_base + 8
 
         def make_hook(reg, getter, counter):
             def hook(uc, address, size, user):
@@ -3859,6 +3887,40 @@ class UnicornMachine:
                                                 'address': f'0x{target:08x}',
                                                 'kind': 'data-decoded',
                                                 'write': bool(is_write)})
+                                        _walk = (
+                                            self._walk_page_tables_phys_with_perms(target)
+                                            if user_mode and 0x1000 <= target < 0x60000000
+                                            else None
+                                        )
+                                        _need_perm = 2 if is_write else 1
+                                        if _walk is not None and (_walk[1] & _need_perm) == _need_perm:
+                                            self._flush_cputlb()
+                                            self._flush_tlb()
+                                            self._set_pc_and_cpsr(pc, cpsr)
+                                            page = target & ~0xFFF
+                                            pc_page = pc & ~0xFFF
+                                            remove = getattr(self.uc, 'ctl_remove_cache', None)
+                                            if remove is not None:
+                                                try:
+                                                    remove(page, page + 0x1000)
+                                                    if pc_page != page:
+                                                        remove(pc_page, pc_page + 0x1000)
+                                                    self._page_cache_drops += 1
+                                                except Exception:
+                                                    pass
+                                            try:
+                                                self.uc.emu_start(
+                                                    pc | (1 if (cpsr & 0x20) else 0),
+                                                    0, count=1)
+                                                executed += 1
+                                                remaining = max(0, remaining - 1)
+                                                continue
+                                            except Exception:
+                                                pass
+                                            if self._note_fault(pc, target, cpsr):
+                                                stop_reason = 'repeated_fault'
+                                                break
+                                            continue
                                         if self._deliver_data_abort(
                                                 pc, cpsr, target, is_write):
                                             page = target & ~0xFFF

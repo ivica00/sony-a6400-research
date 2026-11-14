@@ -1,103 +1,52 @@
-# E0159: Jedinstveni native EP0 i originalni PC Remote Full Speed profil
+# E0159: Unified Native EP0 and Original PC Remote Full Speed Profile
 
-Datum: 2026-11-08. Nastavak E0158. Bez fizičkog pristupa kameri u ovom koraku.
+Date: 2026-11-08. Continuation of E0158. No physical camera access in this step.
 
-## Izvorni a6400 FS dokaz
+## Original a6400 FS Proof
 
-U originalnoj a6400 libInfraUsbCmn.so, SHA-256
-5338bafbb545ebc223fac15c9253a41ac9fe49c01fe32c73af40c3fb50eec0a6,
-dinamički simbol `remotepc_interface_desc` ima VA1ae34 i veličinu24.
-Tri native interface grupe upućuju na HS/FS/SS alternate zapise.
+In original a6400 `libInfraUsbCmn.so`, SHA-256 `5338bafbb545ebc223fac15c9253a41ac9fe49c01fe32c73af40c3fb50eec0a6`, dynamic symbol `remotepc_interface_desc` has VA `1ae34` and size 24. Three native interface groups point to HS/FS/SS alternate records.
 
-Verificirano stvarnim pointer lancem i točnim bajtovima:
+Verified by real pointer chain and exact bytes:
 
-| Profil | Group VA | Alternate VA | Endpoint array VA |
+| Profile | Group VA | Alternate VA | Endpoint array VA |
 |---|---|---|---|
-| HS | 1ae34 | 1adf8 | 1ae4c |
-| FS | 1ae3c | 1ae0c | 1ae88 |
+| HS | `1ae34` | `1adf8` | `1ae4c` |
+| FS | `1ae3c` | `1ae0c` | `1ae88` |
 
-Oba originalna alternatea imaju class/subclass/protocol06/01/01, alternate0
-i tri endpointa. HS: 81 Bulk512, 02 Bulk512, 83 Interrupt32/interval7.
-FS: 81 Bulk64, 02 Bulk64, 83 Interrupt32/interval10. Native byte5 endpoint
-zapisa također je sačuvan (HS2/FS1). Po svih60 endpoint array bajtova
-kompajliranog kandidata jednako je originalnom profilu za odgovarajuću brzinu.
-Ovo je dokaz iz statičke firmware datoteke, ne čitanje živih library bajtova.
+Both original alternates have class/subclass/protocol `06/01/01`, alternate 0, and three endpoints. HS: 81 Bulk 512, 02 Bulk 512, 83 Interrupt 32/interval 7. FS: 81 Bulk 64, 02 Bulk 64, 83 Interrupt 32/interval 10. Native byte 5 of endpoint records is also preserved (HS 2 / FS 1). All 60 endpoint array bytes of the compiled candidate match the original profile for the corresponding speed. This is proof from a static firmware file, not reading live library bytes.
 
-Originalna `remotepc_desc_tbl` metadata sadrži generički/stari PID0641,
-različit od fizičkog 0caa. Zato metadata nije slijepo kopirana: VID/PID,
-bcdDevice i stringovi ostaju stvarno očitani podaci iz E0158.
+Original `remotepc_desc_tbl` metadata contains generic/old PID 0641, different from physical 0caa. Therefore metadata was not blindly copied: VID/PID, bcdDevice, and strings remain the actual read data from E0158.
 
-## MOD politika brzine
+## MOD Speed Policy
 
-Kandidat je proširen vlastitom FS konfiguracijom, sučeljem, alternateom i
-endpointima. Pri HS-u izlaže PTP0 + UVC1/2. Pri FS-u izlaže samo PTP0 i ne
-oglašava UVC video. To je izričita MOD politika, ne originalna Sony odluka
-ili fizički dokazana automatska promjena načina rada. FS endpoint parametri
-su originalni; atributi/potrošnja konfiguracije prate prethodno očitani
-kandidat 80/fa. Native stringovi i device identitet pripadaju istom objektu.
+The candidate is extended with its own FS configuration, interface, alternate, and endpoints. At HS it exposes PTP 0 + UVC 1/2. At FS it exposes only PTP 0 and does not advertise UVC video. This is an explicit MOD policy, not an original Sony decision or physically proven automatic mode switch. FS endpoint parameters are original; configuration attributes/power follow the previously read candidate `80/fa`. Native strings and device identity belong to the same object.
 
-## Jedinstveni descriptor reply
+## Unified Descriptor Reply
 
-`a6400_uvc_ptp_candidate_descriptor_reply` u
-`tools/native_camera/uvc_ptp_descriptors.{c,h}` sada obrađuje:
+`a6400_uvc_ptp_candidate_descriptor_reply` in `tools/native_camera/uvc_ptp_descriptors.{c,h}` now handles:
 
 - Device (1), configuration (2), string/language (3).
 - Device qualifier (6).
 - Other-speed configuration (7).
 
-Poziva originalne Sony make_device_desc, make_config_desc,
-make_string_desc i make_device_qualifier_desc (602bbfec), te originalni
-memcpy. Koristi lokalni puni request i512-byte staging, pa kopira samo
-traženi prefiks nakon potvrde očekivane duljine. Time i stringovi, čiji
-originalni serializer piše cijeli opis prije skraćivanja povratne duljine,
-ne mogu preliti mali caller output.
+It calls original Sony `make_device_desc`, `make_config_desc`, `make_string_desc`, and `make_device_qualifier_desc` (`602bbfec`), plus original `memcpy`. It uses a local full request and 512-byte staging, then copies only the requested prefix after confirming the expected length. Thus strings, whose original serializer writes the full description before truncating the return length, cannot overflow a small caller output.
 
-HS configuration ima173 bajta (PTP+UVC+IAD), FS39 (PTP-only). Other-speed
-HS zahtjev vraća FS39/type7; FS zahtjev HS173/type7 s video IAD-om.
-Originalni serializer proizvodi type7, koji se privremeno normalizira na
-type2 samo u lokalnom stagingu radi postojećeg IAD validatora i zatim vraća
-na7. Nativni caller setup nije promijenjen.
+HS configuration is 173 bytes (PTP+UVC+IAD), FS 39 (PTP-only). Other-speed HS request returns FS 39/type 7; FS request HS 173/type 7 with video IAD. The original serializer produces type 7, which is temporarily normalized to type 2 only in local staging for the existing IAD validator and then restored to 7. Native caller setup is not modified.
 
-Qualifier za oba profila:
-`0a 06 00 02 ef 02 01 40 01 00`. Obje brzine imaju jednu konfiguraciju.
-SuperSpeed se odbija jer zajednički SS profil nije implementiran.
+Qualifier for both profiles: `0a 06 00 02 ef 02 01 40 01 00`. Both speeds have one configuration. SuperSpeed is rejected because a shared SS profile is not implemented.
 
-Prije originalnog serializera validiraju se vlastita HS/FS pointer stabla,
-brojevi alternateova/endpointa, bounded extra blokovi i owned stringovi.
-Prihvaćaju se samo standardni GET_DESCRIPTOR zahtjevi za podržane indekse,
-jezik0409, aktualnu brzinu2(FS) ili3(HS). Nepodržan descriptor/jezik/index,
-tuđa tablica, nedovoljan output i alias setup/tree buffera odbijaju se.
-Caller mora držati topologiju stabilnom tijekom poziva; nema live locka.
+Before the original serializer, owned HS/FS pointer trees, alternate/endpoint counts, bounded extra blocks, and owned strings are validated. Only standard GET_DESCRIPTOR requests for supported indices, language 0409, and current speed 2 (FS) or 3 (HS) are accepted. Unsupported descriptor/language/index, foreign table, insufficient output, and aliased setup/tree buffers are rejected. The caller must hold topology stable during the call; no live lock.
 
-## Provjere
+## Checks
 
-`build_uvc_ptp_descriptor_candidate` izvršava stvarni kompajlirani reply
-put i originalne Sony funkcije do povratka. Kernel je nepromjenjiv tijekom
-izvršavanja i code/write guardovi ostaju aktivni. Memorija gadgetcorea,
-brzina, EP0, caller objekti i stack eksplicitni su izvanmrežni predlošci.
-Ni jedan service/callback povrat nije izmišljen.
+`build_uvc_ptp_descriptor_candidate` executes the real compiled reply path and original Sony functions to return. Kernel is immutable during execution and code/write guards remain active. Gadgetcore memory, speed, EP0, caller objects, and stack are explicit offline fixtures. No service/callback return is fabricated.
 
-511 kumulativnih kontrola prolazi (uključuju prethodne254). Za obje brzine
-testirani su device/config/qualifier/other-speed i string0..3, svaki za
-wLength0,9,65535. Potvrđeni su povratna duljina, bajtovi, netaknuti output
-izvan povratne duljine, nepromijenjeni setup i vlastito stablo. Negativni
-slučajevi uključuju unsupported type/string/jezik, premali output i SS.
-To nisu511 fizičkih testova niti dokaz Windows povezivanja drivera.
+511 cumulative checks pass (including the previous 254). For both speeds, device/config/qualifier/other-speed and string 0..3 were tested, each for `wLength` 0, 9, 65535. Return length, bytes, untouched output beyond return length, unchanged setup, and owned tree were confirmed. Negative cases include unsupported type/string/language, too-small output, and SS. These are not 511 physical tests nor proof of Windows driver binding.
 
-Artefakti:
-`artifacts/native/uvc-ptp-unified-ep0-e0159/manifest.json`, samostalan ARM ELF
-i `unified-2-*`/`unified-3-*` raw odgovori, gdje2=FS,3=HS. Raniji artefakti
-nisu prepisani. Postojeći live module builder i EP0 hook nisu promijenjeni.
+Artifacts: `artifacts/native/uvc-ptp-unified-ep0-e0159/manifest.json`, standalone ARM ELF, and `unified-2-*`/`unified-3-*` raw replies, where 2=FS, 3=HS. Earlier artifacts were not overwritten. Existing live module builder and EP0 hook were not modified.
 
-## Preostalo
+## Remaining
 
-EP0 callback integration i stvarni device-group binding još nisu dokazani.
-Treba povezati ovo owned stablo, UVC reference MOD i endpoint selector uz
-zadržani originalni PTP driver, te provjeriti registraciju/STOP/unregister i
-rollback. Native JPEG/DMM ownership i senzorski UVC kadrovi ostaju otvoreni.
-Staging rješava duljinu odgovora, ali ne lifetime cijelog modula ili native
-EP0 completiona. Host detekcija mora podržati planirani Sony UVC interface
-uz PID0caa umjesto pretpostavke0322.
+EP0 callback integration and real device-group binding are not yet proven. Still needed: wire this owned tree, UVC reference MOD, and endpoint selector while retaining the original PTP driver, and verify registration/STOP/unregister and rollback. Native JPEG/DMM ownership and sensor UVC frames remain open. Staging solves reply length, not the lifetime of the whole module or native EP0 completion. Host detection must support the planned Sony UVC interface with PID 0caa instead of assuming 0322.
 
-Nema camera uploadova, učitanog zajedničkog modula, feeder procesa, promjene
-USB načina, SD ili trajnih zapisa. Fizički zajednički UVC+PTP nije potvrđen.
+No camera uploads, loaded shared module, feeder processes, USB mode change, SD, or persistent writes. Physical shared UVC+PTP is not confirmed.

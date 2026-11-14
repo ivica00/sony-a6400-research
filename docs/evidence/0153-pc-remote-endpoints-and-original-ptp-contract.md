@@ -1,89 +1,43 @@
-# E0153: PC Remote kanali i izvorni PTP ugovor
+# E0153: PC Remote Channels and Original PTP Contract
 
-Datum: 2026-11-08. Nastavak E0152 nakon korisnikovog prijelaza u PC Remote.
+Date: 2026-11-08. Continuation of E0152 after the user switched to PC Remote.
 
-## Fizičko očitanje
+## Physical Readback
 
-Windows WPD enumeracija pronašla je Sony `054c:0caa`, serijski broj
-CF93603BE631. Windows PnP potvrđuje ILCE-6400, klasu WPD, status OK.
-Libusb pod tim upravljačkim programom nije izlistao uređaj. Prazan rezultat
-`pc-remote-usb-descriptors.json` nije dokaz odsutnosti kamere.
+Windows WPD enumeration found Sony `054c:0caa`, serial number CF93603BE631. Windows PnP confirms ILCE-6400, class WPD, status OK. Libusb under that driver did not list the device. An empty `pc-remote-usb-descriptors.json` result is not proof of camera absence.
 
-Novi alat `tools.research.capture_sony_usb_hub` čita standardne deskriptore
-kroz Windows USB hub bez zamjene upravljačkog programa. Koristi samo
-GET_NODE_INFORMATION, GET_NODE_CONNECTION_INFORMATION_EX i
-GET_DESCRIPTOR_FROM_NODE_CONNECTION; nema resetiranja, claimanja sučelja
-ili postavljanja konfiguracije. Microsoft opis tog pristupa:
-https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ni-usbioctl-ioctl_usb_get_descriptor_from_node_connection
+New tool `tools.research.capture_sony_usb_hub` reads standard descriptors through the Windows USB hub without replacing the driver. It uses only GET_NODE_INFORMATION, GET_NODE_CONNECTION_INFORMATION_EX, and GET_DESCRIPTOR_FROM_NODE_CONNECTION; no resetting, claiming interfaces, or setting configuration. Microsoft documentation for this approach: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ni-usbioctl-ioctl_usb_get_descriptor_from_node_connection
 
-Sačuvan izvorni rezultat:
-`artifacts/hardware/uvc-ptp-coexistence-e0152/pc-remote-hub-descriptors.json`.
-Jedna konfiguracija, sučelje 0 klase 06/01/01, ukupno 39 bajtova:
+Saved original result: `artifacts/hardware/uvc-ptp-coexistence-e0152/pc-remote-hub-descriptors.json`. One configuration, interface 0 of class 06/01/01, 39 bytes total:
 
-| Funkcija | Adresa | Tip | Max packet | Interval |
+| Function | Address | Type | Max packet | Interval |
 |---|---|---|---|---|
-| PTP ulazni podaci | 0x81 | Bulk | 512 | 0 |
-| PTP izlazni podaci/naredbe | 0x02 | Bulk | 512 | 0 |
-| PTP događaji | 0x83 | Interrupt | 32 | 7 |
+| PTP bulk IN data | 0x81 | Bulk | 512 | 0 |
+| PTP bulk OUT data/commands | 0x02 | Bulk | 512 | 0 |
+| PTP events | 0x83 | Interrupt | 32 | 7 |
 
-To potvrđuje stvarni konflikt sadašnjeg UVC Bulk IN 0x81 s PC Remote PTP-om.
+This confirms a real conflict of the current UVC Bulk IN 0x81 with PC Remote PTP.
 
-## Izvorni ARM ugovor
+## Original ARM Contract
 
-`tools.research.probe_ptp_endpoint_contract` provjerava SHA-256 izvornog
-usbg_stillimage.ko `d4843c6abac908881ef5a96fd570fb345f766fff9ee562413f5f63e9cc7e0ff9`.
-Tri originalna ravna ARM odsječka iz core_cb_start upisuju 0x81, 0x02 i 0x83
-u zahtjeve na pomacima +14, +1c i +24. Zaustavljaju se prije poziva alokatora.
-Scratch registri i memorija eksplicitni su testni predlošci; nije simuliran
-uspješan alokator niti izvršen cijeli START. Podudarnost s fizičkim
-deskriptorima nije dokaz jednakosti svih živih bajtova modula.
+`tools.research.probe_ptp_endpoint_contract` verifies SHA-256 of original `usbg_stillimage.ko` `d4843c6abac908881ef5a96fd570fb345f766fff9ee562413f5f63e9cc7e0ff9`. Three original flat ARM slices from `core_cb_start` write 0x81, 0x02, and 0x83 into requests at offsets +14, +1c, and +24. They stop before the allocator call. Scratch registers and memory are explicit test fixtures; a successful allocator was not simulated nor was the entire START executed. Matching physical descriptors is not proof of equality of all live module bytes.
 
-Osam dodatnih originalnih ARM provjera funkcije dwc3_wIndex_to_dep pokazuje
-mapiranje 0x81 -> dwc+dc, 0x02 -> +e0, 0x83 -> +ec, 0x84 -> +f4, te povrat
-nule za neaktivan endpoint. Kernel SHA-256 provjeren prema ranijem ugovoru.
-Slotovi i enabled zastavice eksplicitni su predlošci. Lookup 0x84 nije dokaz
-da je taj endpoint fizički alociran, slobodan ili podržan kontrolerom.
+Eight additional original ARM checks of `dwc3_wIndex_to_dep` show mapping 0x81 -> dwc+dc, 0x02 -> +e0, 0x83 -> +ec, 0x84 -> +f4, and returning zero for an inactive endpoint. Kernel SHA-256 verified against the earlier contract. Slots and enabled flags are explicit fixtures. Lookup 0x84 is not proof that that endpoint is physically allocated, free, or supported by the controller.
 
-Rezultati svih 11 provjera:
-`artifacts/hardware/uvc-ptp-coexistence-e0152/ptp-original-arm-controls.json`.
+Results of all 11 checks: `artifacts/hardware/uvc-ptp-coexistence-e0152/ptp-original-arm-controls.json`.
 
-## Stvarni senzorski kadrovi kroz PTP
+## Real Sensor Frames over PTP
 
-Sony SDIO handshake vratio je 2001 za sva četiri koraka, ExtDeviceInfo 136
-bajtova. Prvi ograničeni niz imao je četiri prazna početna pokušaja i šest
-JPEG kadrova. Drugi niz dobio je deset kadrova bez praznih pokušaja, svi
-1024x680, s različitim SHA-256 vrijednostima, oko 101 KB po kadru.
-Trajanje drugog kratkog niza 0.294 s nije mjerenje održivog FPS-a.
+Sony SDIO handshake returned 2001 for all four steps, ExtDeviceInfo 136 bytes. The first bounded sequence had four empty initial attempts and six JPEG frames. The second sequence got ten frames without empty attempts, all 1024x680, with distinct SHA-256 values, about 101 KB per frame. Duration of the second short sequence 0.294 s is not a measurement of sustained FPS.
 
-Sačuvani su oba izvještaja i prvi uspješan kadar drugog niza:
-`pc-remote-sensor-capture.json`, `pc-remote-sensor-capture-warm.json`,
-`pc-remote-sensor-frame.jpg` u gornjem direktoriju. Slika vizualno pregledana:
-stvarni stol, ambalaža, kabeli i zvučnik; nije testni uzorak.
-Nije testirana promjena ekspozicije ili snimanja. Ovo je PTP, ne UVC.
+Both reports and the first successful frame of the second sequence were saved: `pc-remote-sensor-capture.json`, `pc-remote-sensor-capture-warm.json`, `pc-remote-sensor-frame.jpg` in the above directory. Image visually inspected: real desk, packaging, cables, and speaker; not a test pattern. Exposure or capture changes were not tested. This is PTP, not UVC.
 
-## Posljedice za implementaciju
+## Implementation Implications
 
-Sačuvati PTP sučelje 0 i adrese 81/02/83. Predložena radna topologija jest
-UVC VideoControl 1 i VideoStreaming 2, s posebnim Bulk IN endpointom.
-0x84 je kandidat za provjeru, ne odobrena fizička konfiguracija.
-Sadašnji modul ima i audio sučelja te IAD injekciju koja očekuje četiri
-sučelja; to se mora izričito preraditi, zajedno s VC/VS međureferencama,
-callback interface routingom i Windows povezivanjem WPD/usbvideo drivera.
-Sadašnji START bridge također je vezan za dwc+dc i adresu 81; promjena
-samo USB deskriptora ne može biti dovoljna.
+Preserve PTP interface 0 and addresses 81/02/83. Proposed working topology is UVC VideoControl 1 and VideoStreaming 2, with a dedicated Bulk IN endpoint. 0x84 is a candidate for verification, not an approved physical configuration. The current module also has audio interfaces and IAD injection expecting four interfaces; this must be explicitly reworked, along with VC/VS cross-references, callback interface routing, and Windows WPD/usbvideo driver binding. The current START bridge is also tied to dwc+dc and address 81; changing USB descriptors alone cannot suffice.
 
-Preostaje dokazati kapacitet i raspoloživost kontrolera, izraditi zajedničku
-tablicu deskriptora i callback lifecycle s povratom u PC Remote, zatim vezati
-originalni proizvođač JPEG-a uz dokazano vlasništvo. Ne resetirati aktivni
-shooting SET_PATH/DMM Rule 5/0 postojećim MSC feederom. Dimenzije 1024x680
-ne smiju se slati kao da su oglašenih 1280x720.
+What remains is proving controller capacity and availability, building a shared descriptor table and callback lifecycle with return to PC Remote, then binding the original JPEG producer with proven ownership. Do not reset active shooting SET_PATH/DMM Rule 5/0 with the existing MSC feeder. Dimensions 1024x680 must not be sent as if they were the advertised 1280x720.
 
-## Provjere i završno stanje
+## Checks and Final State
 
-Pet provjera parsera prolazi: stvarni deskriptor i odbijanje truncation,
-nulte duljine, pogrešnog broja endpointa i pogrešnog broja sučelja.
-Svih 11 novih originalnih ARM kontrola prolazi. Prethodni puni skup 600
-testova iz E0152 nije ponovno izvođen jer se postojeći runtime nije mijenjao.
-Nije učitan UVC modul, pokrenut feeder, promijenjen USB način ili pisano na
-kameru, SD ili trajnu memoriju. Kamera je ostavljena u PC Remote načinu.
-Istovremeni fizički UVC+PTP rad i dalje nije dokazan.
+Five parser checks pass: real descriptor and rejection of truncation, zero length, wrong endpoint count, and wrong interface count. All 11 new original ARM controls pass. The previous full suite of 600 tests from E0152 was not re-run because existing runtime did not change. No UVC module was loaded, no feeder started, no USB mode changed, or written to camera, SD, or persistent storage. Camera was left in PC Remote mode. Simultaneous physical UVC+PTP operation remains unproven.

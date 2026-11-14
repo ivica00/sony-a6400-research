@@ -1,35 +1,35 @@
-# E0164 — Zajednički PTP/UVC modul: izgradnja i zaštite životnog vijeka
+# E0164 — Shared PTP/UVC Module: Build and Lifetime Guards
 
-Datum: 2026-11-08. Kamera nije kontaktirana u ovim provjerama. Nema prijenosa, učitavanja modula ni zapisa na kameru.
+Date: 2026-11-08. Camera was not contacted in these checks. No uploads, module loads, or camera writes.
 
-## Rezultat
+## Result
 
-Izgrađen je zaseban kandidat `artifacts/native/uvc-ptp-module-e0164/usbg_video_a6400_shared_candidate.ko`, 58.540 bajtova, SHA-256 `064fd44486824ea2e1d93729636b7d0408d73e332138f821c26fb6daf5ea952e`. Vermagic je `3.0.27_nl-rt106+ SMP preempt mod_unload ARMv7 `. Manifest namjerno postavlja `deployable:false` i `physical_test_ready:false`.
+Built standalone candidate `artifacts/native/uvc-ptp-module-e0164/usbg_video_a6400_shared_candidate.ko`, 58,540 bytes, SHA-256 `064fd44486824ea2e1d93729636b7d0408d73e332138f821c26fb6daf5ea952e`. Vermagic is `3.0.27_nl-rt106+ SMP preempt mod_unload ARMv7 `. Manifest intentionally sets `deployable:false` and `physical_test_ready:false`.
 
-Kandidat povezuje ranije provjerene deskriptore, upravljanje njihovom kopijom, sesiju i nativni backend s izvornim referentnim video modulom. PTP ostaje na sučelju 0, UVC koristi sučelja 1/2 i zasebni Bulk IN 0x82. Identitet se preuzima kroz izvorne Sonyjeve serijalizatore i strogo provjerava prije promjene konfiguracije. Stvarni RAM raspored identiteta još nije fizički provjeren.
+Candidate links earlier verified descriptors, copy management, session, and native backend with the original reference video module. PTP stays on interface 0, UVC uses interfaces 1/2 and dedicated Bulk IN `0x82`. Identity is taken via original Sony serializers and strictly checked before changing configuration. Actual RAM layout of identity is not yet physically verified.
 
-Ovo je kandidat za enumeraciju. Registracija video međuspremnika, slanje kadrova i ostale video naredbe odbijaju se. START provjerava odabir endpointa, ali ne poziva izvorni video START. Modul ne dokazuje sliku senzora niti istodobnu Windows UVC/PTP komunikaciju.
+This is an enumeration candidate. Video buffer registration, frame submission, and other video commands are rejected. START verifies endpoint selection, but does not call original video START. Module does not prove sensor image or simultaneous Windows UVC/PTP communication.
 
-## Zaštite
+## Guards
 
-- `file_operations.owner` povezan je s `__this_module`; vlastiti izvoz omogućuje dodatno zadržavanje modula tijekom aktivne ili nepotpuno očišćene sesije.
-- Omotači STOP i release prvo završavaju sesiju. Ako je čišćenje blokirano, preskaču izvorne funkcije koje bi oslobodile kontekst. Izvorni release inače zanemaruje pogrešku oslobađanja DMA i nastavlja oslobađati kontekst.
-- Status ostaje dostupan u zadržanom stanju. Preklapanje ulazaka u ovaj modul odbija se atomarnom zaštitom.
-- DMA provjera koristi oduzimanje nakon provjere minimalnog kapaciteta; `UINT_MAX` više ne može proći zbog preljeva pri zbrajanju duljine zaglavlja.
-- Samo dvije izričito dokumentirane izvorne instrukcije promijenjene su u referentnom tekstu (tri različita bajta). Izvorni init/exit ostaju jednaki.
+- `file_operations.owner` is bound to `__this_module`; custom export enables additional module retention during an active or incompletely cleaned session.
+- STOP and release wrappers finish the session first. If cleanup is blocked, they skip original functions that would free the context. Original release otherwise ignores DMA free errors and proceeds to free the context.
+- Status remains available in held state. Overlapping entries into this module are rejected by an atomic guard.
+- DMA check uses subtraction after minimum capacity check; `UINT_MAX` can no longer pass via overflow when adding header length.
+- Only two explicitly documented original instructions were changed in reference text (three differing bytes). Original init/exit remain identical.
 
-Ova zaštita ulazaka ne usklađuje neovisni Sonyjev zadatak za promjenu USB načina rada. Njegov ugovor zaključavanja mora biti utvrđen prije fizičkog pokusa. Neuspjeh pri vraćanju stanja zadržava resurse umjesto nagađanja vlasništva.
+This entry guard does not serialize Sony's independent USB mode-switching task. Its locking contract must be established before a physical test. Failure on restore retains resources rather than guessing ownership.
 
-## Provjere i granice dokaza
+## Checks and Evidence Boundaries
 
-`artifacts/analysis/uvc-ptp-module-e0164/manifest.json` bilježi 29 uspješnih provjera stvarno prevedenih omotača: povezivanje file operations, izvoz, odbijanje video naredbi, status, uredno prosljeđivanje zatvaranja, zadržano stanje i granice DMA duljine. Izvorni core ioctl/release i copy servisi u ovom pokusu izričiti su bilježnici poziva. Učitavač modula i stvarni brojači referenci nisu izvršeni.
+`artifacts/analysis/uvc-ptp-module-e0164/manifest.json` records 29 passing checks of actually compiled wrappers: file operations wiring, export, video command rejection, status, clean close forwarding, held state, and DMA length bounds. Original core ioctl/release and copy services in this experiment are explicit call recorders. Module loader and real reference counts were not executed.
 
-Regresija nativnog backenda prolazi 147 provjera u `artifacts/native/uvc-ptp-native-regression-e0164`. Izvorni serijalizatori izvršavaju se u kontroliranom ARM okruženju; hardverski servisi imaju izričite zamjene. To nije fizički USB pokus.
+Native backend regression passes 147 checks in `artifacts/native/uvc-ptp-native-regression-e0164`. Original serializers execute in a controlled ARM environment; hardware services have explicit stubs. This is not a physical USB test.
 
-Svih 47 uvoza pronađeno je u zadržanim dokazima o kernelu i modulima. Za osam uvoza iz `dma330.ko` i `osal_uipc.ko` dodatno su provjerena stvarna imena izvoza u izvornim ELF sekcijama `__ksymtab_strings`; rezultat i hashovi zapisani su u `artifacts/analysis/uvc-ptp-module-e0164/module-export-evidence.json`. Prisutnost u zadržanim datotekama ne dokazuje trenutačno stanje učitanih modula.
+All 47 imports were found in preserved kernel and module evidence. For eight imports from `dma330.ko` and `osal_uipc.ko`, real export names in original ELF `__ksymtab_strings` sections were additionally verified; result and hashes are recorded in `artifacts/analysis/uvc-ptp-module-e0164/module-export-evidence.json`. Presence in preserved files does not prove current state of loaded modules.
 
-Prethodni zasebni način izgradnje s vlastitim koherentnim DMA i probe-only START-om također se uspješno izgrađuje. Projektni testovi: **605 prošlo, 15,406 s**, zapis `artifacts/uvc-ptp-module-e0164-project-tests.log`.
+The earlier standalone build mode with owned coherent DMA and probe-only START also builds successfully. Project tests: **605 passed, 15.406 s**, log `artifacts/uvc-ptp-module-e0164-project-tests.log`.
 
-## Sljedeća granica
+## Next Boundary
 
-Prvo utvrditi izvorno usklađivanje promjena USB načina rada i trajanje callbackova, zatim pripremiti ograničen fizički pokus enumeracije s provjerljivim povratkom na PC Remote. Prijenos stvarnih senzorskih JPEG kadrova i prilagodba hostovog traženja zajedničkog uređaja ostaju zasebni nedovršeni koraci. E0150 statički uzorak pri 30 FPS ostaje dokaz transporta, ne senzorskog izvora.
+First determine original USB mode-change serialization and callback lifetimes, then prepare a bounded physical enumeration experiment with verifiable return to PC Remote. Transfer of real sensor JPEG frames and adapting host detection for the shared device remain separate unfinished steps. E0150 static pattern at 30 FPS remains proof of transport, not sensor source.

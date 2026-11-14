@@ -1,37 +1,37 @@
-# E0179 — Stvarni USB pullup put i pojačan backend
+# E0179 — Real USB Pullup Path and Hardened Backend
 
-Datum: 2026-11-08. Kamera u Mass Storageu. Nastavak E0178.
+Date: 2026-11-08. Camera in Mass Storage. Continuation of E0178.
 
-## Razlika između softverskog i hardverskog stopa
+## Difference Between Software and Hardware Stop
 
-Originalni `usb_gcw_stop` (0x602bd834) poziva change_gcw_state(1) i vraća 0. To nije samostalna hardverska potvrda. Backend već prije njega poziva gadget pullup(0); dodana je stroga provjera da stvarni gadget ops+0x14 pokazuje upravo na a6400 `dwc3_gadget_pullup` **0x602b1d3c**. Početne instrukcije te funkcije uključene su u native fingerprints.
+Original `usb_gcw_stop` (`0x602bd834`) calls `change_gcw_state(1)` and returns 0. That is not an independent hardware confirmation. The backend already calls gadget `pullup(0)` before it; a strict check was added that real `gadget ops+0x14` points precisely to a6400 `dwc3_gadget_pullup` **0x602b1d3c**. Initial instructions of that function are included in native fingerprints.
 
-`tools/native_camera/uvc_ptp_native_backend.c` provjerava taj cilj prije preuzimanja backend konteksta i ponovno pri svakom pullup pozivu. Nepoznat target ili null ops odbijaju se. Promjena cilja tijekom aktivne sesije zadržava sesiju i owned deskriptore prije bilo kojeg daljnjeg native poziva; povratak provjerenog cilja omogućuje dovršetak čišćenja. Ovi MOD guardovi testirani su, a ne pretpostavljeni iz naziva funkcije.
+`tools/native_camera/uvc_ptp_native_backend.c` checks that target before acquiring the backend context and again on every pullup call. Unknown targets or null ops are rejected. Changing the target during an active session retains the session and owned descriptors before any further native call; restoring the verified target allows cleanup to finish. These MOD guards were tested, not assumed from the function name.
 
-## Izvršenje izvornog pullup tijela
+## Execution of Original Pullup Body
 
-`tools/research/probe_uvc_ptp_pullup_teardown.py` izvršava originalne ARM instrukcije pullup i GCW state funkcija iz SHA-provjerenog kernela. **14 provjera prolazi**.
+`tools/research/probe_uvc_ptp_pullup_teardown.py` executes the original ARM instructions of pullup and GCW state functions from the SHA-verified kernel. **14 checks pass**.
 
-Za pullup(0) izvorni redoslijed je: provjera busy opaque stanja, stop_active_transfers, disable EP0 out/in, moguća disconnect obavijest, run_stop(0), povratak njegova rezultata. Potvrđeni su endpoint argumenti i prijenos -110 greške iz run_stop servisa. Hardware servisi, brave i notification izričite su zamjene.
+For `pullup(0)`, the original sequence is: check busy opaque state, `stop_active_transfers`, disable EP0 out/in, possible disconnect notification, `run_stop(0)`, return its result. Endpoint arguments and propagation of `-110` error from the `run_stop` service were confirmed. Hardware services, locks, and notification are explicit replacements.
 
-Kad native busy bit ostaje postavljen, izvorni kod otključa DWC, omogući migraciju i dođe do reschedule prije nego zaustavi transfere. U tom ogranku nije opažen vlastiti brojač timeouta. Pozitivni nastavak u testu dobiva **eksplicitni vanjski completion fixture**, ne izmišljenu hardversku potvrdu.
+When the native busy bit remains set, the original code unlocks DWC, enables migration, and reaches reschedule before stopping transfers. No internal timeout counter was observed in that branch. Positive continuation in the test receives an **explicit external completion fixture**, not a fabricated hardware confirmation.
 
-Zato CPU freeze E0178 ne smije sam postati dokaz završenog USB callbacka niti se smije pretpostaviti da se cijeli teardown može izvršiti dok su korisnički izvršitelji zaustavljeni. Native pullup može ovisiti o dovršetku prethodnog zahtjeva.
+Therefore CPU freeze E0178 must not by itself become proof of a completed USB callback, nor may it be assumed that the entire teardown can execute while user executors are stopped. Native pullup may depend on completion of a previous request.
 
-Izvještaj: `artifacts/analysis/uvc-ptp-pullup-e0179/manifest.json`.
+Report: `artifacts/analysis/uvc-ptp-pullup-e0179/manifest.json`.
 
-## Izgradnja i provjere
+## Build and Checks
 
-Izgrađen je kandidat `artifacts/native/uvc-ptp-module-e0179/usbg_video_a6400_shared_candidate.ko`, **58628 bajtova**, SHA-256 `145ce31279ba172d1328d7369c74eea671fb78ce878696e854ffaca9f3b660b5`.
+Candidate `artifacts/native/uvc-ptp-module-e0179/usbg_video_a6400_shared_candidate.ko` was built, **58628 bytes**, SHA-256 `145ce31279ba172d1328d7369c74eea671fb78ce878696e854ffaca9f3b660b5`.
 
-- **155** native backend ARM provjera prolazi, uključujući osam novih provjera targeta/zadržavanja/oporavka.
-- **29** strukturnih i prevedenih module guard provjera prolazi.
-- **605** projektnih testova prolazi u 14,781 s. Prvi pokušaj imao je četiri PermissionError-a u privremenim mapama; zadržan je odvojeni `...project-tests-restricted.log`, a ponovljeni testovi s pristupom tim mapama prošli su bez promjene implementacije.
+- **155** native backend ARM checks pass, including eight new target/retention/recovery checks.
+- **29** structural and compiled module guard checks pass.
+- **605** project tests pass in 14.781 s. The first attempt had four `PermissionError`s in temporary folders; the separate `...project-tests-restricted.log` was retained, and repeated tests with access to those folders passed without implementation changes.
 
-## Ograničeni fizički pokušaj učitavanja
+## Bounded Physical Load Attempt
 
-Pregledani izvorni init put registrira char uređaj i inicijalizira njegove objekte; ne registrira UVC konfiguraciju. Pokušan je samo insmod bez otvaranja video nodea i bez activation ioctl-a. Loader je odbio modul: **Unknown symbol __symbol_get**. Init/exit ciklus nije prošao.
+The inspected original init path registers the char device and initializes its objects; it does not register a UVC configuration. Only `insmod` was attempted without opening the video node and without an activation ioctl. The loader rejected the module: **Unknown symbol `__symbol_get`**. The init/exit cycle did not pass.
 
-Manifest i puni kernel log su u `artifacts/hardware/uvc-ptp-module-lifecycle-e0179`. `.ko` je prenesen samo u `/tmp_bt` uz byte-equal readback. `/proc/modules` prije i poslije je byte-equal i novi modul nije ostao učitan. Debugger PID703 odgovara. Nema USB promjene ni freeze ciklusa u ovom pokušaju.
+Manifest and full kernel log are in `artifacts/hardware/uvc-ptp-module-lifecycle-e0179`. The `.ko` was transferred only to `/tmp_bt` with byte-equal readback. `/proc/modules` before and after is byte-equal and the new module did not remain loaded. Debugger PID703 responds. There was no USB change or freeze cycle in this attempt.
 
-Utvrđeno je da je __symbol_get u stvarnoj **GPL-only** export tablici, iako mu ime i adresa postoje u kallsyms. Ranija provjera prisutnosti imena nije provjeravala klasu izvoza. Ne smije se proglašavati da svi postojeći simboli automatski znače loadability. Ispravak i uspješan fizički init/exit nastavljaju se u E0180.
+It was established that `__symbol_get` is in the real **GPL-only** export table, even though its name and address exist in `kallsyms`. Earlier name presence checking did not check the export class. It must not be declared that all existing symbols automatically mean loadability. The fix and successful physical init/exit continue in E0180.

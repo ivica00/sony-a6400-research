@@ -1,39 +1,26 @@
-# Workflow: živa kamera i izvršavanje izvornog koda u emulatoru
+# Workflow: Live Camera and Executing Original Code in the Emulator
 
-Ovaj postupak koristi fizičku ILCE-6400 kao izvor opaženog stanja, a emulator
-kao mjesto za ponovljivo izvršavanje i provjeru izvornih instrukcija. Cilj je
-otkriti stvarne ugovore firmwarea i hardvera. Broj izvršenih instrukcija ili
-uspješan izolirani poziv ne dokazuju funkcionalnost cijele kamere.
+This procedure uses the physical ILCE-6400 as the source of observed state, and the emulator as the place for repeatable execution and verification of original instructions. The goal is to discover real firmware and hardware contracts. Executed instruction counts or a successful isolated call do not prove full camera functionality.
 
-## Podjela poslova
+## Division of Responsibilities
 
-| Živa kamera | Emulator |
+| Live Camera | Emulator |
 | --- | --- |
-| Stvarni widgeti, modeli, registri, događaji i kontekst dretve | Izvršavanje originalnih ARM/Thumb instrukcija nad sačuvanim stanjem |
-| Provjera učitanih modula i njihovih stvarnih adresa | Praćenje čitanja, pisanja, poziva i granice na kojoj nedostaje ugovor |
-| Kratki, unaprijed pripremljeni pokusi korisnika u meniju | Ponavljanje, rubni slučajevi, nevažeći indeksi i usporedba rezultata |
-| Završna provjera ponašanja na fizičkom uređaju | Priprema provjerljivog kandidata prije fizičke promjene |
+| Real widgets, models, registers, events, and thread context | Executing original ARM/Thumb instructions over preserved state |
+| Checking loaded modules and their real addresses | Tracing reads, writes, calls, and the boundary where a contract is missing |
+| Short, pre-planned user experiments in the menu | Repetition, edge cases, invalid indices, and result comparison |
+| Final verification of behavior on the physical device | Preparing a verifiable candidate before any physical change |
 
-USB način rada mijenja aplikacijsko stanje: meni može nestati iz aktivnog
-stabla. Zato negativan USB scan nije dokaz da widget ne postoji u MENU načinu.
-Kasniji USB snimak modela može odgovarati poljima menija, ali se time ne dobiva
-atomski snimak niti jamstvo da su svi ostali podaci ostali isti.
+USB mode changes application state: the menu may disappear from the active tree. Therefore a negative USB scan is not proof that a widget does not exist in MENU mode. A later USB capture of a model may match menu fields, but that does not produce an atomic snapshot nor guarantee that all other data remained unchanged.
 
-## Priprema i pristup
+## Preparation and Access
 
-1. Pročitati najnoviji zapis na vrhu [AGENTS.MD](../AGENTS.MD), zatim navedene
-   evidence dokumente. Starije upute o čekanju pokusa mogu biti nadjačane novijim
-   završenim snimkom. Ne pokretati starog promatrača samo zato što postoji.
-2. Koristiti instalirani [native USB debugger](NATIVE_USB_DEBUGGER.md) u normalnom
-   MSC načinu, preko `tools/camera_debugger.py`. Ne ponavljati Senser bootstrap
-   za rutinsko očitanje. Koristiti postojeći host Python s potrebnim USB/Crypto
-   paketima; ne pretpostavljati da ih sadrži venv.
-3. Utvrditi PID, mapiranje modula, verziju i identitet izvora. Za svaku funkciju
-   razlikovati ELF adresu, runtime adresu, pomak unutar modula i Thumb bit.
-4. Pripremiti usko pitanje: npr. koji objekt vraća lookup, koji model pripada
-   redu, koja se polja mijenjaju ili gdje se pojavljuje nepodržan poziv.
+1. Read the latest entry at the top of [AGENTS.MD](../AGENTS.MD), then the referenced evidence documents. Older instructions about waiting for experiments may be superseded by a newer completed capture. Do not launch an old observer just because it exists.
+2. Use the installed [native USB debugger](NATIVE_USB_DEBUGGER.md) in normal MSC mode via `tools/camera_debugger.py`. Do not repeat Senser bootstrap for routine reads. Use the existing host Python with the required USB/Crypto packages; do not assume the venv contains them.
+3. Determine PID, module mapping, version, and source identity. For every function, distinguish ELF address, runtime address, module offset, and Thumb bit.
+4. Prepare a narrow question: e.g., which object a lookup returns, which model belongs to a row, which fields change, or where an unsupported call appears.
 
-Rutinske naredbe su čitanje, ne ulazak u servisni način:
+Routine commands are read-only, not entering service mode:
 
 ```powershell
 python tools/camera_debugger.py info
@@ -41,71 +28,37 @@ python tools/camera_debugger.py maps 149
 python tools/camera_debugger.py threads 149
 ```
 
-Debuggerovo očitanje memorije privremeno zaustavlja odabranu dretvu. Ne zamrzava
-sve dretve procesa i ne proizvodi atomski snimak. Sesije su zaključane na hostu;
-ne koristiti istodobno konkurentne klijente za kameru.
+The debugger's memory read temporarily pauses the selected thread. It does not freeze all process threads and does not produce an atomic snapshot. Sessions are locked on the host; do not run concurrent camera clients simultaneously.
 
-## Osnovni ciklus istraživanja
+## Core Research Cycle
 
-1. **Izvor i identitet.** Očitati samo potrebne prozore koda/podataka. Kod
-   usporediti s odgovarajućim ELF-om na kameri. Ako se razlikuje, sačuvati obje
-   verzije i razlike; ne ukloniti provjeru. Učitane relokacijske tablice i
-   runtime kernel helperi zahtijevaju odvojenu kvalifikaciju, ne lažnu tvrdnju
-   da su jednaki sirovoj datoteci.
-2. **Stvarno stanje.** Sačuvati objekt, vtable, polja i potrebne rubove grafa.
-   Provjeriti tip, self-pointer, granice i cikluse. Za modele sačuvati stvarne
-   nizove djece; ne popunjavati nedostajuće susjede nulama. Ponovno očitanje
-   roditelja može otkriti promjenu tijekom čitanja, ali ne dokazuje atomskost.
-3. **Izvorno izvršavanje.** U emulator mapirati samo opažene bajtove i provjeren
-   kod. Postaviti ABI, stack, povratnu adresu i arhitekturno stanje. Za VFP
-   uključiti odgovarajuće registre; za pthread put potrebni su stvarni TLS i
-   identitet dretve. Konstruirane ulaze izričito označiti kao kontrolne pokuse.
-4. **Stroge granice.** Zaustaviti se na nepoznatom kodu, neopaženom čitanju,
-   sukobu snimaka, nepodržanom sistemskom pozivu ili neprovjerenom pisanju.
-   Sačuvati PC, registre, trace i dotadašnja pisanja. Nedostajući odgovor nije
-   dozvola da host vrati očekivani uspjeh.
-5. **Ciljano dopunjavanje.** Sljedeće očitanje određuje konkretna granica iz
-   emulatora. Očitati odgovarajući kod ili mali prozor podataka i ponoviti od
-   početnog stanja. Za pisanje prvo dokazati ugovor: polje, širinu, izvornu
-   instrukciju i očekivane nuspojave. Promjene u kopiji emulatora nisu dozvola
-   za istu promjenu na kameri.
-6. **Kontrole.** Usporediti rezultat s opaženim stanjem. Dodati smislene rubne
-   slučajeve: isti odabir bez promjene, nevažeći indeks bez pisanja, lijevi/gornji
-   i desni/donji rub, drugi redoslijed izvršavanja u svježem emulatoru. Ponoviti
-   prethodne provjere kad zajednički kod bude promijenjen.
-7. **Zaključak.** Odvojiti opažanje na kameri, statički dokaz, izvršavanje
-   izvorne funkcije, konstruirani pokus i još neprovjerenu fizičku funkciju.
-   Zapisati što je sljedeća granica i je li fizički pokus stvarno potreban.
+1. **Source and identity.** Read only the required code/data windows. Compare code against the corresponding ELF on the camera. If they differ, preserve both versions and differences; do not remove the check. Loaded relocation tables and runtime kernel helpers require separate qualification, not a false claim that they equal the raw file.
+2. **Real state.** Preserve object, vtable, fields, and required graph edges. Check type, self-pointer, bounds, and cycles. For models, preserve real child arrays; do not zero-fill missing neighbors. Re-reading the parent can reveal changes during reading, but does not prove atomicity.
+3. **Original execution.** Map only observed bytes and verified code into the emulator. Set ABI, stack, return address, and architectural state. Enable appropriate registers for VFP; a pthread path requires real TLS and thread identity. Explicitly mark constructed inputs as control experiments.
+4. **Strict boundaries.** Stop on unknown code, unobserved read, snapshot conflict, unsupported system call, or unverified write. Preserve PC, registers, trace, and writes so far. A missing response is not permission for the host to return expected success.
+5. **Targeted backfill.** The next read is determined by the concrete boundary from the emulator. Read the relevant code or small data window and replay from the initial state. For writes, prove the contract first: field, width, original instruction, and expected side effects. Changes in an emulator copy are not permission for the same change on the camera.
+6. **Controls.** Compare the result with observed state. Add meaningful edge cases: same selection without change, invalid index without write, left/top and right/bottom edges, different execution order in a fresh emulator. Re-run prior checks whenever shared code changes.
+7. **Conclusion.** Separate camera observation, static proof, original-function execution, constructed experiment, and still-unverified physical function. Record what the next boundary is and whether a physical experiment is truly needed.
 
-## Kada treba pokus korisnika na kameri
+## When a User Experiment on the Camera Is Needed
 
-Promatrača prvo izgraditi, učitati, usporediti read-back i provjeriti da stvarno
-čeka pravi MENU objekt. Koristiti ograničeno trajanje, broj pokušaja, veličinu
-izlaza i zaseban stop-marker. Prednost ima okidanje stvarnim widgetom nad fiksnim
-odgađanjem. Tek tada tražiti kratku i jasnu sekvencu korisnika: odspajanje USB-a
-bez gašenja, MENU, potrebni pritisci ili kotačić s razmacima, ponovno spajanje.
+Build, load, read-back compare, and verify the observer first so that it genuinely waits for the real MENU object. Use a bounded duration, attempt count, output size, and a separate stop-marker. Prefer triggering on a real widget over a fixed delay. Only then ask for a short, clear user sequence: unplugging USB without powering off, MENU, required button presses or wheel turns with pauses, reconnecting.
 
-Nakon povratka **najprije sačuvati sve privremene zapise**, uključujući binarnu
-datoteku i tekstualni status, pa tek onda zaustavljati ili čistiti vlastite alate.
-Provjeriti završni marker, rezultat, broj zapisa, točnu duljinu i hash. Zapis bez
-END ili s odrezanim zadnjim objektom ostaje izričito djelomičan; ne nadopunjavati
-nedostajuće bajtove. `/tmp_bt` je u ovom istraživanju tmpfs od samo 1 MiB.
+After returning, **save all temporary logs first**, including the binary file and text status, and only then stop or clean up owned tools. Verify the end marker, result, record count, exact length, and hash. A log without END or with a truncated final object remains explicitly partial; do not fill in missing bytes. `/tmp_bt` in this research is a tmpfs of only 1 MiB.
 
-Stare vlastite logove brisati tek nakon provjere jednakosti s potpunom lokalnom
-arhivom. Ne brisati nepovezane datoteke. Fizička SD kartica za emulator ostaje
-read-only; autorizacija za SD modifikacije kamere opisana je u AGENTS.MD.
+Delete old owned logs only after verifying equality with the complete local archive. Do not delete unrelated files. The physical SD card for the emulator remains read-only; authorization for camera SD modifications is described in AGENTS.MD.
 
-## Primjeri koje smo ovim ciklusom dokazali
+## Examples Proven Through This Cycle
 
-| Korak | Dokaz i ograničenje |
+| Step | Proof and Limitation |
 | --- | --- |
-| Aktivni lookup menija | E0106: originalni ugniježđeni lookup vraća stvarni ListTab u 795 instrukcija; host ne podmeće zasebno pronađen objekt |
-| Geometrija | E0106: 145 widgeta; svježe izvršavanje obrnutim redoslijedom daje iste koordinate; posebna uska kvalifikacija Unicorn IT stanja |
-| Model i redovi | E0107: sva polja bindinga se podudaraju; šest originalnih indexed lookup poziva povezano je sa statički dokazanim rasporedom redova |
-| Područje pogotka | E0108: 252 originalne `isHit` provjere; zasebne originalne selection kontrole; to još nije fizičko input usmjeravanje |
-| TLS i aktivacija | E0109: bez TLS-a pogrešna visoka adresa; s očitanim main-thread kontekstom i stvarnim kernel kodom prolazi zaključavanje; zaustavljanje prije neprovjerenog resource-manager pisanja |
+| Active menu lookup | E0106: original nested lookup returns the real ListTab in 795 instructions; host does not substitute a separately found object |
+| Geometry | E0106: 145 widgets; fresh reverse-order execution yields identical coordinates; separate narrow qualification of Unicorn IT state |
+| Model and rows | E0107: all binding fields match; six original indexed lookup calls linked to statically proven row layout |
+| Hit area | E0108: 252 original `isHit` checks; separate original selection controls; this is not yet physical input routing |
+| TLS and activation | E0109: without TLS, wrong high address; with read main-thread context and real kernel code, passes locking; stops before unverified resource-manager write |
 
-Primjeri ponovljivih lokalnih provjera, uz prethodno sačuvane privatne ulaze:
+Examples of repeatable local checks, with previously saved private inputs:
 
 ```powershell
 python -m tools.research.active_menu_snapshot_probe
@@ -117,20 +70,10 @@ python -m tools.research.menu_activation_snapshot_probe --main-thread-control
 python -m unittest discover -s tests -q
 ```
 
-`capture_menu_activation_dependencies` kontaktira kameru; nije samo offline
-provjera. Pozivi se ograničavaju s `--steps`, a main-thread kontrola označava se
-zasebnim argumentom. Ne proširivati listu dopuštenih pisanja samo da bi poziv
-završio. Glavna dretva nije automatski dokazana izvorna UI dretva.
+`capture_menu_activation_dependencies` contacts the camera; it is not an offline-only check. Calls are bounded with `--steps`, and main-thread control is marked with a separate argument. Do not expand the allowed-writes list just to make a call finish. The main thread is not automatically proven to be the original UI thread.
 
-## Što čuvati i što objaviti
+## What to Keep and What to Publish
 
-U `docs/evidence/` zapisati identitet ulaza, naredbe, pokus, rezultate, odstupanja,
-preostalu granicu i stanje promatrača. Na vrhu AGENTS.MD ostaviti kratke upute
-za nastavak; ažurirati README, roadmap i trenutni status bez prepisivanja starih
-neuspjelih pokusa kao uspjeha.
+In `docs/evidence/`, record input identity, commands, experiment, results, deviations, remaining boundary, and observer state. Keep short continuation notes at the top of AGENTS.MD; update README, roadmap, and current status without rewriting old failed experiments as successes.
 
-U Git idu izvorni alati, testovi, dokumentacija i sažeti metapodaci. Firmware,
-proprietarni ELF-ovi, sirova memorija, SD sadržaj, checkpointi i veliki generirani
-artefakti ostaju u privatnoj lokalnoj arhivi prema `.gitignore`. Putanja do
-artefakta u dokumentu ne znači da je njegov sadržaj javno dostupan ili da svježi
-clone sam može reproducirati pokus bez potrebnih vlastitih ulaza.
+Git tracks source tools, tests, documentation, and summary metadata. Firmware, proprietary ELFs, raw memory, SD contents, checkpoints, and large generated artifacts stay in the private local archive per `.gitignore`. A path to an artifact in a document does not mean its contents are publicly available or that a fresh clone alone can reproduce the experiment without required private inputs.

@@ -1,51 +1,51 @@
-# E0182 — Zadržavanje native rezervacije kroz cijelu sesiju
+# E0182 — Retaining Native Reservation Across the Entire Session
 
-Datum: 2026-11-08. Nastavak korisnikovih izmjena E0181. Ovaj korak nema pristupa ili zapisa na kameru; kandidat nije prenesen ni učitan.
+Date: 2026-11-08. Continuation of the user's E0181 changes. This step has no camera access or writes; the candidate was neither transferred nor loaded.
 
-## Pregled E0181
+## Review of E0181
 
-Zadržana je integracija mode gate-a i native ioctl omotača koju je korisnik dodao u E0181. Njegov fizički init/exit test i receipts ostaju neizmijenjeni. Uočen je dodatni problem životnog vijeka: shared_ioctl i shared_release oslobađali su native guard nakon svakog poziva, uključujući povratak iz uspješnog pokretanja sesije ili neuspjelog čišćenja.
+The mode gate and native ioctl wrapper integration added by the user in E0181 was retained. Its physical init/exit test and receipts remain unchanged. An additional lifetime issue was identified: `shared_ioctl` and `shared_release` were releasing the native guard after every call, including return from a successful session start or failed cleanup.
 
-U budućem stvarno objavljenom native wrapperu to bi dopustilo izvornoj naredbi e203/e204 da ponovno uđe između MOD ioctl-a dok su zajednički deskriptori još aktivni ili zadržani. Dosadašnji per-call testovi nisu provjeravali taj interval. Ovo nije opažena fizička utrka: wrapper još nije postavljen na kernel slot.
+In a future actually published native wrapper, that would allow original command `e203`/`e204` to re-enter between MOD ioctls while shared descriptors are still active or retained. Previous per-call tests did not check that interval. This is not an observed physical race: the wrapper has not yet been installed on the kernel slot.
 
-## Dopuna implementacije
+## Implementation Addition
 
-`tools/native_camera/uvc_ptp_module_shim.c` sada razlikuje dvije svrhe:
+`tools/native_camera/uvc_ptp_module_shim.c` now distinguishes two purposes:
 
-- `control_gate` serijalizira pojedinačne MOD ioctl/release ulaze;
-- `native_reserved` prati rezervaciju native_guard-a kroz cijelo trajanje sesije.
+- `control_gate` serializes individual MOD ioctl/release entries;
+- `native_reserved` tracks reservation of `native_guard` across the entire session duration.
 
-Prvi MOD ulaz preuzme native rezervaciju ako nema izvornog poziva. Sljedeći MOD ulazi mogu je ponovno koristiti pod lokalnom zaštitom, pa je STOP moguć i dok native guard ostaje HELD. Izvorni ulazi kroz wrapper odbijaju se između poziva dok je sesija ACTIVE ili HELD.
+The first MOD entry acquires the native reservation if there is no original call. Subsequent MOD entries can reuse it under local protection, so `STOP` is also possible while `native_guard` remains `HELD`. Original entries through the wrapper are rejected between calls while the session is `ACTIVE` or `HELD`.
 
-Rezervacija se oslobađa tek kada session_releasable vrati true, nema self-pina i backend više nema gc vlasništvo. Nepotpuno čišćenje ili pogreška guard release-a zadržava rezervaciju. Stvarni kod greške više se ne zamjenjuje generičkim busy rezultatom. Izgubljena/neusklađena rezervacija odbija daljnje MOD operacije prije hardware/callback poziva.
+The reservation is released only when `session_releasable` returns true, there is no self-pin, and the backend no longer holds gc ownership. Incomplete cleanup or a guard release error retains the reservation. Real error codes are no longer replaced by a generic busy result. A lost/mismatched reservation rejects further MOD operations before hardware/callback calls.
 
-Registracijski hookovi dodatno zahtijevaju aktivan MOD control ulaz i vlastitu native rezervaciju.
+Registration hooks additionally require an active MOD control entry and ownership of the native reservation.
 
-## Aktivacija zahtijeva stvarno povezan ulaz
+## Activation Requires an Actually Connected Entry
 
-Prije INIT naredbe 0x4038e000 provjerava se da native fops slot 0x604e5098 doista pokazuje na `a6400_uvc_native_gadgetcore_ioctl`. Ako je još izvorni 0x602b8844 ili neki drugi cilj, INIT vraća -ENODEV (-19) **prije** izvornog core ioctl-a. Registracijski hook ponavlja provjeru.
+Before `INIT` command `0x4038e000`, it is checked that native `fops` slot `0x604e5098` actually points to `a6400_uvc_native_gadgetcore_ioctl`. If it still points to original `0x602b8844` or another target, `INIT` returns `-ENODEV` (`-19`) **before** the original core ioctl. The registration hook repeats the check.
 
-To je nužan uvjet, ne postupak postavljanja ili dokaz quiescence-a. Ovaj kod ne zapisuje taj kernel slot. Ne tvrdi se da samo jednaki pointer rješava stare VFS ulaze, owner lifetime ili izravne kernel callbackove.
+This is a necessary condition, not an installation procedure or proof of quiescence. This code does not write to that kernel slot. It is not claimed that an equal pointer alone resolves old VFS entries, owner lifetime, or direct kernel callbacks.
 
-## Kandidat i provjere
+## Candidate and Checks
 
-Izgrađen je `artifacts/native/uvc-ptp-module-e0182/usbg_video_a6400_shared_candidate.ko`, **60708 bajtova**, SHA-256 **280af3755079e0c2fcddfa1b3e16c9a80dcb020076ea86b612989b4abe1e534d**. Zadržano je 49 uvoza i provjera normalnih/GPL export klasa; izvorni init/exit i tri dokumentirane promjene donorskih instrukcija ostaju provjereni.
+`artifacts/native/uvc-ptp-module-e0182/usbg_video_a6400_shared_candidate.ko` was built, **60708 bytes**, SHA-256 **280af3755079e0c2fcddfa1b3e16c9a80dcb020076ea86b612989b4abe1e534d**. 49 imports and checks of normal/GPL export classes were retained; original init/exit and three documented donor instruction changes remain verified.
 
-Prošireni `tools/research/audit_uvc_ptp_module.py` sada ima **48 prolaznih provjera** (E0181: 33). Nove provjere pokrivaju:
+Extended `tools/research/audit_uvc_ptp_module.py` now has **48 passing checks** (E0181: 33). New checks cover:
 
-- odbijanje INIT-a prije stvarne native rute i oslobađanje idle rezervacije nakon odbijanja;
-- ACTIVE sesiju koja ostaje HELD između MOD ioctl-a;
-- sljedeći status i STOP ulaz koji mogu ponovno koristiti vlastitu rezervaciju;
-- odbijanje istovremenog MOD poziva i izvornog native ioctl-a;
-- izgubljenu rezervaciju bez oslobađanja self-pina;
-- HELD/cleanup pogreške koje ne otpuštaju native zaštitu;
-- oslobađanje tek nakon eksplicitnog dovršenog-cleanup fixturea;
-- propagaciju i zadržavanje guard release greške.
+- rejecting `INIT` before an actual native route and releasing the idle reservation after rejection;
+- an `ACTIVE` session remaining `HELD` between MOD ioctls;
+- subsequent status and `STOP` entries reusing their own reservation;
+- rejecting concurrent MOD calls and original native ioctls;
+- lost reservation without releasing self-pin;
+- `HELD`/cleanup errors that do not release the native guard;
+- releasing only after an explicit completed-cleanup fixture;
+- propagating and latching guard release errors.
 
-ACTIVE/HELD/IDLE su izričiti typed fixturei; izvorni core ioctl/release i native gadgetcore ioctl u ovom auditu su recorders. Kernel route slot u testu također je fixture, ne stvarni hook. Test uklanjanja faulta nije fizički oporavak. Izvršava se stvarni prevedeni MOD kod, ali ne originalni native hardware teardown.
+`ACTIVE`/`HELD`/`IDLE` are explicit typed fixtures; original core ioctl/release and native gadgetcore ioctl in this audit are recorders. The kernel route slot in the test is also a fixture, not a real hook. The fault removal test is not physical recovery. Real compiled MOD code is executed, but not the original native hardware teardown.
 
-Manifest: `artifacts/analysis/uvc-ptp-module-e0182/manifest.json`; zapis: `artifacts/uvc-ptp-module-e0182-audit.log`. Svih **605 projektnih testova** prolazi u **18,871 s** (`artifacts/uvc-ptp-module-e0182-project-tests.log`).
+Manifest: `artifacts/analysis/uvc-ptp-module-e0182/manifest.json`; log: `artifacts/uvc-ptp-module-e0182-audit.log`. All **605 project tests** pass in **18.871 s** (`artifacts/uvc-ptp-module-e0182-project-tests.log`).
 
-## Trenutačna granica
+## Current Boundary
 
-Kandidat nije fizički aktiviran, a korisnikov E0181 init/exit dokaz ne proglašava se dokazom ove nove sesijske putanje. Sigurno postavljanje native omotača, završetak EP0/gadget callbackova, zajednička enumeracija i povratak na izvorni PC Remote ostaju otvoreni. Senzorski UVC s istodobnim PTP kontrolama još nije potvrđen. Kameru ostaviti u Mass Storageu do pripreme tog testa.
+The candidate is not physically activated, and the user's E0181 init/exit evidence is not declared proof of this new session path. Safe installation of the native wrapper, completion of EP0/gadget callbacks, shared enumeration, and recovery to original PC Remote remain open. Sensor UVC with concurrent PTP controls is not yet confirmed. Leave the camera in Mass Storage until that test is prepared.

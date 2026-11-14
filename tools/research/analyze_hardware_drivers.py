@@ -27,7 +27,7 @@ def extract_strings(data, min_len=4):
 
 def analyze_kmod(filepath):
     filename = os.path.basename(filepath)
-    print_separator(f"ANALIZA KERNEL DRAJVERA: {filename}")
+    print_separator(f"KERNEL DRIVER ANALYSIS: {filename}")
     
     with open(filepath, 'rb') as f:
         elf = ELFFile(f)
@@ -36,16 +36,16 @@ def analyze_kmod(filepath):
         modinfo_sec = elf.get_section_by_name('.modinfo')
         if modinfo_sec:
             raw_info = modinfo_sec.data().decode('latin1', 'ignore').split('\x00')
-            print("[*] .modinfo (Informacije o drajveru):")
+            print("[*] .modinfo (Driver information):")
             for item in raw_info:
                 if item:
                     print(f"    - {item}")
 
         # 2. Section Map
-        print("\n[*] Sekcije memorije u ELF objektu:")
+        print("\n[*] Memory sections in ELF object:")
         for s in elf.iter_sections():
             if s.data_size > 0:
-                print(f"    {s.name:<24} | Veličina: {s.data_size:>7,} B | Tip: {s['sh_type']}")
+                print(f"    {s.name:<24} | Size: {s.data_size:>7,} B | Type: {s['sh_type']}")
 
         # 3. Functions & Symbols
         symtab = elf.get_section_by_name('.symtab')
@@ -60,14 +60,14 @@ def analyze_kmod(filepath):
                 if any(k in name.lower() for k in ['ioremap', 'request_mem', 'dma_', 'register', 'mpr', 'ioctl', 'irq']):
                     mmio_calls.append(name)
             
-            print(f"\n[*] Pronađeno funkcija u drajveru: {len(funcs)}")
+            print(f"\n[*] Functions found in driver: {len(funcs)}")
             for name, val in funcs[:15]:
                 print(f"    - {name:<35} @ 0x{val:08x}")
             if len(funcs) > 15:
-                print(f"      ... i još {len(funcs) - 15} funkcija.")
+                print(f"      ... and {len(funcs) - 15} more functions.")
 
             if mmio_calls:
-                print("\n[*] Hardverske / MMIO / Registracione reference funkcija:")
+                print("\n[*] Hardware / MMIO / Registration function references:")
                 for call in sorted(set(mmio_calls)):
                     print(f"    --> {call}")
 
@@ -76,13 +76,13 @@ def analyze_kmod(filepath):
         all_data = f.read()
         dev_nodes = set(re.findall(rb'/dev/[A-Za-z0-9_\-]+', all_data))
         if dev_nodes:
-            print("\n[*] Registrovani /dev/ čvorovi za komunikaciju:")
+            print("\n[*] Registered /dev/ nodes for communication:")
             for d in dev_nodes:
                 print(f"    [DEVICE NODE]: {d.decode('latin1')}")
 
 def analyze_user_binary(filepath):
     filename = os.path.basename(filepath)
-    print_separator(f"ANALIZA KORISNIČKOG PROCESA: {filename}")
+    print_separator(f"USER PROCESS ANALYSIS: {filename}")
     
     with open(filepath, 'rb') as f:
         elf = ELFFile(f)
@@ -94,7 +94,7 @@ def analyze_user_binary(filepath):
             for tag in dyn_sec.iter_tags():
                 if tag.entry.d_tag == 'DT_NEEDED':
                     libs.append(tag.needed)
-            print("[*] Zavisne deljene biblioteke (DT_NEEDED):")
+            print("[*] Dependent shared libraries (DT_NEEDED):")
             for lib in libs:
                 print(f"    - {lib}")
 
@@ -103,14 +103,14 @@ def analyze_user_binary(filepath):
         data = f.read()
         devs = set(re.findall(rb'/dev/[A-Za-z0-9_\-]+', data))
         if devs:
-            print("\n[*] Pristupa hardverskim /dev/ čvorovima:")
+            print("\n[*] Accesses hardware /dev/ nodes:")
             for d in devs:
                 print(f"    --> {d.decode('latin1')}")
 
         # IPC & Service calls
         ipc_strings = [s.decode('latin1') for s in extract_strings(data, 6) if any(w in s.lower() for w in [b'dmac', b'ws_', b'fb', b'disp', b'sen', b'mpr'])]
         if ipc_strings:
-            print("\n[*] Ključni simboli i IPC komande (uzorak):")
+            print("\n[*] Key symbols and IPC commands (sample):")
             for s in sorted(set(ipc_strings))[:15]:
                 print(f"    - {s}")
 
@@ -126,7 +126,7 @@ if __name__ == '__main__':
             if os.path.exists(kp):
                 analyze_kmod(kp)
     else:
-        print(f"[-] Kmod direktorijum ne postoji: {KMOD_DIR}")
+        print(f"[-] Kmod directory does not exist: {KMOD_DIR}")
 
     # 2. Analyze key user binaries
     if os.path.exists(BIN_DIR):
@@ -135,4 +135,4 @@ if __name__ == '__main__':
             if os.path.exists(bp):
                 analyze_user_binary(bp)
     else:
-        print(f"[-] Bin direktorijum ne postoji: {BIN_DIR}")
+        print(f"[-] Bin directory does not exist: {BIN_DIR}")

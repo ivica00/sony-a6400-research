@@ -80,7 +80,7 @@ static int g_class_dir_out;
  * guard makes a second arm harmless. Read-only reads + one kernel-text call. */
 #define A6400_FN_EP0_DO_CONTROL_STATUS 0x602b253cu
 static uvc_u32 g_prearm_req;
-static unsigned g_prearm_pending, g_prearm_active;
+static unsigned g_prearm_pending, g_prearm_active, g_prearm_dir_out;
 static unsigned g_prearm_attempts, g_prearm_armed, g_prearm_skipped;
 static unsigned g_prearm_last_state, g_prearm_last_next;
 extern int a6400_uvc_restore_descriptors_bridge(void);
@@ -165,11 +165,11 @@ static void a6400_uvc_ring_record(uvc_u32 hook, uvc_u32 ep, uvc_u32 req,
     }
 }
 
-/* E0472: arm the EP0 OUT status TRB at class data-stage completion. */
+/* E0472/E0511: arm the EP0 status TRB (OUT eps0 for IN, IN eps1 for OUT) at class data-stage completion. */
 static void a6400_uvc_status_prearm(void *ep, void *req)
 {
-    uvc_u32 e=(uvc_u32)ep, r=(uvc_u32)req, dwc, eps0, state, next;
-    unsigned armed=0;
+    uvc_u32 e=(uvc_u32)ep, r=(uvc_u32)req, dwc, status_ep, state, next;
+    unsigned dir_out=g_prearm_dir_out, armed=0;
     if (!g_prearm_pending || !r || r!=g_prearm_req) return;
     g_prearm_pending=0;
     /* Never arm on an error/setup-pending giveback: only a clean data-stage
@@ -181,24 +181,24 @@ static void a6400_uvc_status_prearm(void *ep, void *req)
     if (!e || !a6400_uvc_kernel_ptr(e)) { g_prearm_skipped++; return; }
     dwc=a6400_uvc_rd32(e+A6400_EP_DWC);
     if (!dwc || !a6400_uvc_kernel_ptr(dwc)) { g_prearm_skipped++; return; }
-    eps0=a6400_uvc_rd32(dwc+A6400_DWC_EPS);
+    status_ep=a6400_uvc_rd32(dwc+A6400_DWC_EPS+(dir_out?4u:0u));
     state=a6400_uvc_rd32(dwc+A6400_DWC_EVENT);
     next=a6400_uvc_rd32(dwc+A6400_DWC_NEXT);
     g_prearm_attempts++;
     g_prearm_last_state=state; g_prearm_last_next=next;
-    if (state!=2u || next!=3u || !eps0 || !a6400_uvc_kernel_ptr(eps0)) {
+    if (state!=2u || next!=3u || !status_ep || !a6400_uvc_kernel_ptr(status_ep)) {
         g_prearm_skipped++;
-        printk("[a6400_uvc] PREARM skip st=%u nx=%u\n",(unsigned)state,(unsigned)next);
+        printk("[a6400_uvc] PREARM skip d=%u st=%u nx=%u\n",dir_out,(unsigned)state,(unsigned)next);
         return;
     }
     /* Order matters (E0366 R1 / B10): ep0state must be STATUS before the arm,
      * or a later status XferComplete dispatches to the DATA handler and the
      * request/descriptor dereference faults. */
     *(volatile uvc_u32 *)(dwc+A6400_DWC_EVENT)=3u;
-    ((void (*)(uvc_u32,uvc_u32))A6400_FN_EP0_DO_CONTROL_STATUS)(dwc,eps0);
+    ((void (*)(uvc_u32,uvc_u32))A6400_FN_EP0_DO_CONTROL_STATUS)(dwc,status_ep);
     if (a6400_uvc_rd32(dwc+A6400_DWC_NEXT)==1u) { g_prearm_armed++; armed=1; }
     else g_prearm_skipped++;
-    printk("[a6400_uvc] PREARM st=%u nx=%u r=%u\n",(unsigned)state,(unsigned)next,armed);
+    printk("[a6400_uvc] PREARM d=%u st=%u nx=%u r=%u\n",dir_out,(unsigned)state,(unsigned)next,armed);
 }
 
 static int a6400_uvc_ring_queue_wrap(void *ep, void *req, unsigned int gfp)
@@ -209,10 +209,11 @@ static int a6400_uvc_ring_queue_wrap(void *ep, void *req, unsigned int gfp)
         *(volatile uvc_u8 *)(r+0x1au) |= 0x02u;
     a6400_uvc_ring_record(2u,(uvc_u32)ep,r,0,0);
     if (g_ring_n) g_ring[g_ring_n-1].lr=(uvc_u32)__builtin_return_address(0);
-    /* E0472: remember the request queued by the class handler so its data-stage
-     * completion can pre-arm the status stage (class IN setup only). */
-    if (g_prearm_active && !g_class_dir_out && r && a6400_uvc_kernel_ptr(r)) {
+    /* E0472/E0511: remember the request queued by the class handler so its data-stage
+     * completion can pre-arm the status stage (3-stage class IN or OUT). */
+    if (g_prearm_active && r && a6400_uvc_kernel_ptr(r)) {
         g_prearm_req=r; g_prearm_pending=1;
+        g_prearm_dir_out=g_class_dir_out?1u:0u;
     }
     if (r && a6400_uvc_kernel_ptr(r)) {
         uvc_u32 comp=a6400_uvc_rd32(r+0x1cu);
@@ -949,11 +950,12 @@ static uvc_u32 invoke(struct uvc_old_descriptor *d, uvc_u32 which,
         if (drq) g_class_dir_out=((drq[0]&0x80u)==0u)?1:0;
         a6400_uvc_ring_record(1u,(uvc_u32)a2,0,(const uvc_u8 *)a1,0);
         if (drq) { if (drq[0]&0x80u) g_get_cur_count++; else g_set_cur_count++; }
-        /* E0472: only a 3-stage class IN request has a data stage to pre-arm after. */
-        g_prearm_req=0; g_prearm_pending=0; g_prearm_active=0;
-        if (drq && (drq[0]&0x80u) &&
-            (((uvc_u32)drq[6]|((uvc_u32)drq[7]<<8))!=0u))
+        /* E0472/E0511: any 3-stage class request (wLength != 0, IN or OUT) has a data stage to pre-arm after. */
+        g_prearm_req=0; g_prearm_pending=0; g_prearm_active=0; g_prearm_dir_out=0;
+        if (drq && (((uvc_u32)drq[6]|((uvc_u32)drq[7]<<8))!=0u)) {
             g_prearm_active=1;
+            g_prearm_dir_out=((drq[0]&0x80u)==0u)?1u:0u;
+        }
         a6400_uvc_ring_install((uvc_u32)a2);
         a6400_uvc_obs_start((uvc_u32)a2);
 #if A6400_UVC_TRACE

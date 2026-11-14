@@ -12,15 +12,15 @@ PYTHON_EXE = sys.executable
 UFU_MAGIC = b'\x89\x55\x46\x55\x0d\x0a\x1a\x0a'
 
 def extract_dat_from_exe(exe_path, out_dat_path):
-    print(f"[*] Tražim Sony UFU zaglavlje u: {os.path.basename(exe_path)}...")
+    print(f"[*] Searching for Sony UFU header in: {os.path.basename(exe_path)}...")
     with open(exe_path, 'rb') as f:
         data = f.read()
     
     idx = data.find(UFU_MAGIC)
     if idx == -1:
-        raise ValueError("Sony UFU potpis (\\x89UFU\\r\\n\\x1a\\n) nije pronađen u izvršnom fajlu.")
+        raise ValueError("Sony UFU signature (\\x89UFU\\r\\n\\x1a\\n) not found in executable.")
     
-    print(f"[+] UFU zaglavlje pronađeno na offsetu: {hex(idx)}")
+    print(f"[+] UFU header found at offset: {hex(idx)}")
     
     # Locate DEND chunk to find exact size
     dend_magic = b'DEND'
@@ -34,14 +34,14 @@ def extract_dat_from_exe(exe_path, out_dat_path):
         # Fallback to end of file
         dat_size = len(data) - idx
 
-    print(f"[*] Izdvajam DAT kontejner ({dat_size:,} bajtova) -> {out_dat_path}...")
+    print(f"[*] Extracting DAT container ({dat_size:,} bytes) -> {out_dat_path}...")
     with open(out_dat_path, 'wb') as out_f:
         out_f.write(data[idx:idx + dat_size])
-    print("[+] DAT fajl uspešno ekstraktovan.")
+    print("[+] DAT file successfully extracted.")
 
 def unpack(input_file, output_dir=None):
     if not os.path.exists(input_file):
-        print(f"[-] Greška: Fajl '{input_file}' ne postoji.")
+        print(f"[-] Error: File '{input_file}' does not exist.")
         return
 
     base_name = os.path.splitext(os.path.basename(input_file))[0]
@@ -52,7 +52,7 @@ def unpack(input_file, output_dir=None):
     print("=" * 60)
     print(" SONY a6400 FIRMWARE UNPACKER & STATIC ANALYSIS TOOL")
     print("=" * 60)
-    print(f"[*] Ulazni fajl: {input_file} ({os.path.getsize(input_file):,} bajtova)")
+    print(f"[*] Input file: {input_file} ({os.path.getsize(input_file):,} bytes)")
 
     target_dat = input_file
     if input_file.lower().endswith('.exe'):
@@ -60,17 +60,17 @@ def unpack(input_file, output_dir=None):
         extract_dat_from_exe(input_file, extracted_dat)
         target_dat = extracted_dat
 
-    print(f"[*] Izlazni folder: {output_dir}")
-    print("[*] Pokretanje dekripcije (CXD90045 AES-CBC) i raspakivanja preko fwtool.py...")
+    print(f"[*] Output directory: {output_dir}")
+    print("[*] Running decryption (CXD90045 AES-CBC) and unpacking via fwtool.py...")
 
     cmd = [PYTHON_EXE, FWTOOL_PATH, "unpack", "-f", target_dat, "-o", output_dir]
     res = subprocess.run(cmd)
 
     if res.returncode == 0:
-        print("\n[+] Uspešno raspakovan i dešifrovan firmware!")
-        print("\n[GOTOVO] Svi fajlovi, particije i skripte su izvučeni.")
+        print("\n[+] Firmware unpacked and decrypted successfully!")
+        print("\n[DONE] All files, partitions, and scripts have been extracted.")
     else:
-        print("\n[-] fwtool.py je prijavio grešku pri raspakivanju.")
+        print("\n[-] fwtool.py reported an error during unpacking.")
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
@@ -83,9 +83,9 @@ if __name__ == '__main__':
         
         if candidates:
             target = candidates[0]
-            print(f"[*] Automatski detektovan firmware fajl: {target}")
+            print(f"[*] Auto-detected firmware file: {target}")
         else:
-            print("Upotreba: python -m tools.research.unpack_firmware <putanja_do_Update_ILCE6400V200.exe>")
+            print("Usage: python -m tools.research.unpack_firmware <path_to_Update_ILCE6400V200.exe>")
             sys.exit(0)
 
     unpack(target)

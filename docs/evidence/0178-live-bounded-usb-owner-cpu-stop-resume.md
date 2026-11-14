@@ -1,36 +1,36 @@
-# E0178 — Fizički ograničeno zaustavljanje i nastavak CPU dretava USB vlasnika
+# E0178 — Physically Bounded Stop and Resume of USB Owner CPU Threads
 
-Datum: 2026-11-08. Kamera ostaje u Mass Storage načinu. Debugger PID703 dostupan. Nema učitavanja zajedničkog modula, USB promjene, hooka, aplikacijskog poziva ili zapisa u memoriju Sonyjeve aplikacije. Novi payloadi i logovi samo su u `/tmp_bt`.
+Date: 2026-11-08. The camera remains in Mass Storage mode. Debugger PID703 available. No shared module loading, USB change, hook, application call, or writes to Sony application memory. New payloads and logs are only in `/tmp_bt`.
 
-## Alat i izgradnja
+## Tool and Build
 
-`tools/native_camera/native_usb_freeze_probe.c` koristi postojeći `native_freeze.h`, ranije fizički provjeren na PID149, i postojeći Sony libc/startup toolchain. Reproducibilni builder je `tools/research/build_native_usb_freeze_probe.py`. Alat zahtijeva `--capture-once`; bez argumenta samo ispisuje preflight i vraća 2.
+`tools/native_camera/native_usb_freeze_probe.c` uses the existing `native_freeze.h`, previously physically verified on PID149, and the existing Sony libc/startup toolchain. The reproducible builder is `tools/research/build_native_usb_freeze_probe.py`. The tool requires `--capture-once`; without arguments it only prints preflight and returns 2.
 
-Konačni ELF: `artifacts/native/uvc-ptp-freeze-e0178-fixed/native_usb_freeze_probe.elf`, **6796 bajtova**, SHA-256 `04953d3bba73841700889e49125d50ce191aef8f3a59c791432bd216ae90368b`. Interpreter je `/lib/ld-linux.so.3`, jedina DT_NEEDED ovisnost libc.so.6; povezivanje koristi zadržanu Sony libc.
+Final ELF: `artifacts/native/uvc-ptp-freeze-e0178-fixed/native_usb_freeze_probe.elf`, **6796 bytes**, SHA-256 `04953d3bba73841700889e49125d50ce191aef8f3a59c791432bd216ae90368b`. The interpreter is `/lib/ld-linux.so.3`, and the only `DT_NEEDED` dependency is `libc.so.6`; linking uses the retained Sony libc.
 
-Alat enumerira i priključi sve PID149 dretve, ponovno provjeri skup, očita PTRACE_GETREGS unutar ukupnog 2000 ms ograničenja te odmah odvoji sve priključene dretve. Ispis pojedinačnih registara ide **nakon** nastavka svih dretava. Svaki očitani CPSR mora označavati user mode. To su spremljeni user registri, ne kernel stackovi.
+The tool enumerates and attaches to all PID149 threads, re-checks the set, reads `PTRACE_GETREGS` within a total 2000 ms limit, and immediately detaches all attached threads. Printing of individual registers happens **after** resuming all threads. Every read CPSR must indicate user mode. These are saved user registers, not kernel stacks.
 
-Prvi fizički preflight nije pokrenuo freeze: vratio je 2, ali stdout nije bio ispražnjen prije custom startup SYS_exit, pa je host guard odbio nastavak. Taj pokušaj ostaje arhiviran u `artifacts/hardware/uvc-ptp-freeze-e0178`. Dodan je eksplicitni fflush i u preflight i error izlaz; nije ponovljen neuspjeli freeze jer freeze tada nije ni započeo.
+The first physical preflight did not start a freeze: it returned 2, but stdout was not flushed before the custom startup `SYS_exit`, so the host guard refused to continue. That attempt remains archived in `artifacts/hardware/uvc-ptp-freeze-e0178`. Explicit `fflush` was added to both preflight and error output; the failed freeze was not repeated because the freeze had not even started then.
 
-## Fizički rezultat
+## Physical Result
 
-Konačni ELF prenesen je na zaseban timestamp put u `/tmp_bt` uz byte-equal readback. Preflight je ispravno ispisao `freeze=0`, nakon čega je izvršen jedan capture ciklus:
+The final ELF was transferred to a separate timestamp path in `/tmp_bt` with byte-equal readback. Preflight correctly printed `freeze=0`, after which one capture cycle was executed:
 
 ```
 FREEZE threads=175 attached=175 resumed=175 result=0 elapsed_ms=1346
 END result=0 captured=175 expected=175 saved_user_regs_only=1
 ```
 
-Sačuvano je svih 175 register zapisa. Svi CPSR-i imaju user mode, a svih 175 PC-eva pripada izvršivim rasponima prethodno očitanih stvarnih maps. Nije korišten hostov rekonstruirani CPU okvir niti lažni thread ID.
+All 175 register records were saved. All CPSRs are in user mode, and all 175 PCs belong to executable ranges of the previously read real maps. No host-reconstructed CPU frame or fake thread ID was used.
 
-Host run status=0, flags=0; puni log ima 11926 bajtova, SHA-256 `5462bb489e906a4daef584ec186b3ea244bc3e28e3918c4a62b3068e7a8e3011`, bez truncationa. Finalni `/proc/149/status` ima TracerPid=0. Debugger odgovara prije i nakon capturea.
+Host run `status=0, flags=0`; the full log is 11926 bytes, SHA-256 `5462bb489e906a4daef584ec186b3ea244bc3e28e3918c4a62b3068e7a8e3011`, without truncation. Final `/proc/149/status` has `TracerPid=0`. The debugger responds before and after the capture.
 
-Ponovljeni native owner inventory **nakon** freeze ciklusa potvrđuje isti skup OWNER/TASK zapisa kao prije: jedan gadgetcore vlasnik PID149/FD85, 175 dretava, errors=0. Time je fizički potvrđen povratak ovog CPU capture ciklusa, bez USB konfiguracijske promjene.
+A repeated native owner inventory **after** the freeze cycle confirms the same set of `OWNER/TASK` records as before: one gadgetcore owner PID149/FD85, 175 threads, `errors=0`. This physically confirms recovery of this CPU capture cycle, without a USB configuration change.
 
-Artefakti: `artifacts/hardware/uvc-ptp-freeze-e0178-fixed/{manifest.json,freeze.log,status-before.txt,status-after.txt,debugger-before.txt,debugger-after.txt,owners-after-freeze.log,post-freeze-manifest.json,register-map-analysis.json}`. Build manifest uključuje hash izvora, native_freeze.h, startup-a, Sony libc i ELF-a.
+Artifacts: `artifacts/hardware/uvc-ptp-freeze-e0178-fixed/{manifest.json,freeze.log,status-before.txt,status-after.txt,debugger-before.txt,debugger-after.txt,owners-after-freeze.log,post-freeze-manifest.json,register-map-analysis.json}`. The build manifest includes hashes of the source, `native_freeze.h`, startup, Sony libc, and ELF.
 
-## Precizan opseg dokaza
+## Exact Scope of Evidence
 
-Potvrđeno je da se opaženi proces koji drži gadgetcore može u ovom stanju kratko potpuno zaustaviti i nastaviti uz potpune receipts. Nije potvrđeno da ta činjenica sama iscrpljuje već započete kernel ioctl pozive: spremljeni user PC nije dokaz potpunog kernel stacka. Kernel worker, IRQ, DMA i EP0/gadget callbackovi nisu zaustavljeni ovim postupkom.
+It is confirmed that the observed process holding gadgetcore can in this state be briefly completely stopped and resumed with complete receipts. It is not confirmed that this fact alone drains already-started kernel ioctl calls: a saved user PC is not proof of a complete kernel stack. Kernel workers, IRQs, DMA, and EP0/gadget callbacks were not stopped by this procedure.
 
-Zato E0178 ne proglašava samu zamjenu fops pokazivača sigurnom i ne daje potvrdu za aktivaciju PTP/UVC-a. Potreban je poseban ugovor za postavljanje omotača i završetak kernel callbackova. Kamera ostaje u Mass Storageu, nema aktivnog observer/hooka ili ptrace priključka. Zajednički modul E0164 i dalje nije učitan; test PC Remote + UVC/PTP još nije spreman.
+Therefore E0178 does not declare swapping the `fops` pointer alone safe and does not grant confirmation for PTP/UVC activation. A separate contract is needed for installing the wrapper and finishing kernel callbacks. The camera remains in Mass Storage, with no active observer/hook or ptrace attachment. The shared E0164 module is still unloaded; the PC Remote + UVC/PTP test is not yet ready.

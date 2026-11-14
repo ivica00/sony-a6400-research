@@ -202,12 +202,12 @@ def main():
 
         # Step 2: Prompt user to switch to PC Remote and monitor host USB enumeration
         print("\n" + "=" * 70)
-        print(">>> MODUL I RUNNER SU USPJESNO POSTAVLJENI NA KAMERU! <<<")
-        print(">>> SADA PREBACITE KAMERU U IZBORNIKU NA 'PC Remote':")
-        print(">>>   MENU -> Setup (zuti kofer) -> USB Connection -> PC Remote")
+        print(">>> MODULE AND RUNNER SUCCESSFULLY DEPLOYED TO CAMERA! <<<")
+        print(">>> NOW SWITCH THE CAMERA IN THE MENU TO 'PC Remote':")
+        print(">>>   MENU -> Setup (yellow toolbox) -> USB Connection -> PC Remote")
         print("=" * 70 + "\n")
 
-        print(f"[*] Cekam prelazak na PC Remote i nadzirem USB sabirnicu (do 300s za prebacivanje, zatim {args.duration}s sesije)...")
+        print(f"[*] Waiting for switch to PC Remote and monitoring USB bus (up to 300s to switch, then {args.duration}s session)...")
         start_time = time.time()
         uvc_detected = False
         ptp_detected = False
@@ -231,7 +231,7 @@ def main():
 
             if devs and not pcremote_switched:
                 pcremote_switched = True
-                print(f"[+] [{elapsed:.1f}s] DETEKTIRAN PC REMOTE NACIN NA HOSTU ({devs[0].get('InstanceId', '')})!")
+                print(f"[+] [{elapsed:.1f}s] PC REMOTE MODE DETECTED ON HOST ({devs[0].get('InstanceId', '')})!")
 
             sample = {
                 'elapsed_sec': round(elapsed, 2),
@@ -251,13 +251,13 @@ def main():
 
             if binding['uvc_ready'] and not uvc_detected:
                 uvc_detected = True
-                print(f"[***] [{elapsed:.1f}s] UVC KAMERA DETEKTIRANA NA HOSTU! [***]: {uvc_nodes}")
+                print(f"[***] [{elapsed:.1f}s] UVC CAMERA DETECTED ON HOST! [***]: {uvc_nodes}")
 
             if binding['parents'] and session_active_time is None:
                 session_active_time = time.time()
 
             if session_active_time and (time.time() - session_active_time > args.duration + 30):
-                print(f"[*] Predvidjeno trajanje sesije ({args.duration}s) je isteklo. Zavrsavam nadzor.")
+                print(f"[*] Planned session duration ({args.duration}s) has elapsed. Ending monitoring.")
                 break
 
             time.sleep(1.0)
@@ -276,9 +276,9 @@ def main():
         save()
 
         print("\n" + "=" * 70)
-        print(">>> HOST NADZOR JE ZAVRSEN; ZAVRSETAK NA KAMERI JOS NIJE POTVRDJEN. <<<")
-        print(">>> SADA VRATITE KAMERU U 'Mass Storage' NACIN RADA:")
-        print(">>>   MENU -> Setup (zuti kofer) -> USB Connection -> Mass Storage")
+        print(">>> HOST MONITORING FINISHED; COMPLETION ON CAMERA NOT YET CONFIRMED. <<<")
+        print(">>> NOW SWITCH THE CAMERA BACK TO 'Mass Storage' MODE:")
+        print(">>>   MENU -> Setup (yellow toolbox) -> USB Connection -> Mass Storage")
         print("=" * 70 + "\n")
 
     except Exception as exc:
@@ -290,7 +290,7 @@ def main():
             del dbg
             gc.collect()
         # Step 3: Wait for Mass Storage reconnection and perform cleanup
-        print("[*] Cekam ponovno spajanje u Mass Storage nacinu radi ocitanja logova i ciscenja...")
+        print("[*] Waiting for Mass Storage reconnection to read logs and clean up...")
         msc_reconnected = False
         reconnection=ExitStack()
         wait_msc_start = time.time()
@@ -303,14 +303,14 @@ def main():
                 time.sleep(1.5)
 
         if not msc_reconnected:
-            print("[-] Isteklo vrijeme cekanja za Mass Storage reconnect!")
+            print("[-] Timed out waiting for Mass Storage reconnect!")
             report['status'] = 'teardown_unconfirmed' if args.p4 else 'failed'
             report['cleanup_error'] = 'Timeout waiting for camera to return to Mass Storage'
             if args.p4:
-                print(">>> P4 TEARDOWN NIJE POTVRDJEN. NE uklanjaj modul. Restartaj kameru, pa javi za read-only provjeru.")
+                print(">>> P4 TEARDOWN NOT CONFIRMED. Do NOT remove module. Restart camera, then report for read-only verification.")
             save()
         else:
-            print("[+] Ponovno povezan na debugger u Mass Storage nacinu! Preuzimam dokaze...")
+            print("[+] Reconnected to debugger in Mass Storage mode! Collecting evidence...")
             try:
                 with nullcontext(dbg) as dbg:
                     # Read session log
@@ -392,8 +392,8 @@ def main():
                 reconnection.close()
 
     if args.p4 and report.get('status') != 'p4_session_completed':
-        print("\n>>> P4 NIJE USPJESNO ZAVRSEN. Ne tvrdi cist teardown.")
-        print(">>> Ako kamera ne reagira: restartaj je, pa javi za read-only provjeru MSC/modula/usbg_video.")
+        print("\n>>> P4 DID NOT COMPLETE SUCCESSFULLY. Do not claim clean teardown.")
+        print(">>> If camera is unresponsive: restart it, then report for read-only verification of MSC/modules/usbg_video.")
 
     print(json.dumps({k: v for k, v in report.items() if k != 'files'}, indent=2))
 

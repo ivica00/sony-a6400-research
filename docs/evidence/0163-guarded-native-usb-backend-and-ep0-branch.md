@@ -1,121 +1,62 @@
-# E0163: Native USB backend i stvarna EP0 grana u offline provjeri
+# E0163: Native USB Backend and Real EP0 Branch in Offline Check
 
-Datum: 2026-11-08. Nastavak E0162. Nema pristupa fizičkoj kameri.
+Date: 2026-11-08. Continuation of E0162. No physical camera access.
 
-## Implementirani kernel wrapperi
+## Implemented Kernel Wrappers
 
-`tools/native_camera/uvc_ptp_native_backend.{c,h}` daje stvarnu implementaciju
-ops tablice za zajedničku sesiju, vezanu na provjereni a6400 kernel:
+`tools/native_camera/uvc_ptp_native_backend.{c,h}` provides the real ops table implementation for the shared session, bound to the verified a6400 kernel:
 
-| Operacija | Native put |
+| Operation | Native path |
 |---|---|
-| Disconnect | gadget ops pullup(0), setup_disconnect602b9464 |
-| Controller stop/state | usb_gcw_stop602bd834, get_gcw_state602bd450 |
-| Controller start | usb_gcw_start602bd7f8 |
-| EP0 enable/setup | 602b05fc, 602b2b40, native EP0 descriptor604e4e24 |
-| Driver register/unregister | 602b8610 / 602b8560 |
-| Descriptor save/free | 602bc550 / 602bc3e4 |
+| Disconnect | gadget ops `pullup(0)`, `setup_disconnect` `602b9464` |
+| Controller stop/state | `usb_gcw_stop` `602bd834`, `get_gcw_state` `602bd450` |
+| Controller start | `usb_gcw_start` `602bd7f8` |
+| EP0 enable/setup | `602b05fc`, `602b2b40`, native EP0 descriptor `604e4e24` |
+| Driver register/unregister | `602b8610` / `602b8560` |
+| Descriptor save/free | `602bc550` / `602bc3e4` |
 
-Backend čita actual singleton gc iz6051b17c, provjerava odabrane originalne
-instrukcije kritičnih funkcija i četiri originalna descriptor BL mjesta.
-To je parcijalni live instruction guard, ne puni live kernel hash.
-Offline test i dalje SHA-provjerava cijeli originalni kernel.
+Backend reads actual singleton `gc` from `6051b17c`, verifies selected original instructions of critical functions and the four original descriptor `BL` sites. This is a partial live instruction guard, not a full live kernel hash. Offline test still SHA-verifies the entire original kernel.
 
-Caller i dalje mora osigurati serialization native USB mode promjena i
-trajanje source/session/backend objekata. Backend nije gotov kernel modul,
-ne instalira vlastiti unload guard i nije sam pokrenut na kameri.
+Caller must still ensure serialization of native USB mode changes and lifetime of source/session/backend objects. Backend is not a finished kernel module, does not install its own unload guard, and was not run on camera alone.
 
-## Zaustavljanje i obnova
+## Stop and Restore
 
-setup_disconnect nema pouzdan C integer status; wrapper ga tretira kao void.
-Nakon njega zahtijeva config74=0, nula vlastitih descriptor/bridge korisnika,
-STOP dovršen i nijedan active driver record. Obilazak native registra je
-ograničen na64 čvora. Zatim potvrđuje stop return i GCW state1.
+`setup_disconnect` has no reliable C integer status; wrapper treats it as void. After it, requires `config74=0`, zero owned descriptor/bridge users, `STOP` completed, and no active driver record. Native registry walk is bounded to 64 nodes. Then confirms stop return and GCW state 1.
 
-Resume provjerava stopped stanje i mode0/1, potvrđuje start rezultat i novo
-stanje2/3, validira EP0 out/in owner pointere, izvršava dva native enable
-poziva s provjerom rezultata, arm SETUP i pullup(1), pa active flag.
-Void arm poziv nije dokaz fizičke TRB obrade ili Windows spajanja.
+Resume checks stopped state and mode 0/1, confirms start result and new state 2/3, validates EP0 out/in owner pointers, executes two native enable calls with result check, arms SETUP and `pullup(1)`, then active flag. Void arm call is not proof of physical TRB processing or Windows attach.
 
-Register/unregister dopušteni su samo za UVC config1/interface1/2 dok je
-kontroler stopped. Privremeno se uklanja flags bit2 i potpuno vraća prethodna
-vrijednost. Registar se čita prije/nakon operacija: register mora dodati
-jedan točan descriptor, unregister ga mora ukloniti. Originalni PTP0 se
-ne predaje tim operacijama.
+Register/unregister are allowed only for UVC config 1 / interface 1/2 while controller is stopped. Temporarily clears flags bit 2 and fully restores previous value. Registry is read before/after operations: register must add one exact descriptor, unregister must remove it. Original PTP 0 is not passed to those operations.
 
-Native unregister VRAĆA int, i to0 ili -16 u originalnom kodu. Wrapper ga
-čuva. Bridge dosad ignorira unregister rezultat, pa je session ops proširen
-`check_error` callbackom: native guard/unregister/free greška zadržava
-session/source prije descriptor free-a ili proglašavanja releasable stanja.
+Native unregister RETURNS `int`, specifically 0 or -16 in original code. Wrapper preserves it. Bridge previously ignored unregister result, so session ops was extended with `check_error` callback: native guard/unregister/free error holds session/source before descriptor free or declaring releasable state.
 
-Save wrapper postavlja stvarni current-thread address limit na KERNEL_DS i
-obnavlja ga i pri native erroru. Zahtijeva gc+6c=0, što priprema ownership
-lease. Free dopušta samo zabilježenu installed kopiju, različitu od originala
-i sourcea. Nema slijepog oslobađanja nepoznate tablice.
+Save wrapper sets real current-thread address limit to `KERNEL_DS` and restores it even on native error. Requires `gc+6c=0`, preparing the ownership lease. Free allows only the recorded installed copy, distinct from original and source. No blind freeing of an unknown table.
 
-## EP0 povezivanje
+## EP0 Wiring
 
-Četiri originalna BL mjesta:958c(device),95ac(qualifier),95cc(config/other),
-95e0(string), sva u602bxxxx stranici. Backend unaprijed potvrđuje sve
-originalne instrukcije i signed ARM BL doseg/alignment prije bilo kojeg
-zapisa. Promjene/readback prati hook maskom. Izvodi native instruction-cache
-flush s ARM barijerama. Unbind provjerava sva mjesta prije obnove; odbija
-nepoznat tuđi patch umjesto da ga prepiše i potvrđuje originalni readback.
+Four original `BL` sites: `958c` (device), `95ac` (qualifier), `95cc` (config/other), `95e0` (string), all in the `602bxxxx` page. Backend pre-verifies all original instructions and signed ARM `BL` range/alignment before any write. Changes/readback tracked via hook mask. Executes native instruction-cache flush with ARM barriers. Unbind checks all sites before restoring; rejects unknown foreign patch instead of overwriting it and verifies original readback.
 
-Dispatch potvrđuje gc i točan native EP0 request buffer, prati svoje
-in-flight korisnike i poziva jedinstveni descriptor reply s kapacitetom512.
-Taj kapacitet vezan je na originalni g_bind allocation na602b844c..847c:
-cache allocation, eksplicitni512-byte trace argument i spremanje u request[0].
-Ne izvodi se pretpostavka na temelju JPEG ili video DMA kapaciteta.
+Dispatch verifies `gc` and exact native EP0 request buffer, tracks its in-flight users, and calls unified descriptor reply with capacity 512. That capacity is tied to original `g_bind` allocation at `602b844c..847c`: cache allocation, explicit 512-byte trace argument, and storing into `request[0]`. No assumption is made from JPEG or video DMA capacity.
 
-## Što je provjereno, a što je test double
+## What Is Verified vs Test Double
 
-Builder sada ima `--native-backend`, povezuje backend sa session/bridge/
-lease/adapter/descriptor kodom i postavlja offline ELF na5f800000 radi
-realističnog BL dosega. Nema unresolved importa.
+Builder now has `--native-backend`, links backend with session/bridge/lease/adapter/descriptor code, and places offline ELF at `5f800000` for realistic `BL` reach. No unresolved imports.
 
-Kompajlirani backend STVARNO izvršava fingerprint provjere, target pointer
-pozive, flag/address-limit guardove, registry readback, branch izračun,
-upis/obnovu/readback četiri instrukcije te session integraciju.
+Compiled backend ACTUALLY executes fingerprint checks, target pointer calls, flag/address-limit guards, registry readback, branch calculation, write/restore/readback of four instructions, and session integration.
 
-U offline memoriji stvarno je izvršena patched BL instrukcija na602b95cc
--> kompajlirani descriptor_dispatch -> jedinstveni reply -> ORIGINALNI Sony
-serializer/memcpy -> povrat na602b95d0 s ispravnim173-byte outputom.
-Ti serializeri nisu zamijenjeni host implementacijom.
+In offline memory, patched `BL` instruction at `602b95cc` -> compiled `descriptor_dispatch` -> unified reply -> ORIGINAL Sony serializer/memcpy -> return to `602b95d0` with valid 173-byte output actually executed. Those serializers were not replaced with a host implementation.
 
-Ali kernel/hardware učinci target operacija (pullup, stop/state, native
-register/save/free/EP0 enable/setup i cache-flush učinak) IZRIČITI su boundary
-DOUBLEOVI. Oni oponašaju registry/allocation rezultate za test MOD wrappera,
-ne dokazuju stvarni allocator, MMIO, cache ili physical USB acknowledgement.
-Writability kernel hook stranice također je eksplicitni offline fixture.
-Izvršavanje ne završava fizičkom enumeracijom ili senzorskim streamom.
+However, kernel/hardware effects of target operations (pullup, stop/state, native register/save/free/EP0 enable/setup, and cache-flush effect) are EXPLICIT boundary DOUBLES. They mimic registry/allocation results to test the MOD wrapper, not proving real allocator, MMIO, cache, or physical USB acknowledgement. Writability of the kernel hook page is also an explicit offline fixture. Execution does not end with physical enumeration or sensor stream.
 
-Testovi uključuju registraciju samo UVC-a uz očuvan PTP sentinel, točan
-KERNEL_DS i njegovu obnovu, skriveni originalni root, conflict/code guardove,
-no-partial-write bind preflight, stvarni patched-BL output, obnovu svih četiri
-originalnih instrukcija, free samo nove kopije, save error rollback i
-unregister error koji ne dopušta descriptor free.
-147 kumulativnih kontrola prolazi (prethodnih120 i27 native-backend kontrola).
-Puni projektni runtime nije mijenjan; prethodnih605 testova iz E0162 nije
-ponavljano nakon ovih izoliranih ARM provjera.
+Tests include registering only UVC while preserving PTP sentinel, exact `KERNEL_DS` and its restore, hidden original root, conflict/code guards, no-partial-write bind preflight, real patched-BL output, restoring all four original instructions, freeing only the new copy, save error rollback, and unregister error that blocks descriptor free. 147 cumulative checks pass (previous 120 and 27 native-backend checks). Full project runtime was not changed; previous 605 tests from E0162 were not repeated after these isolated ARM checks.
 
-Artefakti:
-`artifacts/native/uvc-ptp-native-backend-e0163/manifest.json`, offline povezani
-ELF i `artifacts/uvc-ptp-native-backend-e0163-build.log`.
-Izvorni ugovori:
-`artifacts/analysis/uvc-native-backend-contract-e0163/original-native-contract.txt`.
+Artifacts: `artifacts/native/uvc-ptp-native-backend-e0163/manifest.json`, offline linked ELF, and `artifacts/uvc-ptp-native-backend-e0163-build.log`. Original contracts: `artifacts/analysis/uvc-native-backend-contract-e0163/original-native-contract.txt`.
 
 ```
 python -m tools.research.build_uvc_ptp_descriptor_lease --native-backend --input-dir artifacts/native/uvc-ptp-lease-input-e0161 --output-dir artifacts/native/uvc-ptp-native-backend-e0163
 ```
 
-## Preostalo
+## Remaining
 
-Treba izraditi stvarni kernel-module entry/exit i lifetime zaštitu, povezati
-točno verificirani reference wire1/2 + endpoint82 MOD i allocator, riješiti
-serialization s native USB mode workerom, svježe verificirati target i
-izvesti bounded fizički register/EP0/restore pokus prije prijenosa kadrova.
-Host Sony UVC detekcija s PID0caa i native JPEG/DMM producer ostaju otvoreni.
+Must build real kernel-module entry/exit and lifetime protection, link exact verified reference wire 1/2 + endpoint 82 MOD and allocator, solve serialization with native USB mode worker, freshly verify target, and execute a bounded physical register/EP0/restore experiment before transferring frames. Host Sony UVC detection with PID 0caa and native JPEG/DMM producer remain open.
 
-Nema camera uploadova, modula, feeder procesa, promjene USB načina, SD ili
-trajnih zapisa. Ovo nije dokaz fizičkog UVC+PTP rada.
+No camera uploads, modules, feeder processes, USB mode change, SD, or persistent writes. This is not proof of physical UVC+PTP operation.

@@ -97,22 +97,22 @@ class SonyCameraApp(tk.Tk):
 
         # Tab 1: LCD Camera Simulator
         self.tab_lcd = tk.Frame(self.notebook, bg="#181818")
-        self.notebook.add(self.tab_lcd, text="  LCD Ekran Kamere  ")
+        self.notebook.add(self.tab_lcd, text="  Camera LCD Screen  ")
         self.build_lcd_tab()
 
         # Tab 2: Sony Icons Browser (1482 icons)
         self.tab_icons = tk.Frame(self.notebook, bg="#181818")
-        self.notebook.add(self.tab_icons, text="  Pregleda\u010d Ikona (1,482)  ")
+        self.notebook.add(self.tab_icons, text="  Icon Browser (1,482)  ")
         self.build_icons_tab()
 
         # Tab 3: UXC Scene Explorer
         self.tab_uxc = tk.Frame(self.notebook, bg="#181818")
-        self.notebook.add(self.tab_uxc, text="  UXC Ekrani (Layouts)  ")
+        self.notebook.add(self.tab_uxc, text="  UXC Screens (Layouts)  ")
         self.build_uxc_tab()
 
         # Tab 4: Audio Soundboard
         self.tab_sound = tk.Frame(self.notebook, bg="#181818")
-        self.notebook.add(self.tab_sound, text="  Zvu\u010dni Efekti  ")
+        self.notebook.add(self.tab_sound, text="  Sound Effects  ")
         self.build_sound_tab()
 
     # =========================================================================
@@ -173,7 +173,7 @@ class SonyCameraApp(tk.Tk):
         ).pack(side=tk.RIGHT, padx=2)
 
         # Parameter Adjusters
-        adj_frame = tk.LabelFrame(ctrl_frame, text=" Brza Pode\u0161avanja ", font=("Segoe UI", 9), fg="#cccccc", bg="#222222")
+        adj_frame = tk.LabelFrame(ctrl_frame, text=" Quick Settings ", font=("Segoe UI", 9), fg="#cccccc", bg="#222222")
         adj_frame.pack(fill=tk.X, padx=12, pady=15)
 
         # Shutter
@@ -297,7 +297,7 @@ class SonyCameraApp(tk.Tk):
 
         # Top 6 Tabs Bar
         tab_colors = ["#d93829", "#9b51e0", "#27ae60", "#2f80ed", "#f2994a", "#e2b93b"]
-        tab_names = ["1. Foto", "2. Movie", "3. Mre\u017ea", "4. Play", "5. Setup", "\u2605 Meni"]
+        tab_names = ["1. Photo", "2. Movie", "3. Network", "4. Play", "5. Setup", "\u2605 Menu"]
         tab_w = w // 6
 
         for i in range(6):
@@ -310,57 +310,57 @@ class SonyCameraApp(tk.Tk):
 
         # Sub-header page number
         c.create_rectangle(0, 45, w, 75, fill="#1a1a1a", outline="")
-        c.create_text(50, 60, text=f"Stranica {self.menu_page}/7", fill="#ffffff", font=("Helvetica", 10, "bold"))
+        c.create_text(50, 60, text=f"Page {self.menu_page}/7", fill="#ffffff", font=("Helvetica", 10, "bold"))
 
         # Menu content based on tab
         menus = {
             0: [
-                ("Format slike (Aspect Ratio)", "3:2"),
-                ("Kvalitet fotografije", "RAW & JPEG"),
-                ("Tip fokusa (Focus Mode)", self.focus_mode),
-                ("Fokusna oblast (Focus Area)", self.focus_area),
-                ("Pode\u0161avanje AF lica/o\u010diju", "Uklju\u010deno (Animal & Human)"),
-                ("ISO osetljivost", self.iso)
+                ("Aspect Ratio", "3:2"),
+                ("Image Quality", "RAW & JPEG"),
+                ("Focus Mode", self.focus_mode),
+                ("Focus Area", self.focus_area),
+                ("Face/Eye AF Set.", "On (Animal & Human)"),
+                ("ISO Sensitivity", self.iso)
             ],
             1: [
-                ("Format video zapisa", "XAVC S 4K (25p 100M)"),
-                ("Dvostruko snimanje", "Isklju\u010deno"),
-                ("S&Q Pode\u0161avanje", "100fps (4x Usporeno)"),
+                ("File Format (Movie)", "XAVC S 4K (25p 100M)"),
+                ("Dual Video REC", "Off"),
+                ("S&Q Settings", "100fps (4x Slow)"),
                 ("Picture Profile", self.profile),
-                ("Zebra prikaz", "Isklju\u010deno"),
-                ("Nivo snimanja zvuka", "26 dB")
+                ("Zebra Display", "Off"),
+                ("Audio Rec Level", "26 dB")
             ],
             2: [
-                ("Slanje na pametni telefon", "Povezivanje preko Wi-Fi"),
-                ("Kontrola sa pametnog telefona", "Uklju\u010deno"),
-                ("Bluetooth postavke", "Uparivanje (RMT-P1BT)"),
-                ("Ure\u0111ivanje naziva ure\u0111aja", "ILCE-6400"),
-                ("Poni\u0161ti Wi-Fi postavke", "Enter"),
-                ("Prikaz MAC adrese", "BC:6E:BF:.. (Broadcom)")
+                ("Send to Smartphone", "Connect via Wi-Fi"),
+                ("Ctrl w/ Smartphone", "On"),
+                ("Bluetooth Settings", "Pairing (RMT-P1BT)"),
+                ("Edit Device Name", "ILCE-6400"),
+                ("Reset Network Set.", "Enter"),
+                ("Display MAC Address", "BC:6E:BF:.. (Broadcom)")
             ],
             3: [
-                ("Za\u0161tita slika (Protect)", "Izaberi sliku"),
-                ("Rotiranje prikaza", "Automatski"),
-                ("Ocena (Rating)", "\u2605\u2605\u2605\u2605\u2605"),
-                ("Pove\u0107avanje (Enlarge Image)", "2.0x"),
-                ("Slajd \u0161ou", "Pokreni"),
-                ("Prikaz na TV ure\u0111aju", "HDMI 4K izlaz")
+                ("Protect", "Select Image"),
+                ("Rotate", "Auto"),
+                ("Rating", "\u2605\u2605\u2605\u2605\u2605"),
+                ("Enlarge Image", "2.0x"),
+                ("Slide Show", "Start"),
+                ("View on TV", "HDMI 4K Output")
             ],
             4: [
-                ("Osvetljenje monitora", "Ru\u010dno (+2)"),
-                ("Jezik (Language)", "OTKLJU\u010cANO: English / Srpski / Deutsch"),
-                ("USB Povezivanje (USB Mode)", "Mass Storage (MSC)"),
-                ("USB Napajanje (Power Supply)", "Uklju\u010deno"),
-                ("PAL / NTSC Izbor", "PAL (50Hz)"),
-                ("Verzija (Version)", "ILCE-6400 Ver. 2.00")
+                ("Monitor Brightness", "Manual (+2)"),
+                ("Language", "UNLOCKED: English / Serbian / Deutsch"),
+                ("USB Connection", "Mass Storage (MSC)"),
+                ("USB Power Supply", "On"),
+                ("PAL / NTSC Selector", "PAL (50Hz)"),
+                ("Version", "ILCE-6400 Ver. 2.00")
             ],
             5: [
-                ("Dodaj stavku u My Menu", "+ Dodaj"),
-                ("Sortiraj pre\u010dice", "Izmeni"),
-                ("Izbri\u0161i stavku", "Izaberi"),
-                ("Izbri\u0161i sve", "Poni\u0161ti"),
-                ("Prikaz sa My Menu", "Uklju\u010deno"),
-                ("Prazno polje", "-")
+                ("Add Item to My Menu", "+ Add"),
+                ("Sort Items", "Edit"),
+                ("Delete Item", "Select"),
+                ("Delete All", "Reset"),
+                ("Display From My Menu", "On"),
+                ("Empty Slot", "-")
             ]
         }
 
@@ -435,7 +435,7 @@ class SonyCameraApp(tk.Tk):
 
         info_lbl = tk.Label(
             top_bar,
-            text=f"Izvu\u010deni fajl: Sony_DI_Icons.ttf (Ukupno 1,482 glifa)",
+            text=f"Extracted file: Sony_DI_Icons.ttf (Total 1,482 glyphs)",
             font=("Segoe UI", 10, "bold"),
             fg="#ff7700",
             bg="#181818"
@@ -466,7 +466,7 @@ class SonyCameraApp(tk.Tk):
 
     def load_icons_preview(self):
         if not self.sony_icon_font:
-            lbl = tk.Label(self.scroll_frame, text="Sony_DI_Icons.ttf font nije pronađen.", fg="#ff4444", bg="#0d0d0d")
+            lbl = tk.Label(self.scroll_frame, text="Sony_DI_Icons.ttf font not found.", fg="#ff4444", bg="#0d0d0d")
             lbl.pack(pady=20)
             return
 
@@ -504,7 +504,7 @@ class SonyCameraApp(tk.Tk):
             if im.getbbox():
                 im.save(os.path.join(out_dir, f"icon_{code:04X}.png"))
                 count += 1
-        messagebox.showinfo("Uspeh", f"Uspešno izvezeno {count} ikona u folder:\n{out_dir}")
+        messagebox.showinfo("Success", f"Successfully exported {count} icons to folder:\n{out_dir}")
 
     # =========================================================================
     # TAB 3: UXC SCENE EXPLORER
@@ -516,7 +516,7 @@ class SonyCameraApp(tk.Tk):
         left = tk.Frame(container, bg="#181818", width=350)
         left.pack(side=tk.LEFT, fill=tk.Y, padx=5)
 
-        tk.Label(left, text="Spisak .uxc Ekrana (Scene Layouts):", font=("Segoe UI", 9, "bold"), fg="#ffffff", bg="#181818").pack(anchor=tk.W, pady=5)
+        tk.Label(left, text="List of .uxc Screens (Scene Layouts):", font=("Segoe UI", 9, "bold"), fg="#ffffff", bg="#181818").pack(anchor=tk.W, pady=5)
         
         self.uxc_listbox = tk.Listbox(left, bg="#111111", fg="#ffffff", selectbackground="#ff7700", font=("Consolas", 9), width=35)
         self.uxc_listbox.pack(fill=tk.BOTH, expand=True)
@@ -548,11 +548,11 @@ class SonyCameraApp(tk.Tk):
 
         self.uxc_details.delete("1.0", tk.END)
         self.uxc_details.insert(tk.END, f"=====================================================\n")
-        self.uxc_details.insert(tk.END, f" FAJL: {fn}\n")
-        self.uxc_details.insert(tk.END, f" Veličina: {len(data):,} bajtova\n")
-        self.uxc_details.insert(tk.END, f" Zaglavlje: {data[:16].hex()}\n")
+        self.uxc_details.insert(tk.END, f" FILE: {fn}\n")
+        self.uxc_details.insert(tk.END, f" Size: {len(data):,} bytes\n")
+        self.uxc_details.insert(tk.END, f" Header: {data[:16].hex()}\n")
         self.uxc_details.insert(tk.END, f"=====================================================\n\n")
-        self.uxc_details.insert(tk.END, f"--- Pronađeni tekstualni stringovi / Reference ---\n")
+        self.uxc_details.insert(tk.END, f"--- Found Text Strings / References ---\n")
         for s in strings[:40]:
             self.uxc_details.insert(tk.END, f"  > {s.decode('latin1', 'ignore')}\n")
 
@@ -564,7 +564,7 @@ class SonyCameraApp(tk.Tk):
         container.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
 
         tk.Label(
-            container, text="FABRI\u010cKI AUDIO EFEKTI KAMERE (avsystemsound)",
+            container, text="FACTORY CAMERA AUDIO EFFECTS (avsystemsound)",
             font=("Segoe UI", 11, "bold"), fg="#ff7700", bg="#181818"
         ).pack(anchor=tk.W, pady=5)
 

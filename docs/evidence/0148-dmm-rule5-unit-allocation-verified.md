@@ -1,27 +1,27 @@
 # E0148: DMM Rule 5 Activation and Native Unit Allocation Verified
 
-Datum: 2026-11-07.  
-Opseg: Sony ILCE-6400 (firmware 2.00, kernel 3.0.27_nl-rt106+).  
-Cilj: Provjeriti programsku aktivaciju DMM pravila 5 (`AllocRule 5`) i nativnu alokaciju jedinica `0x276` (JPEG sequence buffer) i `0x274` (JPEG frame buffer) na živoj kameri putem OSAL UIPC reda `0x0061003c`, uz cjelovit životni ciklus oslobađanja resursa i verifikaciju regresije.
+Date: 2026-11-07.  
+Scope: Sony ILCE-6400 (firmware 2.00, kernel 3.0.27_nl-rt106+).  
+Goal: Verify programmatic activation of DMM Rule 5 (`AllocRule 5`) and native allocation of units `0x276` (JPEG sequence buffer) and `0x274` (JPEG frame buffer) on the live camera via OSAL UIPC queue `0x0061003c`, with full resource release lifecycle and regression verification.
 
 ---
 
-## 1. DMM UIPC Protokol i Struktura Poruka (`QUEUE_DMM 0x0061003c`)
+## 1. DMM UIPC Protocol and Message Structure (`QUEUE_DMM 0x0061003c`)
 
-Dekompilacijom tablice `msg_hdlr` u kernel modulu `dmm.ko` (offset `0x80` u `.rodata`) i disasembliranjem upravljačkih funkcija utvrđen je točan binarni format poruka za komunikaciju preko `/dev/uipc`:
+Decompiling the `msg_hdlr` table in kernel module `dmm.ko` (offset `0x80` in `.rodata`) and disassembling handler functions established the exact binary message format for communication over `/dev/uipc`:
 
-1. **Zaglavlje i Raspored Polja Poruke**:
-   - `msg[-4]` (OSAL reply queue header): `reply_qid` (dinamički red dodijeljen putem `ioctl 0x8000000c`, op `0x2a`).
-   - `msg[0x00..0x01]` (`uint16_t`): Opcode naredbe.
-   - `msg[0x02..0x03]` (`uint16_t` ili `uint8_t`):
-     - Za `SetAllocRule` (20 / `0x14`): Broj pravila (`rule`, npr. 5 za Shooting / LiveView).
-     - Za `FreeUnit` (4 / `0x04`): Ručka jedinice (`handle`).
-   - `msg[0x04..0x07]` (`uint32_t`): `unit_type` (npr. `0x00000276` ili `0x00000274`) za `AllocUnitNew` i `GetUnitHandle`.
+1. **Header and Message Field Layout**:
+   - `msg[-4]` (OSAL reply queue header): `reply_qid` (dynamic queue allocated via `ioctl 0x8000000c`, op `0x2a`).
+   - `msg[0x00..0x01]` (`uint16_t`): Command opcode.
+   - `msg[0x02..0x03]` (`uint16_t` or `uint8_t`):
+     - For `SetAllocRule` (20 / `0x14`): Rule number (`rule`, e.g., 5 for Shooting / LiveView).
+     - For `FreeUnit` (4 / `0x04`): Unit handle (`handle`).
+   - `msg[0x04..0x07]` (`uint32_t`): `unit_type` (e.g., `0x00000276` or `0x00000274`) for `AllocUnitNew` and `GetUnitHandle`.
    - `msg[0x16..0x17]` (`uint16_t`):
-     - Za `SetAllocRule`: Način rada (`mode`: `0` = zamjena osnovnog pravila, `0x100` = push na stog, `0x101` = pop sa stoga).
-     - Za `AllocUnitNew`: Atributne zastavice (`flags`: `0`).
+     - For `SetAllocRule`: Mode (`mode`: `0` = replace base rule, `0x100` = push onto stack, `0x101` = pop from stack).
+     - For `AllocUnitNew`: Attribute flags (`flags`: `0`).
 
-2. **Podržani Opkodovi u `msg_hdlr`**:
+2. **Supported Opcodes in `msg_hdlr`**:
    - `[01]` (`0x01`): `dmm_ctrl_AllocUnitNewHdlr`
    - `[04]` (`0x04`): `dmm_ctrl_FreeUnitHdlr`
    - `[05]` (`0x05`): `dmm_ctrl_OpenUnitHdlr`
@@ -31,59 +31,59 @@ Dekompilacijom tablice `msg_hdlr` u kernel modulu `dmm.ko` (offset `0x80` u `.ro
 
 ---
 
-## 2. Fizička Verifikacija na Kameri
+## 2. Physical Verification on Camera
 
-Razvijeni su i pokrenuti samostalni ARM alati bez libc ovisnosti (`probe_dmm_rule_arm`, `test_single_jpeg_pipeline_arm`, `free_both_units_arm`) izravno u RAM direktoriju `/tmp_bt`:
+Standalone ARM tools without libc dependencies (`probe_dmm_rule_arm`, `test_single_jpeg_pipeline_arm`, `free_both_units_arm`) were developed and run directly in RAM directory `/tmp_bt`:
 
-1. **Provjera Stanja Prije Aktivacije**:
-   - `GetUnitHandle(0x276)`: vraća status `6`, ručka `0xffff` (odbijeno).
-   - `GetUnitHandle(0x274)`: vraća status `6`, ručka `0xffff` (odbijeno).
+1. **Pre-Activation State Check**:
+   - `GetUnitHandle(0x276)`: returns status `6`, handle `0xffff` (rejected).
+   - `GetUnitHandle(0x274)`: returns status `6`, handle `0xffff` (rejected).
    - `/proc/udm/dmm_rule`: `[0000]`.
 
-2. **Aktivacija Pravila 5 (`SetAllocRule(5, 0)`)**:
-   - `SetAllocRule(5, 0)` vraća status `0` (uspjeh).
-   - `/proc/udm/dmm_rule` prelazi u:
+2. **Rule 5 Activation (`SetAllocRule(5, 0)`)**:
+   - `SetAllocRule(5, 0)` returns status `0` (success).
+   - `/proc/udm/dmm_rule` transitions to:
      ```text
      Information on AllocRule.
      [0005] < ffff < ffff < ffff < ffff < ffff < ffff < ffff
      ```
 
-3. **Nativna Alokacija Jedinica pod Pravilom 5**:
-   - `AllocUnitNew(0x276, 0)`: vraća status `0`, ručka `0x08d0`.
-   - `AllocUnitNew(0x274, 0)`: vraća status `0`, ručka `0x08cd`.
-   - Očitanje `/proc/udm/dmm_units` potvrdilo je fizičko postojanje i točne adrese u RAM-u kamere:
+3. **Native Unit Allocation under Rule 5**:
+   - `AllocUnitNew(0x276, 0)`: returns status `0`, handle `0x08d0`.
+   - `AllocUnitNew(0x274, 0)`: returns status `0`, handle `0x08cd`.
+   - Reading `/proc/udm/dmm_units` confirmed physical existence and exact addresses in camera RAM:
      ```text
      08cd     00000274  0001    01     00    00    02      00000606  14000000  00040000  0390 < 0388 < 0153 < 0005
      08d0     00000276  0001    01     00    00    02      00000605  14300000  00200000  039c < 0388 < 0153 < 0005
      ```
-     - **Jedinica `0x274`**: fizička adresa `0x14000000`, veličina 256 KiB (`0x00040000`).
-     - **Jedinica `0x276`**: fizička adresa `0x14300000`, veličina 2 MiB (`0x00200000`).
-     - Obje jedinice pripadaju root extentu `0005` (96 MB na `0x14000000`).
+     - **Unit `0x274`**: physical address `0x14000000`, size 256 KiB (`0x00040000`).
+     - **Unit `0x276`**: physical address `0x14300000`, size 2 MiB (`0x00200000`).
+     - Both units belong to root extent `0005` (96 MB at `0x14000000`).
 
-4. **Čisto Oslobađanje Resursa i Vraćanje u Početno Stanje**:
-   - `FreeUnit(0x08cd)` i `FreeUnit(0x08d0)` izvršeni putem `free_both_units_arm`.
-   - `/proc/udm/dmm_units` potvrđeno potpuno čist (0 zaostalih ručki).
-   - `SetAllocRule(0, 0)` vratio je `AllocRule` na `[0000]`.
+4. **Clean Resource Release and Restoration to Initial State**:
+   - `FreeUnit(0x08cd)` and `FreeUnit(0x08d0)` executed via `free_both_units_arm`.
+   - `/proc/udm/dmm_units` confirmed completely clean (0 leftover handles).
+   - `SetAllocRule(0, 0)` restored `AllocRule` to `[0000]`.
 
 ---
 
-## 3. Nalazi o Sinkronizaciji Video Cjevovoda (`Sugilite` ISP)
+## 3. Video Pipeline Synchronization Findings (`Sugilite` ISP)
 
-1. Prilikom slanja `SET_PATH start (1280x720, 30 FPS)` u Mass Storage načinu rada:
-   - Dretva 355 (`THREAD_INFRA0`) komunicira s ISP drajverom putem `sugilite_ioctl`.
-   - Inicijalizacija hardvera zahtijeva dulje od 800 ms. Preuranjeni prekid klijentskog procesa uzrokuje dmesg grešku:
+1. When sending `SET_PATH start (1280x720, 30 FPS)` in Mass Storage mode:
+   - Thread 355 (`THREAD_INFRA0`) communicates with the ISP driver via `sugilite_ioctl`.
+   - Hardware initialization takes longer than 800 ms. Premature termination of the client process causes a dmesg error:
      ```text
      [K]**UIPC ERROR** osal_snd_msg: snd to invalid qid 02d96104 != 00000000 @ 635dd483
      ```
-   - Za pouzdan rad klijentski timeout za `SET_PATH start` mora biti postavljen na minimalno 3000 ms.
+   - For reliable operation, the client timeout for `SET_PATH start` must be set to at least 3000 ms.
 
 ---
 
-## 4. Regresijska Verifikacija
+## 4. Regression Verification
 
-- Cjelokupni skup testova emulatora uspješno je izvršen:
+- Full emulator test suite executed successfully:
   ```text
   Ran 599 tests in 15.092s - OK
   ```
-- Fizička kamera: Mass Storage način rada, debugger PID 703 responzivan, `/proc/udm/dmm_units` čist, nema curenja memorije.
-- Svi zapisi na kameri i dalje strogo ograničeni na RAM `/tmp_bt`.
+- Physical camera: Mass Storage mode, debugger PID 703 responsive, `/proc/udm/dmm_units` clean, no memory leaks.
+- All camera writes remain strictly limited to RAM `/tmp_bt`.

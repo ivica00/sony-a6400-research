@@ -1,183 +1,183 @@
-# Vodič i radni tok (Workflow) za poboljšanje Sony ILCE-6400 emulatora
+# Sony ILCE-6400 Emulator Enhancement Guide and Workflow
 
-Ovaj dokument definira službeni, ponovljivi i strogo verificirani radni tok za razvoj i poboljšavanje emulatora fotoaparata Sony ILCE-6400.
+This document defines the official, repeatable, and strictly verified workflow for developing and improving the Sony ILCE-6400 camera emulator.
 
-Cilj je stvoriti zatvorenu povratnu petlju (feedback loop): kada emulator tijekom izvođenja originalnog firmwarea (`im.elf`) naiđe na nepoznatu funkciju, sistemski poziv, `ioctl` kod ili neimplementirani uređaj, rješenje se pronalazi izravno iz **žive telemetrije stvarnog hardvera**.
+The goal is to establish a closed feedback loop: whenever the emulator encounters an unknown function, system call, `ioctl` code, or unimplemented device while executing original firmware (`im.elf`), the solution is derived directly from **live telemetry of real hardware**.
 
 ---
 
-## 1. Arhitektura radnog toka (Dijagram toka)
+## 1. Workflow Architecture (Flowchart)
 
 ```mermaid
 flowchart TD
-    A["Emulator izvršava originalni firmware (im.elf)"] --> B{"Emulator stane na nepoznatoj funkciji / syscall / ioctl"}
+    A["Emulator executes original firmware (im.elf)"] --> B{"Emulator stops at unknown function / syscall / ioctl"}
     
-    B --> C["1. Provjera postojećeg očitavanja<br/>(reports/a6400_hw_dump.txt & docs/evidence/)"]
+    B --> C["1. Check existing capture<br/>(reports/a6400_hw_dump.txt & docs/evidence/)"]
     
-    C --> D{"Podatak već postoji u telemetriji?"}
+    C --> D{"Does the data already exist in telemetry?"}
     
-    D -- "DA" --> E["Direktna implementacija točnog ugovora u src/a6400/"]
+    D -- "YES" --> E["Directly implement the exact contract in src/a6400/"]
     
-    D -- "NE" --> F["2. Priprema novog očitavanja na fizičkoj kameri"]
-    F --> G["Kamera spojena preko USB-a u Mass Storage modu"]
-    G --> H["Deploy dijagnostičke sonde preko Senser protokola<br/>(tools/deploy_hw_dump.py / tools/deploy_autoexec.py)"]
-    H --> I["Korisnik na 5 sekundi upali kameru (odspojen USB)"]
-    I --> J["autoexec_hook.so izvršava sondu i sprema dump u /tmp/"]
-    J --> K["Kamera ponovno spojena na USB (Mass Storage)"]
-    K --> L["Povlačenje novog dumpa na PC pomoću tools/fast_read_dump.py"]
-    L --> M["Čišćenje kamere pomoću tools/restore_clean_camera.py"]
+    D -- "NO" --> F["2. Prepare new capture on physical camera"]
+    F --> G["Camera connected via USB in Mass Storage mode"]
+    G --> H["Deploy diagnostic probe via Senser protocol<br/>(tools/deploy_hw_dump.py / tools/deploy_autoexec.py)"]
+    H --> I["User powers on camera for 5 seconds (USB unplugged)"]
+    I --> J["autoexec_hook.so executes probe and saves dump to /tmp/"]
+    J --> K["Camera reconnected to USB (Mass Storage)"]
+    K --> L["Pull new dump to PC using tools/fast_read_dump.py"]
+    L --> M["Clean camera using tools/restore_clean_camera.py"]
     M --> E
     
-    E --> N["3. Pisanje regresijskog testa (tests/test_...)"]
-    N --> O["Verifikacija suitea (python -m unittest discover tests)"]
-    O --> P["Izvođenje emulatora napreduje do sljedeće granice!"]
+    E --> N["3. Write regression test (tests/test_...)"]
+    N --> O["Verify test suite (python -m unittest discover tests)"]
+    O --> P["Emulator execution advances to the next boundary!"]
     P --> A
 ```
 
 ---
 
-## 2. Faza 1: Provjera postojećeg očitavanja (Ground Truth baza)
+## 2. Phase 1: Checking Existing Captures (Ground Truth Baseline)
 
-Prije pokretanja novog očitanja na kameri, uvijek prvo provjeravamo već izvučene podatke. U datoteci `reports/a6400_hw_dump.txt` nalazi se **88.415 bajtova (1.562 linije)** čistih podataka izvučenih izravno s fizičkog Sony ILCE-6400:
+Before running a new capture on the camera, always check already-extracted data first. The file `reports/a6400_hw_dump.txt` contains **88,415 bytes (1,562 lines)** of clean data extracted directly from a physical Sony ILCE-6400:
 
-### Dostupni podaci u postojećem dumpu:
-1. **Registar uređaja (`/proc/devices` i `/dev`):**
-   * Prikazuje točne **major i minor** brojeve za sve Sony vlasničke drivere:
-     * `/dev/dmpgles2`: Character major **248**, minor **29** (GPU Sugilite)
-     * `/dev/hdmi`: Character major **248**, minor **25** (HDMI kontroler)
+### Available data in the existing dump:
+1. **Device registry (`/proc/devices` and `/dev`):**
+   * Shows exact **major and minor** numbers for all Sony proprietary drivers:
+     * `/dev/dmpgles2`: Character major **248**, minor **29** (Sugilite GPU)
+     * `/dev/hdmi`: Character major **248**, minor **25** (HDMI controller)
      * `/dev/hdmi_external_tx`: Character major **248**, minor **26**
      * `/dev/hdmi_input`: Character major **248**, minor **30**
-     * `/dev/gpio`: Character major **240**, minor **0** (GPIO sabirnica)
-     * `/dev/stream`: Character major **249**, minor **7** (VRAM / OSD međuspremnici)
-     * `/dev/mmca1`: Block major **250**, minor **11** (SD kartica)
+     * `/dev/gpio`: Character major **240**, minor **0** (GPIO bus)
+     * `/dev/stream`: Character major **249**, minor **7** (VRAM / OSD buffers)
+     * `/dev/mmca1`: Block major **250**, minor **11** (SD card)
      * `/dev/usb/otgcore`: Character major **242**, minor **2**
      * `/dev/usb/event`: Character major **242**, minor **0**
-2. **Raspodjela fizičke memorije (`/proc/iomem` i `/proc/cmdline`):**
-   * Točna arhitektura: Quad-Core Cortex-A5 (CXD90045) s **1.25 GB fizičkog RAM-a**:
-     * Banka 0: `0x00000000 - 0x3fffffff` (1 GB)
-     * Banka 1: `0x80000000 - 0x8fffffff` (256 MB)
-   * Rezervirani nekachirani CMA rasponi:
+2. **Physical memory layout (`/proc/iomem` and `/proc/cmdline`):**
+   * Exact architecture: Quad-Core Cortex-A5 (CXD90045) with **1.25 GB physical RAM**:
+     * Bank 0: `0x00000000 - 0x3fffffff` (1 GB)
+     * Bank 1: `0x80000000 - 0x8fffffff` (256 MB)
+   * Reserved uncached CMA ranges:
      * `0x14000000` (704 MB CMA)
      * `0x80e00000` (242 MB CMA)
-3. **Učitani kernel moduli (`/proc/modules` / `lsmod`):**
-   * Kompletan popis aktivnih modula: `devno`, `mmc_drv`, `mcmn_drv`, `usbg_buspower`, `usb_darwin`, `hdmi`, itd.
-4. **Adresni prostor glavnog procesa (`/proc/149/maps` za `im.elf`):**
-   * Točna lokacija svih dijeljenih biblioteka u memoriji (`libObj.so` na VA `0x05d18000`).
-   * Primarni Sugilite VRAM stream na VA `0x08a5f000 - 0x0aa5f000` (fizički PA `0x202e0000`, točno 32 MiB).
-   * OSD međuspremnici na PA `0x23a80000` i `0x23b16000` (RGBA4444 format).
+3. **Loaded kernel modules (`/proc/modules` / `lsmod`):**
+   * Complete list of active modules: `devno`, `mmc_drv`, `mcmn_drv`, `usbg_buspower`, `usb_darwin`, `hdmi`, etc.
+4. **Main process address space (`/proc/149/maps` for `im.elf`):**
+   * Exact location of all shared libraries in memory (`libObj.so` at VA `0x05d18000`).
+   * Primary Sugilite VRAM stream at VA `0x08a5f000 - 0x0aa5f000` (physical PA `0x202e0000`, exactly 32 MiB).
+   * OSD buffers at PA `0x23a80000` and `0x23b16000` (RGBA4444 format).
 5. **Kernel dmesg log:**
-   * Cjeloviti slijed podizanja hardvera, inicijalizacija taktova, senzora i sabirnica.
+   * Complete hardware bring-up sequence, clock initialization, sensors, and buses.
 
 ---
 
-## 3. Faza 2: Protokol za novo očitavanje s fizičke kamere
+## 3. Phase 2: Protocol for a New Capture from the Physical Camera
 
-Kada emulator naiđe na podatak koji se ne nalazi u postojećem dumpu (npr. sadržaj specifične C strukture u RAM-u, odgovor na točno određeni `ioctl`, očitanje specifičnog MMIO registra ili UIPC red čekanja):
+When the emulator encounters data not present in the existing dump (e.g., contents of a specific C struct in RAM, response to a specific `ioctl`, reading a specific MMIO register, or a UIPC queue):
 
-Kamera je spojena na PC putem USB kabela i nalazi se u standardnom **Mass Storage modu**. Nije potrebno vaditi SD karticu!
+The camera is connected to the PC via USB cable in standard **Mass Storage mode**. There is no need to remove the SD card!
 
-### Korak 2.1: Priprema dijagnostičke sonde
-Kreiramo ciljanu skriptu unutar `tools/` (ili privremeni C program kompajliran pomoću `tools/build.sh` u ARM binary).
+### Step 2.1: Preparing the diagnostic probe
+Create a targeted script under `tools/` (or a temporary C program compiled using `tools/build.sh` into an ARM binary).
 
-*Primjer predloška za `autoexec.sh` sondu:*
+*Example template for an `autoexec.sh` probe:*
 ```sh
 #!/bin/sh
 export PATH=/usr/bin:/bin:/sbin:/usr/sbin:/tmp
 
 OUT="/tmp/diag_result.txt"
-echo "=== CILJANO DIJAGNOSTICKO OCITANJE ===" > "$OUT"
+echo "=== TARGETED DIAGNOSTIC CAPTURE ===" > "$OUT"
 
-# 1. Primjer: Ocitavanje specificnih ioctl ili sysfs parametara
+# 1. Example: Reading specific ioctl or sysfs parameters
 # cat /sys/class/... >> "$OUT" 2>&1
 
-# 2. Primjer: Ocitavanje stanja dretve ili procesa
+# 2. Example: Reading thread or process state
 # cat /proc/$(pidof im.elf)/status >> "$OUT" 2>&1
 
-# 3. Primjer: Izvrsavanje ciljanog ARM testnog binaryja
+# 3. Example: Executing a targeted ARM test binary
 # /tmp/my_probe >> "$OUT" 2>&1
 
 sync
 rm -f /tmp/autoexec.lock
 ```
 
-### Korak 2.2: Učitavanje sonde na kameru preko USB-a
-Pokrećemo skriptu za slanje preko `Sony-PMCA-RE` Senser protokola:
+### Step 2.2: Deploying the probe to the camera over USB
+Run the deployment script via the `Sony-PMCA-RE` Senser protocol:
 ```powershell
 python tools/deploy_autoexec.py
 ```
-* **Što se događa:** Skripta automatski prepoznaje kameru u Mass Storage modu, šalje Sony Vendor naredbu za prebacivanje u Senser način rada, zapisuje sondu u flash memoriju (`/tmp/autoexec.sh`), postavlja `/etc/ld.so.preload` na `/tmp/autoexec_hook.so` i briše lock datoteku.
+* **What happens:** The script automatically detects the camera in Mass Storage mode, sends the Sony Vendor command to switch to Senser mode, writes the probe into flash memory (`/tmp/autoexec.sh`), sets `/etc/ld.so.preload` to `/tmp/autoexec_hook.so`, and removes the lock file.
 
-### Korak 2.3: Izvršavanje na kameri (5 sekundi)
-1. Odspojite USB kabel ili ugasite kameru.
-2. Upalite kameru na 5 sekundi.
-3. Tijekom podizanja Linuxa, `autoexec_hook.so` presreće inicijalizaciju i u pozadini izvršava `autoexec.sh`.
-4. Rezultati se trenutno zapisuju u `/tmp/diag_result.txt` (ili binarni dump).
-5. Ugasite kameru i ponovno je spojite USB kabelom na računalo u Mass Storage mod.
+### Step 2.3: Execution on the camera (5 seconds)
+1. Unplug the USB cable or power off the camera.
+2. Power on the camera for 5 seconds.
+3. During Linux boot, `autoexec_hook.so` intercepts initialization and runs `autoexec.sh` in the background.
+4. Results are written immediately to `/tmp/diag_result.txt` (or a binary dump).
+5. Power off the camera and reconnect it via USB cable to the PC in Mass Storage mode.
 
-### Korak 2.4: Brzo povlačenje rezultata na računalo
-Pokrećemo zakrpani brzi čitač koji povlači datoteku bez zastoja:
+### Step 2.4: Fast retrieval of results to the PC
+Run the patched fast reader to pull the file without stalling:
 ```powershell
 python tools/fast_read_dump.py
 ```
-* **Rezultat:** Datoteka se trenutno sprema na host računalo u mapu `reports/`.
+* **Result:** The file is saved immediately to the host PC in the `reports/` directory.
 
-### Korak 2.5: Vraćanje kamere u čisto stanje (Sigurnosni standard)
-Nakon što su podaci povučeni, flash memorija kamere se vraća u čisti standby mod:
+### Step 2.5: Restoring the camera to a clean state (Safety Standard)
+After the data has been retrieved, restore the camera's flash memory to a clean standby state:
 ```powershell
 python tools/restore_clean_camera.py
 ```
-* Brišu se privremeni binarni moduli, dumpovi i logovi, a `autoexec.sh` se postavlja u neutralno stanje.
+* Temporary binary modules, dumps, and logs are deleted, and `autoexec.sh` is reset to a neutral state.
 
 ---
 
-## 4. Faza 3: Implementacija i verifikacija u emulatoru
+## 4. Phase 3: Implementation and Verification in the Emulator
 
-Nakon što imamo autentičan podatak s fizičkog hardvera, prelazimo na kod emulatora:
+Once we have authentic data from physical hardware, we move to the emulator code:
 
-### 4.1. Gdje implementirati ugovor
-* **Novi virtualni uređaj / character driver:**
-  * Dodati u `src/a6400/hardware/` (npr. `guest_hdmi.py`, `guest_gpio.py`, `guest_stream.py`).
-  * Povezati registraciju u `GuestKernel` s točnim brojevima `major` i `minor` iz `/proc/devices`.
-* **Sistemski poziv / ioctl:**
-  * Implementirati unutar odgovarajućeg `ioctl` handlera u driveru.
-  * Koristiti točne binarne strukture (`ctypes` ili `struct.unpack`) prema standardu ARM EABI.
-* **Memorijske mape i VRAM:**
-  * Konfigurirati točne fizičke i virtualne adrese u `GuestMemory` i `GuestStream`.
+### 4.1. Where to implement the contract
+* **New virtual device / character driver:**
+  * Add under `src/a6400/hardware/` (e.g., `guest_hdmi.py`, `guest_gpio.py`, `guest_stream.py`).
+  * Wire registration in `GuestKernel` with the exact `major` and `minor` numbers from `/proc/devices`.
+* **System call / ioctl:**
+  * Implement inside the corresponding `ioctl` handler in the driver.
+  * Use exact binary structures (`ctypes` or `struct.unpack`) according to the ARM EABI standard.
+* **Memory maps and VRAM:**
+  * Configure exact physical and virtual addresses in `GuestMemory` and `GuestStream`.
 
-### 4.2. Pravilo integriteta (Zero Guesswork)
-* **Zabranjeno je:** Izmišljati ponašanje, pogađati povratne kodove ili stavljati generičke "dummy" odgovore ako nisu potvrđeni telemetrijom ili disasembliranjem koda firmwarea.
-* **Obavezno je:** Svaku odluku potkrijepiti referencom na liniju iz `reports/a6400_hw_dump.txt` ili odgovarajući Evidence dokument.
+### 4.2. Integrity rule (Zero Guesswork)
+* **Forbidden:** Inventing behavior, guessing return codes, or inserting generic "dummy" responses unless confirmed by telemetry or firmware disassembly.
+* **Mandatory:** Back every decision with a reference to a line in `reports/a6400_hw_dump.txt` or a corresponding Evidence document.
 
-### 4.3. Testiranje i verifikacija
-Svaki novi ugovor mora imati odgovarajući jedinični test u mapi `tests/`.
+### 4.3. Testing and verification
+Every new contract must have a corresponding unit test in `tests/`.
 
-Pokretanje kompletnog testnog skupa:
+Run the full test suite:
 ```powershell
 python -m unittest discover tests
 ```
-* Svih 506+ testova mora prolaziti bez grešaka (`OK`).
+* All 506+ tests must pass without errors (`OK`).
 
-### 4.4. Dokumentiranje napretka
-1. Kreirati novi zapis u `docs/evidence/` (npr. `0075-...md`) s opisom:
-   * Što je bila prepreka / nepoznata funkcija.
-   * Kako je podatak očitan sa stvarnog hardvera.
-   * Što je implementirano u emulatoru.
-   * Do kojeg broja instrukcija je izvođenje emulatora napredovalo.
-2. Ažurirati `AGENTS.md` s najnovijim milestoneom.
+### 4.4. Documenting progress
+1. Create a new record in `docs/evidence/` (e.g., `0075-...md`) describing:
+   * What the obstacle / unknown function was.
+   * How the data was read from real hardware.
+   * What was implemented in the emulator.
+   * To what instruction count emulator execution advanced.
+2. Update `AGENTS.md` with the latest milestone.
 
 ---
 
-## 5. Trenutni prioritetni zadatak: Implementacija `/dev/hdmi`
+## 5. Current Priority Task: Implementing `/dev/hdmi`
 
-Slijedeći ovaj workflow, prvi zadatak je deblokada granice od **85.766.715 instrukcija** gdje je emulator stao na `open("/dev/hdmi", O_RDWR)`:
+Following this workflow, the first task is unblocking the **85,766,715-instruction** boundary where the emulator stopped on `open("/dev/hdmi", O_RDWR)`:
 
-1. **Provjera u postojećem dumpu:**
-   * U `reports/a6400_hw_dump.txt` linija 396 potvrđuje:
+1. **Check in existing dump:**
+   * In `reports/a6400_hw_dump.txt` line 396 confirms:
      `crw-rw-rw- 1 root root 248, 25 /dev/hdmi`
-2. **Implementacija:**
-   * Kreirati `src/a6400/hardware/guest_hdmi.py` s registracijom major 248, minor 25.
-   * Podržati `open(O_RDWR)`, `fcntl(FD_CLOEXEC)`, `close` i osnovne ioctl pozive.
+2. **Implementation:**
+   * Create `src/a6400/hardware/guest_hdmi.py` registering major 248, minor 25.
+   * Support `open(O_RDWR)`, `fcntl(FD_CLOEXEC)`, `close`, and basic ioctl calls.
 3. **Test:**
-   * Napisati `tests/test_guest_hdmi.py`.
-4. **Izvršavanje:**
-   * Pokrenuti firmware i zabilježiti prelazak granice od 85.8M instrukcija.
+   * Write `tests/test_guest_hdmi.py`.
+4. **Execution:**
+   * Run the firmware and record crossing the 85.8M instruction boundary.

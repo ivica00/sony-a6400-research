@@ -1,35 +1,35 @@
-# E0175 — MOD omotač izvornog ioctl-a i zadržavanje aktivnog ulaza
+# E0175 — MOD Wrapper of Original ioctl and Active Entry Retention
 
-Datum: 2026-11-08. Offline implementacija. Kamera nije kontaktirana. Produkcijski modul E0164 nije mijenjan.
+Date: 2026-11-08. Offline implementation. Camera was not contacted. Production module E0164 was not modified.
 
-## Kod
+## Code
 
-`tools/native_camera/uvc_ptp_ioctl_guard.{c,h}` povezuje atomski gate E0174 s pozivom stvarne izvorne ioctl funkcije. Kontekst sadrži gate, nepromjenjivi originalni function pointer i zapamćenu grešku. Omotač:
+`tools/native_camera/uvc_ptp_ioctl_guard.{c,h}` connects the E0174 atomic gate with calling the real original ioctl function. The context contains the gate, an immutable original function pointer, and a latched error. The wrapper:
 
-1. Provjerava kontekst, originalni cilj i prethodnu grešku.
-2. Uđe kroz mode_enter prije izvornog poziva.
-3. Proslijedi file/command/arg u izvornu funkciju.
-4. Pozove mode_leave tek nakon njezina povratka i očuva izvorni rezultat.
-5. Ako leave ne uspije, zapamti grešku i odbije buduće izvorne pozive, MOD claim i release. Izvorna operacija tada se već mogla dogoditi: ta pogreška ne znači da je sve vraćeno.
+1. Checks the context, original target, and previous error.
+2. Enters through `mode_enter` before the original call.
+3. Forwards `file/command/arg` to the original function.
+4. Calls `mode_leave` only after its return and preserves the original result.
+5. If leave fails, latches the error and rejects future original calls, MOD claim, and release. The original operation might have already occurred at that point: that error does not mean everything was rolled back.
 
-Ovo je MOD upravljanje pristupom. Ne zamjenjuje Sonyjeve odluke niti implementira prepoznavanje, video ili kontrole na hostu. Funkcija prima eksplicitni kontekst; nije objavljena kao native file_operations callback i ne mijenja kameru.
+This is MOD access control. It does not replace Sony's decisions nor implement recognition, video, or controls on the host. The function takes an explicit context; it is not published as a native `file_operations` callback and does not modify the camera.
 
-## Izgradnja i izvršenje
+## Build and Execution
 
 `python -m tools.research.build_uvc_ptp_mode_gate --ioctl-guard --output-dir artifacts/native/uvc-ptp-ioctl-guard-e0175`
 
-Builder prevede oba MOD C dijela za ARMv7 softfp bez libc/uvoza. Izvršava stvarni prevedeni kod i odabrana originalna kernel tijela `usb_gadgetcore_ioctl` / test-and-set-bit iz SHA-provjerenog kernela `12eeec829407595e28265f7d0db3b88c56f63a9f0fdd725c9c53c66a49643707`.
+The builder compiles both MOD C parts for ARMv7 softfp without libc/imports. It executes the real compiled code and selected original kernel bodies `usb_gadgetcore_ioctl` / test-and-set-bit from SHA-verified kernel `12eeec829407595e28265f7d0db3b88c56f63a9f0fdd725c9c53c66a49643707`.
 
-**42 provjere prolaze**: ranijih 28 i 14 dodatnih za omotač. Nepoznata originalna naredba očuva -25; commit dok je izvorni active bit postavljen očuva -16 i njegove flags. Ti izvorni putovi ne zovu kontroler ni copy servise.
+**42 checks pass**: the earlier 28 and 14 additional checks for the wrapper. An unknown original command preserves `-25`; commit while the original active bit is set preserves `-16` and its flags. Those original paths do not call controller or copy services.
 
-Pokus se zaustavlja na ulazu originalne funkcije nakon što je omotač povećao count. Stvarni emulirani CPU kontekst ostaje sačuvan. Na odvojenom stogu MOD claim vraća busy. Nakon obnove konteksta originalna funkcija završi, omotač smanji count na nulu i očuva njezin rezultat. To potvrđuje trajanje pristupa kroz povratak izvorne funkcije; nije fizički multicore pokus.
+The test stops at entry to the original function after the wrapper incremented the count. The actual emulated CPU context remains preserved. On a separate stack, MOD claim returns busy. After restoring context, the original function finishes, the wrapper decrements the count to zero, and preserves its result. This confirms access duration across return of the original function; it is not a physical multicore test.
 
-Zasebni eksplicitni fault-injection fixture ukloni admission count dok izvorna funkcija radi. Leave to odbije, a omotač zapamti grešku i blokira dispatch/claim/release. Null kontekst i null original također se odbijaju. Fixture korupcija nije opažena kamera pogreška i ne predstavlja kompatibilnost Sonyjeva koda.
+A separate explicit fault-injection fixture clears the admission count while the original function is running. Leave rejects this, and the wrapper latches the error and blocks dispatch/claim/release. Null context and null original are also rejected. Fixture corruption is not an observed camera error and does not represent Sony code compatibility.
 
-Manifest: `artifacts/native/uvc-ptp-ioctl-guard-e0175/manifest.json`; ELF: `mode-gate.elf` u istoj mapi; zapis: `artifacts/uvc-ptp-ioctl-guard-e0175.log`. Manifest sadrži hashove obaju C/header dijelova, ELF-a i kernel identitet. Provjerena je Python sintaksa buildera.
+Manifest: `artifacts/native/uvc-ptp-ioctl-guard-e0175/manifest.json`; ELF: `mode-gate.elf` in the same folder; log: `artifacts/uvc-ptp-ioctl-guard-e0175.log`. The manifest contains hashes of both C/header parts, the ELF, and the kernel identity. Python syntax of the builder was verified.
 
-## Otvorena granica za postavljanje
+## Open Boundary for Deployment
 
-`integrated:false` ostaje namjeran. Native slot 0x604e5098 potvrđen je u E0174, ali zamjena njegova pokazivača sama nije dokaz sigurne objave: postojeći poziv mogao je već učitati staru adresu. Moraju biti riješeni postojeći stari ulazi, trajanje wrapper koda/konteksta, njegovo kasnije uklanjanje i svi drugi izravni USB ulazi. `stop_machine` ili proizvoljno čekanje ne smiju se bez dokaza proglasiti završenim callback drainom.
+`integrated:false` remains intentional. Native slot `0x604e5098` was confirmed in E0174, but replacing its pointer alone is not proof of safe publication: an existing call could have already loaded the old address. Existing old entries, lifetime of wrapper code/context, its later removal, and all other direct USB entries must be resolved. `stop_machine` or arbitrary waiting must not be declared a completed callback drain without proof.
 
-Nijedna funkcija ovih novih datoteka ne instalira hook, ne uklanja hook i ne tvrdi da je native EP0/gadget završen. Sigurna objava i native callback drain ostaju konkretne prepreke fizičkom aktiviranju. E0164 `.ko` nije ponovno građen jer mu ovi dijelovi još nisu pridruženi; zadnja puna projektna regresija ostaje 605 testova, uz navedene nove ciljane ARM provjere.
+No function in these new files installs a hook, removes a hook, or claims that native EP0/gadget is finished. Safe publication and native callback drain remain concrete blockers to physical activation. E0164 `.ko` was not rebuilt because these parts are not yet attached to it; the last full project regression remains 605 tests, alongside the new targeted ARM checks listed above.

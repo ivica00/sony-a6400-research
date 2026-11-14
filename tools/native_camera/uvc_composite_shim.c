@@ -693,7 +693,7 @@ static int a6400_uvc_commit_descriptors(void)
     /* 6. Start controller in Single-Function mode (is_dual = 0 -> GCW_STATE_SINGLE = 2) */
     ((int (*)(unsigned char))0x602bd7f8u)(0);
 
-    /* 7. Kirurški omogući EP0 i naoružaj SETUP TRB koji je pullup(0) ugasio! */
+    /* 7. Surgically enable EP0 and arm the SETUP TRB that pullup(0) cleared. */
     a6400_arm_ep0(dwc);
 
     /* 7.5. Hook make_config_desc to inject IADs for Windows usbccgp / usbvideo */
@@ -782,7 +782,7 @@ static int a6400_uvc_restore_descriptors(void)
     /* 4. Start controller in saved mode */
     ((int (*)(unsigned char))0x602bd7f8u)(g_saved_byte_84);
 
-    /* 5. Naoružaj EP0 za Mass Storage! */
+    /* 5. Arm EP0 for Mass Storage. */
     a6400_arm_ep0(dwc);
 
     /* 6. Raise D+ for Mass Storage */

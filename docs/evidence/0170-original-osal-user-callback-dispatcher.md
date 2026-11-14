@@ -1,51 +1,51 @@
-# E0170 — Izvorni OSAL izvršitelj korisničkih povratnih poziva
+# E0170 — Original OSAL User Callback Dispatcher
 
-Datum: 2026-11-08. Offline nastavak E0169. Bez pristupa kameri i promjena produkcijskog modula.
+Date: 2026-11-08. Offline continuation of E0169. No camera access or production module changes.
 
-## Izvori i izvršenje
+## Sources and Execution
 
-Novi `tools/research/probe_uvc_ptp_osal_dispatch.py` izvršava originalni registracijski put u a6400 libosal_uipc.so, originalni callback worker i originalni registrirani USB callback iz libUsbControl.so u zasebnoj adresnoj regiji. Obje biblioteke i ELF relokacije provjerene su prije izvršenja.
+The new `tools/research/probe_uvc_ptp_osal_dispatch.py` executes the original registration path in a6400 `libosal_uipc.so`, the original callback worker, and the original registered USB callback from `libUsbControl.so` in a separate address region. Both libraries and ELF relocations were verified before execution.
 
-| Izvor | SHA-256 |
+| Source | SHA-256 |
 |---|---|
 | libosal_uipc.so | b6ded35add9582413b401cf4db78ec2c9a201b632e78c2731d6bbb379249b3eb |
 | libUsbControl.so | 70cd5742fde9eea78c60905e4015531b4c3ab2668d2cb85c934531f451f1211f |
 
-## Registracija Sonyjeve obavijesti
+## Sony Notification Registration
 
-Originalni osal_reg_msg_queue_cb na 0x4301 provjerava bit 0x8000 ID-a. Za stvarni statički ID iz E0169, 0x00e942cd, bit nije postavljen: originalni kod odlazi u u_osal_reg_msg_queue_cb na 0x2749, a ne u lokalni callback-list put.
+Original `osal_reg_msg_queue_cb` at `0x4301` checks bit `0x8000` of the ID. For the actual static ID from E0169, `0x00e942cd`, the bit is not set: the original code goes to `u_osal_reg_msg_queue_cb` at `0x2749`, rather than the local callback-list path.
 
-Taj put priprema ioctl 0x80000008: vanjski par je `{queue_id, pointer_to_stack_fields}`, a unutarnji podaci `{output_handle_pointer, callback_pointer, user_argument, 0}`. Pokus provjerava točan ID, callback, argument i oblik paketa te staje prije ioctl servisa. Registracija u kernelu i stvaranje worker dretve nisu izvršeni.
+That path prepares ioctl `0x80000008`: the outer pair is `{queue_id, pointer_to_stack_fields}`, and the inner data is `{output_handle_pointer, callback_pointer, user_argument, 0}`. The test verifies the exact ID, callback, argument, and packet layout, and stops before the ioctl service. Kernel registration and worker thread creation were not executed.
 
-Negativni lokalni ID i lokalni ID s null callbackom vraćaju 0xfffffc00 iz originalnih guardova. To su odvojene negativne provjere; ne predstavljaju pogrešku na stvarnom Sonyjevu ID-u.
+Negative local ID and local ID with a null callback return `0xfffffc00` from original guards. These are separate negative checks; they do not represent an error on the real Sony ID.
 
 ## Worker
 
-Statički izvorni put na 0x1c58..0x1c66 priprema pthread_create i izračuna start rutinu 0x2031. Provjereni su stvarna PLT relokacija za pthread_create i literal koji daje start adresu. Sam pthread_create nije izvršen i nema potvrde fizičkog TID-a.
+Static inspection of the original path at `0x1c58..0x1c66` prepares `pthread_create` and computes start routine `0x2031`. The actual PLT relocation for `pthread_create` and the literal yielding the start address were verified. `pthread_create` itself was not executed and there is no confirmation of a physical TID.
 
-Originalna rutina 0x2031 preko ioctl 0x8000000d traži posao. Par predan ioctl-u je `{0, pointer_to_16_byte_descriptor}`. Povratni descriptor ima raspored:
+Original routine `0x2031` requests work via ioctl `0x8000000d`. The pair passed to the ioctl is `{0, pointer_to_16_byte_descriptor}`. The returned descriptor has the layout:
 
-| Pomak | Izvorno korišteno polje |
+| Offset | Originally Used Field |
 |---|---|
-| +0 | callback funkcija |
+| +0 | callback function |
 | +4 | callback r1 |
 | +8 | callback r0 |
-| +12 | indeks workera, zadan pri pokretanju |
+| +12 | worker index, given at startup |
 
-Za eksplicitni kernel-output fixture worker poziva stvarni USB callback 0x131a5 iz druge biblioteke s točnim argumentima. Callback učita `{operation=1,status=-5}`, preda ih builderu poruke (izričita servisna zamjena), zatim preda izvornu poruku osal_free_msg (izričita zamjena) za ID 0x00e942cd. Tek nakon povratka callbacka originalni worker ponovno ulazi u ioctl 0x8000000d. Drugi ioctl je granica zaustavljanja.
+For an explicit kernel-output fixture, the worker calls the real USB callback `0x131a5` from the other library with exact arguments. The callback loads `{operation=1, status=-5}`, passes them to the message builder (explicit service replacement), and then passes the original message to `osal_free_msg` (explicit replacement) for ID `0x00e942cd`. Only after the callback returns does the original worker re-enter ioctl `0x8000000d`. The second ioctl is the stop boundary.
 
-Pokus također provjerava originalnu granu ponavljanja na -1021: callback se ne izvodi prije uspješnog drugog primitka, indeks workera ostaje očuvan i nakon callbacka slijedi novi wait zahtjev.
+The test also verifies the original retry branch on `-1021`: the callback does not execute before a successful second receive, the worker index remains preserved, and a new wait request follows after the callback.
 
-Originalni worker stoga može izvršavati callback neovisno o Main petlji iz E0169. To je dokaz predviđenog odvojenog izvršitelja u kodu, a ne dokaz trenutačnog rasporeda fizičkih dretava, jedinstvenog workera ili potpune zaštite promjene USB načina.
+The original worker can therefore execute the callback independently of the `Main` loop from E0169. This is proof of an intended separate executor in code, not proof of the current distribution of physical threads, a single worker, or complete protection of USB mode changes.
 
-## Kernel granica za daljnju provjeru
+## Kernel Boundary for Further Verification
 
-Statički pregled originalnog a6400 osal_uipc.ko (ranije zadržan SHA-256 `3743275bc964a2804b80cde4f589f60876b795fbeeccd3cbf2c18a0da2dc8567`) identificira `__k_4u_wait_cb` na .text+0xe8c. Sljedeći wait poziv obrađuje prethodni callback zapisan u per-worker slotu, pa slijedi novi posao. U tom putu postoje grane prema wake_up_process ili finish_callback. `unreg_msg_queue_cb` i helper na .text+0x27a0 koriste dodatne oznake callbacka i čekanje. Ova kernel tijela nisu izvršena u E0170: ne smije se pretpostaviti da unregister automatski znači završen callback ili da je samo uklanjanje korisničkog pokazivača dovoljno.
+Static inspection of original a6400 `osal_uipc.ko` (previously retained SHA-256 `3743275bc964a2804b80cde4f589f60876b795fbeeccd3cbf2c18a0da2dc8567`) identifies `__k_4u_wait_cb` at `.text+0xe8c`. The next wait call processes the previous callback recorded in the per-worker slot, followed by new work. In that path there are branches toward `wake_up_process` or `finish_callback`. `unreg_msg_queue_cb` and a helper at `.text+0x27a0` use additional callback flags and waiting. These kernel bodies were not executed in E0170: it must not be assumed that unregister automatically means a completed callback or that merely removing the user pointer is sufficient.
 
-## Rezultat i granice
+## Result and Boundaries
 
-**16 provjera prolazi**. Manifest: `artifacts/analysis/uvc-ptp-osal-e0170/manifest.json`; zapis: `artifacts/uvc-ptp-osal-e0170.log`.
+**16 checks pass**. Manifest: `artifacts/analysis/uvc-ptp-osal-e0170/manifest.json`; log: `artifacts/uvc-ptp-osal-e0170.log`.
 
-Kernel ioctl odgovor, file descriptor 17, worker index 3 i poruka izričiti su fixture podaci. Naming/cancellation/memset, builder ObjMsg i free servisi su izričite zamjene. Izvorne biblioteke odlučuju o granama, rasporedu argumenata, povratku callbacka i ponavljanju. Guardovi odbijaju neočekivano izvršavanje i zapise. Nema fizičke registracije, raspoređivača ni kernel čišćenja u ovom pokusu.
+The kernel ioctl response, file descriptor 17, worker index 3, and message are explicit fixture data. Naming/cancellation/memset, `ObjMsg` builder, and free services are explicit replacements. Original libraries decide branches, argument layout, callback return, and retry. Guards reject unexpected execution and writes. There is no physical registration, scheduler, or kernel cleanup in this test.
 
-Sljedeća konkretna provjera je kernel potvrda dovršetka prethodnog callbacka i ponašanje unregister-a dok je callback aktivan. E0164 ostaje neučitan i `physical_test_ready:false`. Nema novog senzorskog UVC dokaza; posljednja puna projektna regresija ostaje 605 testova jer produkcijski modul nije mijenjan.
+The next concrete check is kernel confirmation of completion of the previous callback and unregister behavior while a callback is active. E0164 remains unloaded and `physical_test_ready:false`. There is no new sensor UVC evidence; the last full project regression remains 605 tests because the production module was not modified.

@@ -18,39 +18,39 @@ def scan():
     print("=" * 50)
     
     # 1. Raw USB Scan
-    print("\n[1] Provera svih priključenih USB uređaja preko libusb:")
+    print("\n[1] Checking all connected USB devices via libusb:")
     sony_found = False
     try:
         devices = list(usb.core.find(find_all=True))
         for dev in devices:
             # Sony Vendor ID is 0x054c
             is_sony = (dev.idVendor == 0x054c)
-            prefix = "--> [SONY UREĐAJ]" if is_sony else "   "
+            prefix = "--> [SONY DEVICE]" if is_sony else "   "
             if is_sony:
                 sony_found = True
                 print(f"{prefix} Vendor: 0x{dev.idVendor:04x}, Product: 0x{dev.idProduct:04x} (Bus {dev.bus}, Dev {dev.address})")
         if not sony_found:
-            print("   Nijedan Sony USB uređaj (VID: 0x054c) trenutno nije detektovan.")
+            print("   No Sony USB device (VID: 0x054c) currently detected.")
     except Exception as e:
-        print(f"   Greška pri skeniranju: {e}")
+        print(f"   Scan error: {e}")
 
     # 2. PMCA Driver Scan
-    print("\n[2] Provera PMCA drajvera (Windows / libusb):")
+    print("\n[2] Checking PMCA driver (Windows / libusb):")
     for driver_name in [None, 'libusb']:
-        name_str = "Default Windows Drajveri" if driver_name is None else "libusb Drajver"
-        print(f"\n--- Testiranje sa: {name_str} ---")
+        name_str = "Default Windows Drivers" if driver_name is None else "libusb Driver"
+        print(f"\n--- Testing with: {name_str} ---")
         try:
             with importDriver(driver_name) as driver:
                 devs = list(listDevices(driver))
                 if devs:
                     for d in devs:
-                        print(f"   [Pronađen uređaj]: {type(d).__name__}")
+                        print(f"   [Device found]: {type(d).__name__}")
                         if isinstance(d, SonyMscExtCmdDevice):
-                            print("   --> Kamera je u Mass Storage modu (MSC). Spremna za prelazak u Service Mode.")
+                            print("   --> Camera is in Mass Storage mode (MSC). Ready to switch to Service Mode.")
                         elif isinstance(d, SonySenserDevice):
-                            print("   --> Kamera je već u Service Mode-u (Scalar/Senser).")
+                            print("   --> Camera is already in Service Mode (Scalar/Senser).")
                 else:
-                    print("   Nema prepoznate Sony kamere kroz ovaj drajver.")
+                    print("   No Sony camera recognized through this driver.")
         except Exception as e:
             print(f"   Status: {e}")
 

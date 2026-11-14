@@ -1,97 +1,51 @@
-# E0158: Puni HS identitet i vlastita memorija USB stringova
+# E0158: Full HS Identity and Owned Memory for USB Strings
 
-Datum: 2026-11-08. Nastavak E0157.
+Date: 2026-11-08. Continuation of E0157.
 
-## Fizičko čitanje, bez promjene veze
+## Physical Readback Without Link Change
 
-`capture_sony_usb_hub --strings` proširen je čitanjem stvarnih stringova
-na indeksima navedenim u originalnom device descriptoru. Očitan je isti
-Sony 054c:0caa, PTP konfiguracija nepromijenjena, LANGID 0409. Proizvođač
-Sony, proizvod ILCE-6400 i stvarni serijski broj CF93603BE631 sačuvani su
-zajedno s raw UTF-16LE deskriptorima, ne izvedeni iz Windows friendly namea.
+`capture_sony_usb_hub --strings` was extended to read actual strings at the indices listed in the original device descriptor. Readback showed the same Sony 054c:0caa, PTP configuration unchanged, LANGID 0409. Manufacturer Sony, product ILCE-6400, and real serial number CF93603BE631 were saved together with raw UTF-16LE descriptors, not derived from Windows friendly name.
 
-Rezultat:
-`artifacts/hardware/uvc-ptp-coexistence-e0152/pc-remote-identity-e0158.json`.
-Nijedan USB reset, konfiguracijski zapis ili kamera upload nije izveden.
+Result: `artifacts/hardware/uvc-ptp-coexistence-e0152/pc-remote-identity-e0158.json`. No USB reset, configuration write, or camera upload was performed.
 
-## Native table i vlasništvo
+## Native Table and Ownership
 
-`uvc_ptp_descriptors.{c,h}` kandidat sada sadrži punih 88 početnih bajtova
-Sony descriptor tablea: tri speed entryja po 16 i 40 bajtova metadata.
-Offset configuration objekta iza njih provjeren je compile-time assertom.
-Jezični i string entryji imaju izvorni ABI od 8 bajtova.
+`uvc_ptp_descriptors.{c,h}` candidate now contains the full 88 leading bytes of the Sony descriptor table: three speed entries of 16 bytes and 40 bytes of metadata. Offset of the configuration object behind them is verified by compile-time assert. Language and string entries have the original 8-byte ABI.
 
-`a6400_uvc_ptp_candidate_identity` validira capture format prije zapisa,
-kopira VID/PID/bcdDevice i originalne UTF-16LE payloadove u caller-owned
-kandidat. String pointeri i jezična tablica upućuju u taj isti objekt.
-Zadržavanje originalne tablice nakon prijelaza nije potrebno radi stringova.
-Kandidat mora ostati živ do potpunog povlačenja svih native korisnika.
+`a6400_uvc_ptp_candidate_identity` validates capture format before writing, copies VID/PID/bcdDevice and original UTF-16LE payloads into caller-owned candidate. String pointers and language table point into that same object. Keeping the original table after transition is not required for strings. The candidate must remain alive until full retirement of all native users.
 
-Trenutno je podržan točno dokazani izvor: indeksi 1/2/3, jedan LANGID 0409,
-do 64 payload bajta po stringu. Ostali rasporedi nisu generički prihvaćeni.
-Neispravan device/string format, neparna duljina i prevelik payload odbijaju
-se bez promjene objekta.
+Currently supported is the exact proven source: indices 1/2/3, single LANGID 0409, up to 64 payload bytes per string. Other layouts are not generically accepted. Invalid device/string format, odd length, and oversized payload are rejected without modifying the object.
 
-Device identitet zadržava VID/PID 054c:0caa, bcdDevice0200 i tri stvarna
-stringa. Za eksperimentalni zajednički HS uređaj class/subclass/protocol
-postavljeni su na EF/02/01 uz postojeći video IAD. To je MOD deklaracija
-kompozitnog uređaja, ne dokaz Windows driver bindinga. Nije dodijeljen ili
-izmišljen novi USB VID/PID.
+Device identity retains VID/PID 054c:0caa, bcdDevice 0200, and three real strings. For the experimental shared HS device, class/subclass/protocol are set to EF/02/01 alongside the existing video IAD. This is a MOD declaration of a composite device, not proof of Windows driver binding. No new USB VID/PID was assigned or invented.
 
-## Izvorni Sony serializeri
+## Original Sony Serializers
 
-Izvršeni su do povratka:
+Executed to return:
 
-- make_device_desc 602bb988.
-- make_string_desc 602bc0cc.
-- make_config_desc 602bbc54 i memcpy 60258b80 iz prethodnog ugovora.
+- `make_device_desc` `602bb988`.
+- `make_string_desc` `602bc0cc`.
+- `make_config_desc` `602bbc54` and `memcpy` `60258b80` from the previous contract.
 
-Originalni kernel SHA-256 i referentna library identity ostaju verificirani.
-Nema host zamjene za ove funkcije. Code/write guardovi ograničavaju
-izvršavanje i zapise. Gadgetcore, HS stanje, EP0 maxpacket64 i memorija
-caller objekata eksplicitni su izvanmrežni predlošci, ne live kernel dump.
+Original kernel SHA-256 and reference library identity remain verified. No host replacement for these functions. Code/write guards constrain execution and writes. Gadgetcore, HS state, EP0 maxpacket 64, and caller object memory are explicit offline fixtures, not a live kernel dump.
 
-Nakon identity init-a izvorni capture bufferi u provjernoj memoriji brišu se
-na nulu. Native string serializer i dalje vraća originalne stringove iz
-kandidatove vlastite memorije. Sam kandidat se tijekom serijalizacije ne
-mijenja. Iz iste pune tablice config reply vraća istih 173 bajta.
+After identity init, the original capture buffers in test memory are zeroed. Native string serializer still returns the original strings from the candidate's own memory. The candidate itself does not change during serialization. From the same full table, config reply returns the same 173 bytes.
 
-Važan izvorni ugovor: make_string_desc zapisuje puni string pa samo skraćuje
-povratnu duljinu. Provjera zato dopušta puni privremeni buffer; live EP0
-integracija mora ga stagingirati i zatim kopirati odgovarajući prefiks,
-kao što već radi config reply. Ne proslijediti mali caller buffer izravno
-originalnom string serializeru uz mali wLength.
+Important original contract: `make_string_desc` writes the full string and only truncates the return length. Verification therefore allows a full temporary buffer; live EP0 integration must stage it and then copy the appropriate prefix, just as config reply already does. Do not pass a small caller buffer directly to the original string serializer with a small `wLength`.
 
-## Rezultati
+## Results
 
-254 izvanmrežne kontrole prolaze: uključene ranije 172 i dodatne provjere
-HS device identiteta, language/string odgovora, kratkih zahtjeva, owned-data
-trajanja, unsupported jezika/indeksa, očuvanja konfiguracije i odbijanja bez
-mutacije. To nisu fizički USB transfer testovi. Pet testova postojećeg hub
-configuration parsera također prolazi. Puni projektni skup nije ponavljan
-nakon E0156 jer novi dijelovi nisu povezani s postojećim runtimeom.
+254 offline checks pass: includes the earlier 172 and additional checks of HS device identity, language/string replies, short requests, owned-data lifetime, unsupported languages/indices, configuration preservation, and rejections without mutation. These are not physical USB transfer tests. Five tests of the existing hub configuration parser also pass. Full project suite was not repeated after E0156 since the new parts are not wired into existing runtime.
 
-`artifacts/native/uvc-ptp-identity-e0158/` sadrži samostalan ARM ELF,
-manifest s hashovima te stvarne outpute native serijalizera:
+`artifacts/native/uvc-ptp-identity-e0158/` contains the standalone ARM ELF, manifest with hashes, and real outputs of the native serializers:
 
-- native-hs-device-descriptor.bin.
-- native-string-0.bin (LANGID), native-string-1/2/3.bin.
-- native-ep0-reply-9.bin i native-ep0-reply-173.bin.
+- `native-hs-device-descriptor.bin`.
+- `native-string-0.bin` (LANGID), `native-string-1/2/3.bin`.
+- `native-ep0-reply-9.bin` and `native-ep0-reply-173.bin`.
 
-## Preostala integracija
+## Remaining Integration
 
-Ovo je verificiran HS device/config/string kandidat, nije bootabilni niti
-učitani UVC+PTP modul. Nedostaju live EP0 hook i staging za device/string
-odgovore, FS/other-speed/qualifier ugovor, zajednički gadgetcore
-register/stop/unregister i rollback te native JPEG/DMM producer.
+This is a verified HS device/config/string candidate, not a bootable or loaded UVC+PTP module. Missing: live EP0 hook and staging for device/string replies, FS/other-speed/qualifier contract, shared gadgetcore register/stop/unregister and rollback, and native JPEG/DMM producer.
 
-Zadržani PID0caa znači da postojeći host UVC auto-launcher koji traži samo
-PID0322 nije dovoljan za budući shared uređaj. Detekciju treba povezati s
-provjerenim Sony UVC interface identitetom, uz zadržavanje zaštite od drugih
-web kamera. Ta promjena još nije provedena. Kompatibilnost sa Sonyjevim
-desktop programima ostaje izvan zahtjeva.
+Retained PID 0caa means the existing host UVC auto-launcher that only looks for PID 0322 is insufficient for the future shared device. Detection must be tied to the verified Sony UVC interface identity, while keeping protection against other webcams. That change has not yet been made. Compatibility with Sony desktop programs remains out of scope.
 
-Fizičko Windows nabrajanje zajedničkog uređaja, driver grouping, UVC video
-i istovremene PTP kontrole ostaju nepotvrđeni. Kamera je pri fizičkom
-očitanju bila u PC Remoteu; ovaj korak nije promijenio taj način, SD, trajnu
-memoriju ili aktivne module.
+Physical Windows enumeration of the shared device, driver grouping, UVC video, and simultaneous PTP controls remain unconfirmed. The camera was in PC Remote during physical readback; this step did not change that mode, SD, persistent storage, or active modules.

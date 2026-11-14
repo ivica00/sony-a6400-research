@@ -1,75 +1,37 @@
-# E0152: Granica zajedničkog UVC videa i Sony PC Remote upravljanja
+# E0152: Shared UVC Video and Sony PC Remote Control Boundary
 
-Datum: 2026-11-08.
+Date: 2026-11-08.
 
-## Opseg i fizički nalaz
+## Scope and Physical Finding
 
-Korisnik traži UVC video uz zadržano Sony PC Remote upravljanje. Kamera je,
-prema korisniku i očitanim deskriptorima, spojena u Mass Storage načinu.
-Postojeći debugger odgovara. Očitanje `/proc/modules` pokazalo je učitane
-`usbg_storage` i `usbg_stillimage`, bez `usbg_video_a6400`. Sama prisutnost
-stillimage modula ne dokazuje aktivno PC Remote sučelje.
+The user requests UVC video while retaining Sony PC Remote control. The camera, according to the user and read descriptors, is connected in Mass Storage mode. The existing debugger responds. Reading `/proc/modules` showed `usbg_storage` and `usbg_stillimage` loaded, without `usbg_video_a6400`. The mere presence of the stillimage module does not prove an active PC Remote interface.
 
-`tools.research.capture_sony_usb_layout` očitao je standardne USB deskriptore
-bez promjene konfiguracije, preuzimanja sučelja, PTP sesije ili resetiranja.
-Rezultat: `artifacts/hardware/uvc-ptp-coexistence-e0152/host-usb-descriptors.json`.
-Sony VID/PID 054c:0ca8, jedna konfiguracija, jedno sučelje 0 klase 08/06/50,
-Bulk IN 0x81 i Bulk OUT 0x02, oba max-packet 512. Nema izloženog PTP sučelja.
-WPD enumeracija Sony uređaja vratila je prazan popis, što odgovara MSC stanju.
-Windows Get-PnpDevice provjera nije uspjela zbog odbijenog pristupa; zaključak
-o načinu temelji se na uspješnom libusb očitanju, ne na toj provjeri.
+`tools.research.capture_sony_usb_layout` read standard USB descriptors without changing configuration, claiming interfaces, starting a PTP session, or resetting. Result: `artifacts/hardware/uvc-ptp-coexistence-e0152/host-usb-descriptors.json`. Sony VID/PID 054c:0ca8, one configuration, one interface 0 of class 08/06/50, Bulk IN 0x81 and Bulk OUT 0x02, both max-packet 512. No PTP interface exposed. WPD enumeration of Sony devices returned an empty list, matching the MSC state. Windows Get-PnpDevice check failed due to access denied; the mode conclusion is based on the successful libusb read, not that check.
 
-## Granica sadašnjeg UVC modula
+## Current UVC Module Boundary
 
-`a6400_uvc_commit_descriptors` u `tools/native_camera/uvc_composite_shim.c`
-prekida USB vezu, zaustavlja gcw, mijenja tablicu deskriptora i pokreće
-single-function konfiguraciju (`desc_arg.is_dual=0`). Zatim ponovno spaja USB.
-To je zamjena USB konfiguracije; naziv composite ne dokazuje UVC+PTP.
-Postojeći UVC bridge očekuje Bulk IN 0x81 (E0142), koji sada koristi MSC.
-To dokazuje konflikt pri naivnom dodavanju MSC-a postojećem UVC-u, ali još
-ne dokazuje konflikt s PC Remote endpointima: njih tek treba očitati.
+`a6400_uvc_commit_descriptors` in `tools/native_camera/uvc_composite_shim.c` disconnects USB, stops gcw, swaps the descriptor table, and starts a single-function configuration (`desc_arg.is_dual=0`). Then it reconnects USB. This is a USB configuration replacement; the name composite does not prove UVC+PTP. The existing UVC bridge expects Bulk IN 0x81 (E0142), which is now used by MSC. This proves a conflict when naively adding MSC to the existing UVC, but does not yet prove a conflict with PC Remote endpoints: those remain to be read.
 
-E0150 dokazuje prijenos testnog uzorka kroz Sony UVC. Ne dokazuje senzor.
-E0151 bilježi stvarni senzor preko PTP-a 1024x680. To nije dokaz UVC senzora,
-istovremene PTP kontrole niti 1280x720 senzorskog UVC-a.
-E0149 fizički dokazuje prazan JPEG prsten u ispitanom MSC stanju; uzrok
-potpune ISP/senzor standby politike ostaje tumačenje, a ne zasebno mjerenje.
+E0150 proves test-pattern transfer through Sony UVC. It does not prove the sensor. E0151 records real sensor over PTP 1024x680. That is not proof of UVC sensor, simultaneous PTP control, or 1280x720 sensor UVC. E0149 physically proves an empty JPEG ring in the tested MSC state; the cause of the full ISP/sensor standby policy remains an interpretation, not a separate measurement.
 
-## Ispravak lažne potvrde upravljanja
+## Fixing False Control Confirmation
 
-`/api/control` u CinemaHUD-u prethodno je mijenjao samo hostov `camera_state`
-i vraćao uspjeh bez Sony naredbe. Sada vraća HTTP 501 i `applied:false`,
-bez promjene stanja. Status objavljuje da upravljanje nije dostupno.
-REC više lokalno ne pali oznaku snimanja niti prikazuje potvrdu početka.
-Klijent prikazuje stvarnu grešku odgovora. Postojeće početne ekspozicijske
-vrijednosti ostaju neprovjereni podaci prikaza; nisu telemetrija kamere.
+`/api/control` in CinemaHUD previously modified only the host's `camera_state` and returned success without a Sony command. Now it returns HTTP 501 and `applied:false`, without changing state. Status reports that control is unavailable. REC no longer locally lights up the recording indicator or shows a start confirmation. The client displays the real response error. Existing initial exposure values remain unverified display data; they are not camera telemetry.
 
-HTTP regresijska provjera za ISO, REC i pokušaj promjene oznake dostupnosti
-potvrdila je odbijanje i nepromijenjeno stanje. Nije korištena fizička kamera
-za tu provjeru i nije dokazana nijedna Sony write naredba.
+HTTP regression check for ISO, REC, and attempting to change availability flags confirmed rejection and unchanged state. No physical camera was used for that check and no Sony write command was proven.
 
-## Sljedeći fizički korak
+## Next Physical Step
 
-U PC Remote načinu ponoviti čitanje:
+Repeat the read in PC Remote mode:
 
 ```
 python -m tools.research.capture_sony_usb_layout --output artifacts/hardware/uvc-ptp-coexistence-e0152/pc-remote-usb-descriptors.json
 ```
 
-Zatim dokazati izvorni stillimage callback/endpoint ugovor i slobodne kanale
-kontrolera, prije izrade zajedničke tablice UVC+PTP i promjene bridgea.
-Sačuvati Sony shooting stanje i vlasništvo memorije. Postojeći sensor feeder
-bezuvjetno postavlja Rule 5, resetira SET_PATH te pri završetku vraća Rule 0;
-to nije provjeren ugovor za kameru koja već snima u PC Remote načinu.
-Ne pokretati ga u tom stanju bez rješavanja vlasništva i obnavljanja prethodnog
-stanja. Također treba provjeriti stvarne dimenzije JPEG-a prema UVC profilu.
+Then prove the original stillimage callback/endpoint contract and free controller channels before building a shared UVC+PTP table and modifying the bridge. Preserve Sony shooting state and memory ownership. The existing sensor feeder unconditionally sets Rule 5, resets SET_PATH, and restores Rule 0 on exit; that is not a verified contract for a camera already shooting in PC Remote mode. Do not run it in that state without resolving ownership and restoring prior state. Also check actual JPEG dimensions against the UVC profile.
 
-U ovom koraku nije učitan modul, pokrenut feeder, promijenjen USB način niti
-pisano na kameru, SD ili trajnu memoriju. UVC+PTP zajednički rad nije dovršen.
+In this step no module was loaded, no feeder was started, no USB mode was changed, and nothing was written to the camera, SD, or persistent storage. UVC+PTP coexistence is not completed.
 
-## Regresijska provjera
+## Regression Verification
 
-`python -m unittest discover -s tests`: svih 600 testova prošlo u 17.185 s.
-Prvi pokušaj imao je četiri greške pristupa privremenim datotekama; isti skup
-ponovljen s potrebnim pristupom prošao je bez greške. Ove provjere ne dokazuju
-fizički zajednički UVC/PTP rad ni fizički pristup SD kartici.
+`python -m unittest discover -s tests`: all 600 tests passed in 17.185 s. The first attempt had four temporary-file access errors; the same suite repeated with the required access passed without error. These checks do not prove physical UVC+PTP coexistence or physical SD card access.

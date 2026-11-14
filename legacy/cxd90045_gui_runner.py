@@ -137,7 +137,7 @@ class SonyA6400EmulatorGUI:
         lbl_title.pack(side=tk.LEFT, padx=15, pady=8)
 
         self.lbl_status = tk.Label(
-            header, text="EKRAN: LIVE_VIEW | ARMv7 Cortex-A9 | Framebuffer: 0x60000000",
+            header, text="SCREEN: LIVE_VIEW | ARMv7 Cortex-A9 | Framebuffer: 0x60000000",
             font=("Consolas", 10), fg="#00E5FF", bg="#222222"
         )
         self.lbl_status.pack(side=tk.RIGHT, padx=15, pady=8)
@@ -160,11 +160,11 @@ class SonyA6400EmulatorGUI:
         ctrl_panel = tk.Frame(main_frame, bg="#202020", width=210, bd=1, relief=tk.GROOVE)
         ctrl_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        lbl_ctrl = tk.Label(ctrl_panel, text="FIZIČKE KONTROLE KAMERE", font=("Arial", 10, "bold"), fg="#DDDDDD", bg="#202020")
+        lbl_ctrl = tk.Label(ctrl_panel, text="PHYSICAL CAMERA CONTROLS", font=("Arial", 10, "bold"), fg="#DDDDDD", bg="#202020")
         lbl_ctrl.pack(pady=4)
 
         # Dual Shutter Buttons (S1 AF Lock & S2 Capture)
-        shutter_box = tk.LabelFrame(ctrl_panel, text="OKIDAČ (Shutter Button)", font=("Arial", 8, "bold"), fg="#FF3333", bg="#202020")
+        shutter_box = tk.LabelFrame(ctrl_panel, text="SHUTTER BUTTON", font=("Arial", 8, "bold"), fg="#FF3333", bg="#202020")
         shutter_box.pack(fill=tk.X, padx=10, pady=4)
         
         s_row = tk.Frame(shutter_box, bg="#202020")
@@ -178,14 +178,14 @@ class SonyA6400EmulatorGUI:
         btn_s1.pack(side=tk.LEFT, padx=2)
 
         btn_s2 = tk.Button(
-            s_row, text="SNIMI (S2)\n[Taster 'S']",
+            s_row, text="CAPTURE (S2)\n[Key 'S']",
             font=("Arial", 8, "bold"), bg="#B22222", fg="#FFFFFF",
             activebackground="#FF3333", width=11, command=lambda: self.send_key(KEY_REMOTE_S2)
         )
         btn_s2.pack(side=tk.RIGHT, padx=2)
 
         # Direct Screen Buttons (MENU, DISP, Fn, PLAY)
-        btn_grid = tk.LabelFrame(ctrl_panel, text="GLAVNE TIPKE", font=("Arial", 8, "bold"), fg="#00E5FF", bg="#202020")
+        btn_grid = tk.LabelFrame(ctrl_panel, text="MAIN BUTTONS", font=("Arial", 8, "bold"), fg="#00E5FF", bg="#202020")
         btn_grid.pack(fill=tk.X, padx=10, pady=4)
 
         r1 = tk.Frame(btn_grid, bg="#202020")
@@ -203,26 +203,26 @@ class SonyA6400EmulatorGUI:
         btn_play.pack(side=tk.RIGHT, padx=2)
 
         # D-Pad (Navigation)
-        dpad_frame = tk.LabelFrame(ctrl_panel, text="D-PAD (Točkić / Navigacija)", font=("Arial", 8, "bold"), fg="#888888", bg="#202020")
+        dpad_frame = tk.LabelFrame(ctrl_panel, text="D-PAD (Wheel / Navigation)", font=("Arial", 8, "bold"), fg="#888888", bg="#202020")
         dpad_frame.pack(fill=tk.X, padx=10, pady=6)
 
-        btn_up = tk.Button(dpad_frame, text="▲ GORE", font=("Arial", 8, "bold"), bg="#2c2c2c", fg="#DDDDDD", command=lambda: self.send_key(KEY_TACT_UP))
+        btn_up = tk.Button(dpad_frame, text="▲ UP", font=("Arial", 8, "bold"), bg="#2c2c2c", fg="#DDDDDD", command=lambda: self.send_key(KEY_TACT_UP))
         btn_up.pack(pady=2, fill=tk.X, padx=4)
 
         dpad_mid = tk.Frame(dpad_frame, bg="#202020")
         dpad_mid.pack(pady=2)
-        btn_left = tk.Button(dpad_mid, text="◄ LEVO", font=("Arial", 8), bg="#2c2c2c", fg="#DDDDDD", command=lambda: self.send_key(KEY_TACT_LEFT), width=7)
+        btn_left = tk.Button(dpad_mid, text="◄ LEFT", font=("Arial", 8), bg="#2c2c2c", fg="#DDDDDD", command=lambda: self.send_key(KEY_TACT_LEFT), width=7)
         btn_left.pack(side=tk.LEFT, padx=2)
         btn_center = tk.Button(dpad_mid, text="OK", font=("Arial", 8, "bold"), bg="#FF6600", fg="#000000", command=lambda: self.send_key(KEY_TACT_ENTER), width=5)
         btn_center.pack(side=tk.LEFT, padx=2)
-        btn_right = tk.Button(dpad_mid, text="DESNO ►", font=("Arial", 8), bg="#2c2c2c", fg="#DDDDDD", command=lambda: self.send_key(KEY_TACT_RIGHT), width=7)
+        btn_right = tk.Button(dpad_mid, text="RIGHT ►", font=("Arial", 8), bg="#2c2c2c", fg="#DDDDDD", command=lambda: self.send_key(KEY_TACT_RIGHT), width=7)
         btn_right.pack(side=tk.LEFT, padx=2)
 
-        btn_down = tk.Button(dpad_frame, text="▼ DOLE (ISO)", font=("Arial", 8), bg="#2c2c2c", fg="#DDDDDD", command=lambda: self.send_key(KEY_TACT_DOWN))
+        btn_down = tk.Button(dpad_frame, text="▼ DOWN (ISO)", font=("Arial", 8), bg="#2c2c2c", fg="#DDDDDD", command=lambda: self.send_key(KEY_TACT_DOWN))
         btn_down.pack(pady=2, fill=tk.X, padx=4)
 
         # Rotary Wheel (Dial)
-        wheel_frame = tk.LabelFrame(ctrl_panel, text="KONTROLNI TOCKIC (Wheel Dial)", font=("Arial", 8, "bold"), fg="#FFD700", bg="#202020")
+        wheel_frame = tk.LabelFrame(ctrl_panel, text="CONTROL WHEEL (Wheel Dial)", font=("Arial", 8, "bold"), fg="#FFD700", bg="#202020")
         wheel_frame.pack(fill=tk.X, padx=10, pady=4)
         r_wheel = tk.Frame(wheel_frame, bg="#202020")
         r_wheel.pack(fill=tk.X, pady=2)
@@ -270,12 +270,12 @@ class SonyA6400EmulatorGUI:
         sub_info = ""
         if self.emu.active_screen == "MENU" and self.emu.menu_sub_active:
             cur_item = self.emu.menu_options_map.get((self.emu.menu_tab, self.emu.menu_item), {})
-            sub_info = f" [PODIZBOR: {cur_item.get('name', '')}]"
+            sub_info = f" [SUBMENU: {cur_item.get('name', '')}]"
             
-        af_txt = "LOCK" if self.emu.af_locked else "OTKLJUČAN"
+        af_txt = "LOCK" if self.emu.af_locked else "UNLOCKED"
         iso_txt = "AUTO" if self.emu.camera_state["iso_mode"] == 0 else str(self.emu.camera_state["iso_val"])
         self.lbl_status.configure(
-            text=f"EKRAN: {self.emu.active_screen}{sub_info} | {self.emu.camera_state['quality']} ({self.emu.camera_state['aspect_ratio']}) | AF: {self.emu.camera_state['focus_mode']} [{af_txt}] | 1/{self.emu.camera_state['shutter_den']}s F{self.emu.camera_state['aperture_val']/10:.1f} ISO {iso_txt} | SD: {self.emu.camera_state['card_remaining']}"
+            text=f"SCREEN: {self.emu.active_screen}{sub_info} | {self.emu.camera_state['quality']} ({self.emu.camera_state['aspect_ratio']}) | AF: {self.emu.camera_state['focus_mode']} [{af_txt}] | 1/{self.emu.camera_state['shutter_den']}s F{self.emu.camera_state['aperture_val']/10:.1f} ISO {iso_txt} | SD: {self.emu.camera_state['card_remaining']}"
         )
 
 def main():

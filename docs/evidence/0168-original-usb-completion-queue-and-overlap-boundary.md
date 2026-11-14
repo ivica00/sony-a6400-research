@@ -1,36 +1,36 @@
-# E0168 — Izvorni USB completion red i granica preklapanja
+# E0168 — Original USB Completion Queue and Overlap Boundary
 
-Datum: 2026-11-08. Offline nastavak E0167. Nema pristupa kameri ni promjene kernel modula.
+Date: 2026-11-08. Offline continuation of E0167. No camera access or kernel module changes.
 
-`tools/research/probe_uvc_ptp_completion.py` izvršava originalne Thumb instrukcije `UsbIfWrapper::doSyncStartStop` (0x13341) i completion callbacka (0x12de5) iz a6400 libUsbControl.so, SHA-256 `70cd5742fde9eea78c60905e4015531b4c3ab2668d2cb85c934531f451f1211f`.
+`tools/research/probe_uvc_ptp_completion.py` executes the original Thumb instructions of `UsbIfWrapper::doSyncStartStop` (0x13341) and the completion callback (0x12de5) from a6400 `libUsbControl.so`, SHA-256 `70cd5742fde9eea78c60905e4015531b4c3ab2668d2cb85c934531f451f1211f`.
 
-## Uredan završetak i pogreške
+## Clean Completion and Errors
 
-Za stop operaciju originalni kod:
+For the stop operation, the original code:
 
-1. Stvara OSAL ID pozivom osal_dynamic_id(0x29,0xca,&global_queue).
-2. Poziva doStop; njegov uspjeh ovdje znači samo prihvaćen zahtjev.
-3. Čeka osal_rcv_msg_tmo(global_queue,&message,0xffffffff).
-4. Vraća prvi 32-bitni status iz odgovora, oslobađa poruku, uništava ID pozivom osal_dynamic_id(0x49,0,queue) i briše global_queue.
+1. Creates an OSAL ID by calling `osal_dynamic_id(0x29, 0xca, &global_queue)`.
+2. Calls `doStop`; its success here only means the request was accepted.
+3. Waits on `osal_rcv_msg_tmo(global_queue, &message, 0xffffffff)`.
+4. Returns the first 32-bit status from the response, frees the message, destroys the ID by calling `osal_dynamic_id(0x49, 0, queue)`, and clears `global_queue`.
 
-U pokusu status -5 iz odgovora ostaje -5. Ako receive vrati 7, kod vraća 7, uništi ID i ne oslobađa neprimljenu poruku. Ako doStop odmah vrati 6, kod ne čeka: uništi ID, briše global i vraća 6. OSAL servisi i doStop izričite su zamjene; ne tvrdi se da je fizičko zaustavljanje izvršeno.
+In the test, status -5 from the response remains -5. If receive returns 7, the code returns 7, destroys the ID, and does not free the unreceived message. If `doStop` immediately returns 6, the code does not wait: it destroys the ID, clears the global, and returns 6. OSAL services and `doStop` are explicit replacements; it is not claimed that a physical stop was performed.
 
-## Completion koristi zajedničku ćeliju
+## Completion Uses a Shared Cell
 
-Queue cell nalazi se na relativnoj adresi 0x1eabc. Callback 0x12de5 za događaj 0x10001 čita tu ćeliju, traži 4-bajtnu poruku putem osal_valloc_msg_wait(queue,&message,4,1), zapisuje status iz r2 i poziva osal_snd_msg(queue,message). Nepoznat događaj se ignorira. Pogreška alokacije prekida slanje.
+The queue cell is located at relative address `0x1eabc`. For event `0x10001`, callback `0x12de5` reads that cell, requests a 4-byte message via `osal_valloc_msg_wait(queue, &message, 4, 1)`, writes the status from `r2`, and calls `osal_snd_msg(queue, message)`. Unknown events are ignored. Allocation failure aborts sending.
 
-U ovom stop completion putu nema oznake konkretne transakcije, provjere radne dretve, usporedbe očekivanog ID-a ni zaštite da queue nije nula. Nakon čišćenja originalni callback pokušava alokaciju za ID 0. U fixtureu alokacija izričito uspije pa se opaža send(0); stvarni OSAL odgovor na nevaljani ID nije izvršen niti dokazan.
+In this stop completion path there is no tag for a specific transaction, no worker thread check, no comparison against an expected ID, and no guard that `queue` is non-zero. After cleanup, the original callback attempts allocation for ID 0. In the fixture, allocation explicitly succeeds so `send(0)` is observed; the real OSAL response to an invalid ID was neither executed nor proven.
 
-Pokus s dva eksplicitna stoga zaustavlja prvi originalni sinkroni poziv na granici prije doStop s ID-om 0x444. Drugi originalni poziv dolazi na istu granicu i prepiše ćeliju ID-om 0x555. Originalni completion tada alocira i šalje odgovor prema 0x555. Ovo dokazuje da tijela sama ne razlikuju te dvije transakcije, a ne da fizički pozivatelji dopuštaju takvo preklapanje.
+A test with two explicit stacks stops the first original synchronous call at the boundary before `doStop` with ID `0x444`. The second original call reaches the same boundary and overwrites the cell with ID `0x555`. The original completion then allocates and sends the response toward `0x555`. This proves that the bodies themselves do not distinguish those two transactions, not that physical callers allow such overlap.
 
-## Posljedica za zajednički način rada
+## Consequence for Shared Mode
 
-Nije dovoljno zaključati samo početak našeg ioctl poziva ili samo upis u CUsb red. Potreban je dokaz vlasništva od početka promjene do završnog callbacka, uključujući odbijanje novih promjena dok prethodna nije završena i sigurno postupanje s kasnim završetkom. Ne smijemo ukloniti ili ponovno koristiti completion red dok ga izvorni callback još može koristiti. Izvorni javni stop i kernel disconnect put ostaju dio istog ugovora.
+It is not sufficient to lock only the start of our ioctl call or only the write to the `CUsb` queue. Proof of ownership is required from the start of the change until the final callback, including rejecting new changes while the previous one has not finished and safe handling of late completion. We must not remove or reuse the completion queue while the original callback can still use it. The original public stop and kernel disconnect path remain part of the same contract.
 
-Sljedeći korak je provjeriti izvorni kontekst pozivanja doSyncStartStop u glavnoj UsbControl obradi poruka i njegovu vezu s completion callbackom. Start completion dodatno čisti descriptor/string resurse; taj ogranak nije izvršen u E0168.
+The next step is to verify the original calling context of `doSyncStartStop` in the main `UsbControl` message handling and its relationship to the completion callback. Start completion additionally cleans up descriptor/string resources; that branch was not executed in E0168.
 
-## Rezultat i ograničenja
+## Result and Limitations
 
-**22 provjere prolaze**, uključujući šest stvarno razriješenih PLT odredišta. Izvještaj: `artifacts/analysis/uvc-ptp-completion-e0168/manifest.json`; zapis: `artifacts/uvc-ptp-completion-e0168.log`.
+**22 checks pass**, including six actually resolved PLT targets. Report: `artifacts/analysis/uvc-ptp-completion-e0168/manifest.json`; log: `artifacts/uvc-ptp-completion-e0168.log`.
 
-Originalna tijela odluka i čekanja izvršena su uz ograničenja izvršavanja i zapisa. OSAL ID, alokacija, receive/send/free i doStop izričite su servisne zamjene. Raspoređivač, stvarne poruke, trajanje callbacka i povratak kamere nisu dokazani. Produkcijski kod nije mijenjan; zadnja puna regresija ostaje 605 testova iz E0164. Modul je i dalje neučitan i `physical_test_ready:false`; senzorski UVC s istodobnom PTP kontrolom ostaje nedovršen.
+Original decision and wait bodies were executed with execution and write boundaries. OSAL ID, allocation, receive/send/free, and `doStop` are explicit service replacements. The scheduler, actual messages, callback duration, and camera recovery are not proven. Production code was not modified; the last full regression remains 605 tests from E0164. The module remains unloaded and `physical_test_ready:false`; sensor UVC with concurrent PTP control remains incomplete.

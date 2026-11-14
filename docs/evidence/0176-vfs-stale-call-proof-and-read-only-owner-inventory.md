@@ -1,41 +1,41 @@
-# E0176 — Već učitan VFS poziv i read-only popis USB vlasnika
+# E0176 — Already Loaded VFS Call and Read-Only USB Owner Inventory
 
-Datum: 2026-11-08. Nastavak E0175. Nema instalacije hooka, prijenosa payload-a, promjene USB načina ili zapisa na kameru.
+Date: 2026-11-08. Continuation of E0175. No hook installation, payload transfer, USB mode change, or writes to the camera.
 
-## Izvorni VFS ugovor
+## Original VFS Contract
 
-`tools/research/probe_uvc_ptp_vfs_publication.py` SHA-provjerava originalni kernel i izvršava `vfs_ioctl` na 0x601ce2b0. Izvorni kod čita file+0x10, zatim file_operations+0x20 na 0x601ce2cc i poziva učitani pokazivač preko BLX r3 na 0x601ce2d8.
+`tools/research/probe_uvc_ptp_vfs_publication.py` SHA-verifies the original kernel and executes `vfs_ioctl` at `0x601ce2b0`. The original code reads `file+0x10`, then `file_operations+0x20` at `0x601ce2cc`, and calls the loaded pointer via `BLX r3` at `0x601ce2d8`.
 
-U eksplicitnom interleaving fixtureu izvršavanje staje prije BLX, nakon učitavanja starog cilja. Test promijeni slot na novi cilj i nastavi izvorni CPU kontekst. Poziv odlazi u stari cilj; tek sljedeći izvorni VFS poziv koristi novi cilj. File/fops su fixture objekti, a ciljevi izričiti return recorders; ne predstavljaju fizički hook ili Sonyjevu promjenu konfiguracije.
+In an explicit interleaving fixture, execution stops before `BLX`, after loading the old target. The test changes the slot to the new target and resumes the original CPU context. The call goes to the old target; only the next original VFS call uses the new target. File/fops are fixture objects, and targets are explicit return recorders; they do not represent a physical hook or Sony configuration change.
 
-**10 provjera prolazi**. Izvještaj: `artifacts/analysis/uvc-ptp-publication-e0176/manifest.json`. Potvrđeni su i file/command/argument predaja i vraćanje rezultata. Zamjena jednog pokazivača nije sama po sebi pokrivanje već učitanog poziva. Činjenica da wrapperov novi broj ulaza iznosi nula također ne broji takav stari poziv.
+**10 checks pass**. Report: `artifacts/analysis/uvc-ptp-publication-e0176/manifest.json`. Passing file/command/argument and returning the result were also confirmed. Replacing a single pointer does not by itself cover an already-loaded call. The fact that the wrapper's new entry count is zero also does not count such an old call.
 
-## Točan izvorni uređaj
+## Exact Original Device
 
-Provjerena je originalna init devnode referenca: literal 0x604a5988 pokazuje na zapis 0x604dab9c; ime na +0x18 je `usb/gadgetcore`, a polja +0x1e/+0x20/+0x22 daju major **242**, minor **1**, count **1**. To nije video node 248:33.
+The original init devnode reference was verified: literal `0x604a5988` points to record `0x604dab9c`; the name at `+0x18` is `usb/gadgetcore`, and fields `+0x1e/+0x20/+0x22` give major **242**, minor **1**, count **1**. This is not video node `248:33`.
 
-## Izgrađen read-only alat
+## Built Read-Only Tool
 
-`tools/native_camera/uvc_ptp_owner_inventory.c` izgrađen je u `artifacts/native/uvc-ptp-owner-inventory-e0176/uvc_ptp_owner_inventory`, **3376 bajtova**, SHA-256 `38aede0fa7969b3aa7119c155c884d77c93b15d9062ff47a08bbaf5240ebd2f7`.
+`tools/native_camera/uvc_ptp_owner_inventory.c` was built into `artifacts/native/uvc-ptp-owner-inventory-e0176/uvc_ptp_owner_inventory`, **3376 bytes**, SHA-256 `38aede0fa7969b3aa7119c155c884d77c93b15d9062ff47a08bbaf5240ebd2f7`.
 
-Freestanding ARMv7 softfp ELF nema libc/interpreter ovisnost. Koristi samo read-only open, getdents64, stat64, close, stdout write i exit. Prvo provjeri `/dev/usb/gadgetcore` kao character 242:1, zatim po device broju traži otvorene FD-ove u `/proc`, pa popiše dretve procesa-vlasnika. Ne koristi readlink naziv kao dokaz identiteta FD-a, ne zaustavlja dretve i ne piše datoteke. `writes=0` u njegovu protokolu znači da ne mijenja datoteke/uređaj; tekstualni izvještaj šalje na stdout.
+The freestanding ARMv7 softfp ELF has no libc/interpreter dependency. It uses only read-only `open`, `getdents64`, `stat64`, `close`, stdout `write`, and `exit`. It first checks `/dev/usb/gadgetcore` as character `242:1`, then searches open FDs in `/proc` by device number, and lists the threads of the owner process. It does not use `readlink` name as proof of FD identity, does not stop threads, and does not write files. `writes=0` in its protocol means it does not modify files/device; it sends a text report to stdout.
 
-Rezultat je **observational=1**, čak i kad nema grešaka. Nestali FD/proces ili malformed directory record prijavljuju grešku; postoje granice broja procesa, FD-ova i dretava. Opažanje vlasnika nije atomarna snimka ni dokaz da novi proces ne može otvoriti uređaj.
+The result is **observational=1**, even when there are no errors. Vanished FD/process or malformed directory record report an error; there are limits on the number of processes, FDs, and threads. Observing the owner is not an atomic snapshot nor proof that a new process cannot open the device.
 
-Prva izgradnja odbijena je zbog compilerova division helpera. Konačni izvor pretvara brojeve bez runtime dijeljenja i ne treba libgcc/libc. U ELF-u nema PT_INTERP. Alat nije prenesen niti pokrenut na kameri.
+The first build was rejected due to the compiler's division helper. The final source converts numbers without runtime division and does not need libgcc/libc. There is no `PT_INTERP` in the ELF. The tool was neither transferred nor run on the camera.
 
-## Provjera alata
+## Tool Verification
 
-`tools/research/audit_uvc_ptp_owner_inventory.py` izvršava stvarni prevedeni ARM alat uz izričite proc/stat syscall fixtures. **23 provjere prolaze**: točan owner po rdev-u, njegove dretve, završni sažetak, zatvaranje direktorija, pogrešan node prije proc čitanja, nedostupan proc, malformed dirent i nestali FD s nepotpunim rezultatom. Svaki dopušteni syscall provjerava se; ptrace, kill, ioctl i write-open nisu dopušteni.
+`tools/research/audit_uvc_ptp_owner_inventory.py` executes the real compiled ARM tool with explicit proc/stat syscall fixtures. **23 checks pass**: exact owner by rdev, its threads, final summary, closing directories, wrong node before proc read, unavailable proc, malformed dirent, and vanished FD with incomplete result. Every allowed syscall is checked; `ptrace`, `kill`, `ioctl`, and write-open are not permitted.
 
-Manifesti su u `artifacts/native/uvc-ptp-owner-inventory-e0176/manifest.json` i `artifacts/analysis/uvc-ptp-owner-inventory-e0176/manifest.json`. Proc i stat podaci su eksplicitni test fixturei, ne podaci trenutačne kamere.
+Manifests are in `artifacts/native/uvc-ptp-owner-inventory-e0176/manifest.json` and `artifacts/analysis/uvc-ptp-owner-inventory-e0176/manifest.json`. Proc and stat data are explicit test fixtures, not data from the current camera.
 
-## Trenutačna pristupačnost
+## Current Accessibility
 
-Read-only pokušaj `python -m tools.camera_debugger info` vratio je: `Expected one existing MSC/MTP camera; found 0. No mode switch attempted.` U trenutačnom PC Remote načinu taj postojeći debugger kanal nije dostupan. To nije tvrdnja da Windows ne vidi kameru; E0173 je zasebno očitao PC Remote USB deskriptore.
+A read-only attempt `python -m tools.camera_debugger info` returned: `Expected one existing MSC/MTP camera; found 0. No mode switch attempted.` In the current PC Remote mode, that existing debugger channel is unavailable. This is not a claim that Windows does not see the camera; E0173 separately read the PC Remote USB descriptors.
 
-Zato nema live popisa vlasnika ili proc stanja. Postojeći `native_freeze.h` odnosi se samo na PID149 i sam po sebi ne dokazuje pokrivenost svih vlasnika gadgetcore uređaja. Ne smije se upotrijebiti kao univerzalna potvrda da su svi stari ioctl pozivi završeni.
+Therefore, there is no live owner list or proc state. Existing `native_freeze.h` applies only to PID149 and does not by itself prove coverage of all owners of the gadgetcore device. It must not be used as universal confirmation that all old ioctl calls have finished.
 
-## Sljedeći integracijski uvjet
+## Next Integration Condition
 
-Sigurno postavljanje treba obuhvatiti stvarne vlasnike uređaja, već započete VFS ulaze, životni vijek wrappera i neovisne gadget/EP0 callbackove. Inventar je pripremljen za read-only dio tog postupka, a MOD gate/omotač E0174/E0175 ostaju izvan produkcijskog modula. Nije postavljen nesiguran pointer swap niti proglašena spremnost za aktivaciju. E0164 ostaje neučitan i `physical_test_ready:false`.
+Safe deployment must cover real device owners, already-started VFS entries, wrapper lifetime, and independent gadget/EP0 callbacks. The inventory is prepared for the read-only part of that procedure, while MOD gate/wrapper E0174/E0175 remain outside the production module. No unsafe pointer swap was installed and activation readiness was not declared. E0164 remains unloaded and `physical_test_ready:false`.

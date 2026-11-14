@@ -1,17 +1,17 @@
-# E0181 — Integracija MOD ioctl zaštite i provjeren fizički životni ciklus zajedničkog modula
+# E0181 — MOD ioctl Guard Integration and Verified Physical Lifecycle of Shared Module
 
-Datum: 2026-11-08. Kamera je spojena u Mass Storage načinu rada. Svi zapisi na kameri strogo su ograničeni na RAM `/tmp_bt`. Očuvan debugger PID 703; svih 605 testova emulatora prolazi.
+Date: 2026-11-08. Camera is connected in Mass Storage mode. All writes on the camera are strictly limited to RAM `/tmp_bt`. Debugger PID 703 preserved; all 605 emulator tests pass.
 
 ---
 
-## 1. Integracija MOD ioctl Zaštite u Kernel Modul
+## 1. Integration of MOD ioctl Guard into Kernel Module
 
-U nastavku E0174 (atomski pristupni gate), E0175 (omotač izvornog ioctl-a) i E0180 (razrješenje referenci i simbola modula), dovršena je formalna integracija zaštitnog omotača u sam kernel modul `usbg_video_a6400_shared_candidate.ko`:
+Continuing from E0174 (atomic access gate), E0175 (wrapper of original ioctl), and E0180 (resolution of module references and symbols), formal integration of the protective wrapper into the kernel module `usbg_video_a6400_shared_candidate.ko` was completed:
 
-1. **Uklanjanje Ad-Hoc Zastavice**:
-   - U `tools/native_camera/uvc_ptp_module_shim.c` uklonjena je lokalna jednostavna varijabla `static volatile unsigned int gate;`.
-   - Uključena su formalna zaglavlja `uvc_ptp_mode_gate.h` i `uvc_ptp_ioctl_guard.h`.
-   - Definirana je struktura:
+1. **Removal of Ad-Hoc Flag**:
+   - In `tools/native_camera/uvc_ptp_module_shim.c`, the local simple variable `static volatile unsigned int gate;` was removed.
+   - Formal headers `uvc_ptp_mode_gate.h` and `uvc_ptp_ioctl_guard.h` were included.
+   - Structure defined:
      ```c
      static struct a6400_uvc_ioctl_guard native_guard = {
          .gate = {0},
@@ -19,7 +19,7 @@ U nastavku E0174 (atomski pristupni gate), E0175 (omotač izvornog ioctl-a) i E0
          .fault = 0
      };
      ```
-   - Izložena je funkcija omotača za izvorni VFS gadgetcore ulaz:
+   - Wrapper function exposed for the original VFS gadgetcore entry:
      ```c
      long a6400_uvc_native_gadgetcore_ioctl(void *file, unsigned int command, unsigned long arg)
      {
@@ -27,67 +27,67 @@ U nastavku E0174 (atomski pristupni gate), E0175 (omotač izvornog ioctl-a) i E0
      }
      ```
 
-2. **Atomska Ekskluzivnost Tijekom MOD Operacija**:
-   - Operacije `a6400_uvc_shared_ioctl` i `a6400_uvc_shared_release` pozivaju `a6400_uvc_guard_claim(&native_guard)`. Ako je izvorni ioctl u tijeku (`count >= 1`), claim vraća `-EBUSY` (`-16`), čime se sprječava istovremena izmjena stanja.
-   - Dok MOD drži transakciju (`HELD` bit `0x80000000`), bilo koji poziv kroz `a6400_uvc_native_gadgetcore_ioctl` biva odmah odbijen s `-EBUSY` bez dodirivanja izvornog kernel koda.
-   - Registracijski hookovi (`a6400_uvc_shared_register_hook` i `unregister_hook`) strogo provjeravaju je li gate u stanju `HELD` prije izmjene pokazivača deskriptora.
-   - Po završetku operacije poziva se `a6400_uvc_guard_release(&native_guard)` koji atomski vraća gate u nulto stanje.
+2. **Atomic Exclusivity During MOD Operations**:
+   - Operations `a6400_uvc_shared_ioctl` and `a6400_uvc_shared_release` call `a6400_uvc_guard_claim(&native_guard)`. If an original ioctl is in progress (`count >= 1`), claim returns `-EBUSY` (`-16`), preventing concurrent state modification.
+   - While MOD holds the transaction (`HELD` bit `0x80000000`), any call through `a6400_uvc_native_gadgetcore_ioctl` is immediately rejected with `-EBUSY` without touching original kernel code.
+   - Registration hooks (`a6400_uvc_shared_register_hook` and `unregister_hook`) strictly check whether the gate is in the `HELD` state before modifying descriptor pointers.
+   - Upon completion of the operation, `a6400_uvc_guard_release(&native_guard)` is called, atomically returning the gate to the zero state.
 
-3. **Nadopuna Buildera i C Prevođenja**:
-   - `tools/research/build_uvc_composite_module.py` dopunjen je uvrštavanjem `uvc_ptp_mode_gate.c` i `uvc_ptp_ioctl_guard.c` u kompilaciju zajedničkog kandidata.
-   - Prevođenje ARMv7 softfp bez libc ovisnosti dodaje točno 0 novih vanjskih simbola, budući da moduli koriste samo ugrađene GCC atomske funkcije (`__sync_bool_compare_and_swap`, `__sync_val_compare_and_swap`).
+3. **Builder and C Compilation Additions**:
+   - `tools/research/build_uvc_composite_module.py` was updated to include `uvc_ptp_mode_gate.c` and `uvc_ptp_ioctl_guard.c` in compiling the shared candidate.
+   - ARMv7 softfp compilation without libc dependencies adds exactly 0 new external symbols, since the modules use only built-in GCC atomic intrinsics (`__sync_bool_compare_and_swap`, `__sync_val_compare_and_swap`).
 
 ---
 
-## 2. Statička i Emulacijska Verifikacija
+## 2. Static and Emulation Verification
 
-1. **Izgrađeni Kandidat**:
-   - Putanja: `artifacts/native/uvc-ptp-module-e0181/usbg_video_a6400_shared_candidate.ko`.
-   - Veličina: **60.084 bajtova**.
+1. **Built Candidate**:
+   - Path: `artifacts/native/uvc-ptp-module-e0181/usbg_video_a6400_shared_candidate.ko`.
+   - Size: **60,084 bytes**.
    - SHA-256: `be567fcd9db143190b41c1dbb07a5917cb6f348540a12d9b9a8f0103a0f197d1`.
-   - Broj nedefiniranih simbola: točno **49**, svi 100% potvrđeni u tablici izvoza kernela 3.0.27_nl-rt106+. Nema nijednog GPL-only uvoza.
+   - Undefined symbols count: exactly **49**, all 100% confirmed in the export table of kernel `3.0.27_nl-rt106+`. Zero GPL-only imports.
 
-2. **Unicorn ARM Emulacijski Testovi**:
-   - Ažuriran `tools/research/audit_uvc_ptp_module.py` s mapiranjem adrese izvornog ioctl-a `0x602b8844` i testiranjem novih ugovora.
-   - Svih **33 provjere prolazi** (`offline_module_audit_passed`):
-     - `concurrent-release-rejected`: kad je native poziv u tijeku (`count=1`), release vraća `-EBUSY`.
-     - `concurrent-ioctl-rejected`: kad je native poziv u tijeku, ioctl vraća `-EBUSY`.
-     - `native-ioctl-dispatch-forwarded`: kad je gate slobodan, izvorni poziv se prosljeđuje na `0x602b8844`.
-     - `native-ioctl-held-rejected`: kad MOD drži transakciju (`HELD`), izvorni poziv se odbija s `-EBUSY`.
-   - Samostalni testovi `build_uvc_ptp_mode_gate.py`: svih **42 provjere prolazi**.
+2. **Unicorn ARM Emulation Tests**:
+   - Updated `tools/research/audit_uvc_ptp_module.py` with mapping of original ioctl address `0x602b8844` and testing the new contracts.
+   - All **33 checks pass** (`offline_module_audit_passed`):
+     - `concurrent-release-rejected`: when a native call is in progress (`count=1`), release returns `-EBUSY`.
+     - `concurrent-ioctl-rejected`: when a native call is in progress, ioctl returns `-EBUSY`.
+     - `native-ioctl-dispatch-forwarded`: when the gate is free, the original call is forwarded to `0x602b8844`.
+     - `native-ioctl-held-rejected`: when MOD holds the transaction (`HELD`), the original call is rejected with `-EBUSY`.
+   - Standalone tests of `build_uvc_ptp_mode_gate.py`: all **42 checks pass**.
 
 ---
 
-## 3. Fizička Verifikacija na Živoj Kameri Sony ILCE-6400
+## 3. Physical Verification on Live Sony ILCE-6400 Camera
 
-Izrađen je namjenski automatizirani verifikacijski alat `tools/research/run_uvc_ptp_module_lifecycle.py` koji provodi cjeloviti životni ciklus učitavanja i uklanjanja uz izradu verifikacijskih zapisa:
+A dedicated automated verification tool `tools/research/run_uvc_ptp_module_lifecycle.py` was created, executing the complete load and unload lifecycle while generating verification logs:
 
-1. **Preflight i Prijenos**:
-   - Debugger PID 703 aktivan u MSC načinu.
-   - `/proc/modules` prije testa ima 2.349 bajtova; modul `usbg_video` nije prisutan.
-   - Kandidat prenesen u `/tmp_bt/uvc_shared_lifecycle_20261108-162333-300861.ko` uz automatsku readback provjeru (SHA-256 byte-equal).
+1. **Preflight and Transfer**:
+   - Debugger PID 703 active in MSC mode.
+   - `/proc/modules` before test is 2,349 bytes; module `usbg_video` is not present.
+   - Candidate transferred to `/tmp_bt/uvc_shared_lifecycle_20261108-162333-300861.ko` with automatic readback verification (SHA-256 byte-equal).
 
-2. **Fizički `insmod`**:
-   - Naredba `insmod` vraća status `0` i zastavice `0`.
-   - `/proc/modules` potvrđuje uspješno učitan modul:
+2. **Physical `insmod`**:
+   - `insmod` command returns status `0` and flags `0`.
+   - `/proc/modules` confirms successfully loaded module:
      ```text
      usbg_video 47073 0 - Live 0x5f59b000 (P)
      ```
-   - Nije otvoren video čvor i nije pozvan aktivacijski ioctl (siguran probe bez preuzimanja USB linije).
+   - Video node was not opened and activation ioctl was not called (safe probe without taking over the USB line).
 
-3. **Fizički `rmmod`**:
-   - Naredba `rmmod usbg_video` vraća status `0` i zastavice `0`.
-   - `/proc/modules` nakon uklanjanja identičan je početnom stanju (`modules-after.txt` byte-equal `modules-before.txt`, 2.349 bajtova).
-   - Privremena `.ko` datoteka u `/tmp_bt` odmah obrisana.
+3. **Physical `rmmod`**:
+   - `rmmod usbg_video` command returns status `0` and flags `0`.
+   - `/proc/modules` after removal is identical to initial state (`modules-after.txt` byte-equal to `modules-before.txt`, 2,349 bytes).
+   - Temporary `.ko` file in `/tmp_bt` immediately deleted.
 
-4. **Integritet Sustava Nakon Ciklusa**:
-   - Debugger PID 703 u potpunosti funkcionalan i responzivan prije i nakon ciklusa.
-   - Proces `im.elf` (PID 149): `State: S (sleeping)`, `TracerPid: 0`, `Threads: 175` — bez rušenja ili anomalija.
-   - Svi zapisi pohranjeni u `artifacts/hardware/uvc-ptp-module-lifecycle-e0181/manifest.json`.
+4. **System Integrity After Cycle**:
+   - Debugger PID 703 fully functional and responsive before and after the cycle.
+   - Process `im.elf` (PID 149): `State: S (sleeping)`, `TracerPid: 0`, `Threads: 175` — no crashes or anomalies.
+   - All logs stored in `artifacts/hardware/uvc-ptp-module-lifecycle-e0181/manifest.json`.
 
 ---
 
-## 4. Regresijska Verifikacija
+## 4. Regression Verification
 
-* Svih **605 testova emulatora** prolazi u 17,997 s (`OK`).
-* Svi zapisi na fizičkoj kameri izvršeni su isključivo u RAM `/tmp_bt`.
+* All **605 emulator tests** pass in 17.997 s (`OK`).
+* All writes on the physical camera were executed exclusively in RAM `/tmp_bt`.

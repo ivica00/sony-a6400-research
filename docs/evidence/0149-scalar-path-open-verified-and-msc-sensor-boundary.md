@@ -1,49 +1,49 @@
-# E0149: ScalarInfra SET_PATH Start Verificiran i Granica Senzora u Mass Storage Načinu Rada
+# E0149: ScalarInfra SET_PATH Start Verified and Sensor Boundary in Mass Storage Mode
 
-Datum: 2026-11-07.  
-Opseg: Fizička kamera Sony ILCE-6400 (firmware 2.00, kernel 3.0.27_nl-rt106+).  
-Ograničenja: Komunikacija na hrvatskom jeziku; svi zapisi na kameri strogo ograničeni na RAM `/tmp_bt`; bez SD/NAND/boot/preload izmjena; očuvan debugger PID 703; očuvano svih 599 testova emulatora.
+Date: 2026-11-07.  
+Scope: Physical camera Sony ILCE-6400 (firmware 2.00, kernel 3.0.27_nl-rt106+).  
+Constraints: All camera writes strictly limited to RAM `/tmp_bt`; no SD/NAND/boot/preload modifications; debugger PID 703 preserved; all 599 emulator tests preserved.
 
 ---
 
-## 1. Otkriće Mehanizma u `ScalarJpegOpen` (`0x63a918c0`)
+## 1. Mechanism Discovery in `ScalarJpegOpen` (`0x63a918c0`)
 
-Detaljnom dekompilacijom funkcije `ScalarJpegOpen` (`0x63a918c0`) u `av-cam-camera-original.bin` (baza `0x635c6000`) utvrđen je točan uzrok prethodnog čekanja od 2000 ms:
+Detailed decompilation of function `ScalarJpegOpen` (`0x63a918c0`) in `av-cam-camera-original.bin` (base `0x635c6000`) established the exact cause of the previous 2000 ms wait:
 
-1. **Izvorna Alokacija u `ScalarJpegOpen`**:
-   - Na adresi `0x63a91938`, `ScalarJpegOpen` **samostalno** poziva funkciju `0x63a8c7b8`:
+1. **Original Allocation in `ScalarJpegOpen`**:
+   - At address `0x63a91938`, `ScalarJpegOpen` **independently** calls function `0x63a8c7b8`:
      ```arm
      63a91936: add   r2, sp, #12
      63a91938: movw  r0, #0x276        ; UnitType 0x276 (JPEG sequence buffer)
      63a9193c: movs  r1, #0            ; flags = 0
      63a9193e: bl    0x63a8c7b8        ; dmm_alloc_unit_new(0x276, 0)
-     63a91942: ldrh  r2, [sp, #16]     ; dohvat dodijeljene ručke
-     63a91946: strh  r2, [r4, #0x1e0]  ; spremanje ručke
-     63a9194a: cmp   r0, #0            ; provjera statusa
-     63a9194c: beq.n 0x63a91a02        ; USPJEH -> završetak otvaranja!
+     63a91942: ldrh  r2, [sp, #16]     ; fetch assigned handle
+     63a91946: strh  r2, [r4, #0x1e0]  ; store handle
+     63a9194a: cmp   r0, #0            ; check status
+     63a9194c: beq.n 0x63a91a02        ; SUCCESS -> open complete!
      ```
-   - Ako funkcija vrati grešku (`r0 != 0`):
+   - If the function returns an error (`r0 != 0`):
      ```arm
      63a91968: mov.w r2, #2000         ; 2000 ms sleep
      63a91972: bl    0x635dd4a8
      63a91984: bl    0x63c26e94        ; "[SFRA][ERROR] MEMORY SHORTAGE!!!"
      ```
 
-2. **Uzrok Blokade pri Preuranjenoj Alokaciji**:
-   - Kada je klijentska aplikacija unaprijed pozvala `AllocUnitNew(0x276, 0)`, DMM kernel je registrirao ručku pod extentom `0005`.
-   - Budući da je `0x276` singleton jedinica sekvence, ponovni poziv `AllocUnitNew` iz `ScalarJpegOpen` vraća status `-1`.
-   - Posljedično, `ScalarJpegOpen` tumači to kao nedostatak memorije i ulazi u petlju čekanja od 2000 ms, čime klijent na `QUEUE_SCALAR` ne dobiva odgovor unutar zadanog timeouta (`ret = -3`).
+2. **Cause of Stall on Premature Allocation**:
+   - When the client application pre-called `AllocUnitNew(0x276, 0)`, the DMM kernel registered the handle under extent `0005`.
+   - Since `0x276` is a singleton sequence unit, a repeated `AllocUnitNew` call from `ScalarJpegOpen` returns status `-1`.
+   - Consequently, `ScalarJpegOpen` interprets this as a memory shortage and enters a 2000 ms wait loop, so the client on `QUEUE_SCALAR` does not receive a reply within the given timeout (`ret = -3`).
 
-3. **Ispravan Ugovor**:
-   - Klijent postavlja DMM pravilo na Rule 5 (`SetAllocRule(5, 0)`).
-   - Klijent **ne alocira** jedinicu `0x276` unaprijed, već osigurava da je slobodna.
-   - `ScalarJpegOpen` sam uspješno alocira `0x276` i odmah vraća odgovor status `0`.
+3. **Correct Contract**:
+   - Client sets DMM rule to Rule 5 (`SetAllocRule(5, 0)`).
+   - Client **does not allocate** unit `0x276` in advance, instead ensuring it is free.
+   - `ScalarJpegOpen` itself allocates `0x276` successfully and immediately returns status `0`.
 
 ---
 
-## 2. Fizička Verifikacija na Živoj Kameri
+## 2. Physical Verification on Live Camera
 
-Prilagođeni freestanding ARM utility `uvc_acquire_single_jpeg_arm` (7.472 bajta) izvršen je na fizičkoj kameri Sony ILCE-6400:
+Custom freestanding ARM utility `uvc_acquire_single_jpeg_arm` (7,472 bytes) was executed on the physical Sony ILCE-6400 camera:
 
 ```text
 === A6400 NATIVE SENSOR JPEG ACQUISITION ===
@@ -67,38 +67,38 @@ NOTE: No frame acquired in polling loop (ret=1)
 === ACQUISITION EXECUTION FINISHED ===
 ```
 
-### Ključni Rezultati:
-1. `DMM_RULE5_RET=0`: Pravilo alokacije 5 uspješno aktivirano.
-2. `SET_PATH_RESET_RET=0`: Inicijalni reset cjevovoda uspješan.
-3. `SET_PATH_START_RET=0`: Konfiguracija 1280×720 @ 30 FPS prihvaćena, `ScalarJpegOpen` izvršen bez blokade.
-4. `SET_PATH_STOP_RET=0`: Cjevovod čistim putem vraćen u idle stanje.
-5. `RESTORE_RULE0_RET=0`: DMM pravilo [0000] u potpunosti obnovljeno.
-6. `/proc/udm/dmm_units`: Nula zaostalih ručki; kompletno čišćenje memorije verificirano.
+### Key Results:
+1. `DMM_RULE5_RET=0`: Allocation rule 5 successfully activated.
+2. `SET_PATH_RESET_RET=0`: Initial pipeline reset succeeded.
+3. `SET_PATH_START_RET=0`: Configuration 1280×720 @ 30 FPS accepted, `ScalarJpegOpen` executed without stall.
+4. `SET_PATH_STOP_RET=0`: Pipeline cleanly returned to idle state.
+5. `RESTORE_RULE0_RET=0`: DMM rule `[0000]` fully restored.
+6. `/proc/udm/dmm_units`: Zero leftover handles; complete memory cleanup verified.
 
 ---
 
-## 3. Granica Senzora u Mass Storage Načinu Rada
+## 3. Sensor Boundary in Mass Storage Mode
 
-Ispitivanje odgovora na `GET_JPEG` (`0x20` na `QUEUE_SCALAR` `0x0167046a`):
-- Primljeni payload:
+Inspection of reply to `GET_JPEG` (`0x20` on `QUEUE_SCALAR` `0x0167046a`):
+- Received payload:
   $$\text{payload} = [0x09, 0x20, 0x00, 0x11, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, \mathbf{0x00, 0x00, 0x00, 0x00}, \mathbf{0x00}, ...]$$
-- Greška na pomaku `+12` je `0` (`err == 0`, zahtjev je valjan i uspješno obrađen).
-- Zastavica na pomaku `+16` je `0` (`ready == 0`, prsten prazan).
+- Error at offset `+12` is `0` (`err == 0`, request is valid and processed successfully).
+- Flag at offset `+16` is `0` (`ready == 0`, ring empty).
 
-### Razlog:
-U USB Mass Storage načinu rada kamera funkcionira isključivo kao vanjski disk s natpisom "USB Mode: Mass Storage". BIONZ X OS drži senzor, ekspoziciju i pretvorbu slike u stanju mirovanja radi uštede energije i termalne zaštite. Zbog toga se prsten sličica ne puni dok je kamera u MSC načinu.
+### Reason:
+In USB Mass Storage mode the camera operates exclusively as an external disk showing "USB Mode: Mass Storage". BIONZ X OS keeps the sensor, exposure, and image conversion idle for power saving and thermal protection. Because of this, the frame ring does not fill while the camera is in MSC mode.
 
-Za stjecanje kontinuiranih kadrova sa senzora potreban je prijelaz u radni način snimanja (Shooting / PC Remote mode), gdje PTP/ISP proces kontinuirano procesira žive sličice (kao verificirano u E0137 za CinemaHUD).
+To obtain continuous frames from the sensor, a transition to an active shooting mode (Shooting / PC Remote mode) is required, where the PTP/ISP process continuously processes live frames (as verified in E0137 for CinemaHUD).
 
 ---
 
-## 4. Regresijska Verifikacija
+## 4. Regression Verification
 
-- Cjelokupni skup testova emulatora uspješno je izvršen:
+- Full emulator test suite executed successfully:
   ```text
   Ran 599 tests in 15.413s - OK
   ```
-- Stanje fizičke kamere:
-  - Mass Storage način rada aktivan.
-  - Root debugger PID 703 responzivan i neoštećen.
-  - Svi međuspremnici i DMM pravila očišćeni (nula curenja memorije).
+- Physical camera state:
+  - Mass Storage mode active.
+  - Root debugger PID 703 responsive and undamaged.
+  - All buffers and DMM rules cleaned (zero memory leaks).

@@ -282,6 +282,21 @@ class A5kuHostClient:
         )
         self._request(frame, A5kuMessageType.CONTROL_DONE)
 
+    def set_interface(self, interface: int, alt_setting: int) -> None:
+        """Issue a standard USB SET_INTERFACE request."""
+        self.control_out(0x01, 0x0B, alt_setting, interface)
+
+    def bulk_in(self, ep: int, max_length: int) -> bytes:
+        """Issue an A5KU IN transfer on ``ep`` up to ``max_length`` bytes."""
+        frame = A5kuFrame(
+            msg_type=A5kuMessageType.IN,
+            ep=ep & 0xFF,
+            req_id=self._alloc_id(),
+            arg=max_length,
+        )
+        reply = self._request(frame, A5kuMessageType.IN_DONE)
+        return reply.payload
+
     def enumerate_uvc_ptp(self, address: int = 1) -> A5kuEnumerationResult:
         """Execute the RE_USB_HOST_PATH §6.2 enumeration sequence and validate UVC+PTP."""
         speed = self.reset()

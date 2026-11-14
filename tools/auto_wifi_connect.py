@@ -24,7 +24,7 @@ def scan_network():
     print("[*] Local Subnet: 192.168.100.0/24 | Target Port: 2323")
     print("[*] ==========================================================")
     print("[*] Ready. Unplug USB, then on camera select:")
-    print("[*]   MENU -> Network -> 'Send to Computer' (ili 'Ctrl w/ Smartphone')")
+    print("[*]   MENU -> Network -> 'Send to Computer' (or 'Ctrl w/ Smartphone')")
     print("[*] Waiting for camera connection...\n")
 
     seen_ips = set()

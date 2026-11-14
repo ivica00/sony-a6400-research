@@ -27,21 +27,21 @@ def dump_backup(driver_name='libusb'):
         device = getDevice(driver)
         
         if not device:
-            print("\n[-] Kamera nije pronaÄ‘ena.")
-            print("    Proveri:")
-            print("    1. Da li je kamera ukljuÄŤena i povezana USB kablom?")
-            print("    2. Da li je USB Connection postavljen na 'Mass Storage (MSC)'?")
-            print("    3. Ako je kamera veÄ‡ u Service Mode-u, da li je Zadigom postavljen libusb-win32 / libusbK drajver?")
+            print("\n[-] Camera not found.")
+            print("    Check:")
+            print("    1. Is the camera powered on and connected via USB cable?")
+            print("    2. Is USB Connection set to 'Mass Storage (MSC)'?")
+            print("    3. If the camera is already in Service Mode, is the libusb-win32 / libusbK driver installed via Zadig?")
             return
 
         # Case 1: In Mass Storage mode
         if isinstance(device, SonyMscExtCmdDevice):
-            print("\n[+] Detektovana kamera u Mass Storage modu.")
-            print("[*] Slanje komande za prelazak u Service Mode...")
+            print("\n[+] Camera detected in Mass Storage mode.")
+            print("[*] Sending command to enter Service Mode...")
             auth = SonySenserAuthDevice(device.driver)
             auth.start()
             auth.authenticate()
-            print("[*] Kamera se resetuje u Service Mode. SaÄŤekajte par sekundi...")
+            print("[*] Camera is resetting into Service Mode. Please wait a few seconds...")
             time.sleep(3)
             
             # Re-scan for device in service mode
@@ -54,25 +54,25 @@ def dump_backup(driver_name='libusb'):
                     break
             
             if not device:
-                print("\n[!] Kamera je preĹˇla u Service Mode, ali operativni sistem ÄŤeka drajver!")
-                print("    Otvorite 'tools\\zadig.exe':")
+                print("\n[!] Camera entered Service Mode, but the OS is waiting for a driver!")
+                print("    Open 'tools\\zadig.exe':")
                 print("    - Options -> List All Devices")
-                print("    - Izaberite kameru sa liste")
-                print("    - Izaberite 'libusb-win32' ili 'libusbK' i kliknite 'Install / Replace Driver'")
-                print("    - Nakon toga ponovo pokrenite ovu skriptu.")
+                print("    - Select the camera from the list")
+                print("    - Select 'libusb-win32' or 'libusbK' and click 'Install / Replace Driver'")
+                print("    - Then run this script again.")
                 return
 
         # Case 2: In Service Mode
         if isinstance(device, SonySenserDevice):
-            print("\n[+] Kamera je uspeĹˇno prepoznata u Service Mode-u!")
-            print("[*] Autentifikacija sa servisnim slojem kamere...")
+            print("\n[+] Camera successfully recognized in Service Mode!")
+            print("[*] Authenticating with the camera service layer...")
             auth = SonySenserAuthDevice(device.driver)
             auth.start()
             auth.authenticate()
             
             try:
                 senser_cam = SonySenserCamera(device)
-                print("[*] OÄŤitavanje kompletnog Backup.bin (NVRAM postavke)...")
+                print("[*] Reading full Backup.bin (NVRAM settings)...")
                 backup_data = senser_cam.getBackupPresetData(True)
                 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -82,17 +82,17 @@ def dump_backup(driver_name='libusb'):
                 with open(filename, "wb") as f:
                     f.write(backup_data)
                 
-                print(f"\n[SUCCESS] Backup uspeĹˇno saÄŤuvan!")
-                print(f"          Fajl: {os.path.abspath(filename)}")
-                print(f"          VeliÄŤina: {len(backup_data)} bajtova")
+                print(f"\n[SUCCESS] Backup saved successfully!")
+                print(f"          File: {os.path.abspath(filename)}")
+                print(f"          Size: {len(backup_data)} bytes")
                 
                 # Check properties count
                 from pmca.backup import BackupFile
                 bf = BackupFile(open(filename, "rb"))
                 props = list(bf.listProperties())
-                print(f"          Broj oÄŤitanih NVRAM svojstava (properties): {len(props)}")
-                print(f"          Revizija backupa: {bf.revision}")
-                print(f"          Regija: {bf.header.region.decode('latin1', 'ignore').strip(chr(0))}")
+                print(f"          Number of NVRAM properties read: {len(props)}")
+                print(f"          Backup revision: {bf.revision}")
+                print(f"          Region: {bf.header.region.decode('latin1', 'ignore').strip(chr(0))}")
             finally:
                 auth.stop()
 

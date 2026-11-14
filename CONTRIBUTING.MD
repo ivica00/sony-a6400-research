@@ -16,6 +16,7 @@ For UVC video and PTP mode, start with [docs/CONTRIBUTING_UVC_PTP.md](docs/CONTR
 - Preserve original inputs and existing policy baselines. Stop explicitly at unsupported behavior; do not replace unknown services with success values or host-written camera decisions.
 - Keep physical observations, original-code execution, fixture results and inferences distinct. Record firmware/input hashes, commands, results, failures and remaining limitations in `docs/evidence/` for material findings.
 - Never include proprietary firmware, extracted binaries, backups, raw RAM captures, credentials or generated payloads. Use constructed fixtures where possible.
+- **Language policy:** Use exclusively English for all documentation, evidence records, code comments, docstrings, UI strings, pull requests, and commit messages.
 
 ## Validate
 

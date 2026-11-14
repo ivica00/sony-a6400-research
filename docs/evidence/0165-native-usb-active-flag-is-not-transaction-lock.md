@@ -1,39 +1,39 @@
-# E0165 — Izvorna USB active oznaka nije zaštita cijele transakcije
+# E0165 — Original USB Active Flag Is Not a Full-Transaction Lock
 
-Datum: 2026-11-08. Nema pristupa kameri, prijenosa ni zapisa. Kandidat E0164 ostaje nepromijenjen i nije spreman za fizički pokus.
+Date: 2026-11-08. No camera access, uploads, or writes. Candidate E0164 remains unchanged and is not ready for physical test.
 
-## Izvršeni izvorni kod
+## Executed Original Code
 
-`tools/research/probe_uvc_ptp_native_serialization.py` SHA-provjerava originalni a6400 kernel (`12eeec829407595e28265f7d0db3b88c56f63a9f0fdd725c9c53c66a49643707`) i izvršava originalni `usb_gadgetcore_ioctl` na 0x602b8844 te originalne ARM atomske funkcije `_test_and_clear_bit` i `_test_and_set_bit`. Ne zamjenjuje njihove odluke hostovim kodom.
+`tools/research/probe_uvc_ptp_native_serialization.py` SHA-verifies original a6400 kernel (`12eeec829407595e28265f7d0db3b88c56f63a9f0fdd725c9c53c66a49643707`) and executes original `usb_gadgetcore_ioctl` at `0x602b8844` and original ARM atomic functions `_test_and_clear_bit` and `_test_and_set_bit`. It does not replace their decisions with host code.
 
-17 provjera prolazi. Rezultat: `artifacts/analysis/uvc-ptp-serialization-e0165/manifest.json`. GC, gadget, ops, stari root i dvije stogovne regije izričiti su fixture podaci. Get-speed servis je izričita zamjena. Pullup i save_desc_tbl su granice prije kojih se izvršavanje zaustavlja; kontroler i alokator se ne izvršavaju.
+17 checks pass. Result: `artifacts/analysis/uvc-ptp-serialization-e0165/manifest.json`. GC, gadget, ops, old root, and two stack regions are explicit fixture data. Get-speed service is an explicit stub. Pullup and `save_desc_tbl` are boundaries before which execution stops; controller and allocator are not executed.
 
-| Originalni put | Utvrđeni redoslijed |
+| Original path | Observed sequence |
 |---|---|
-| Commit 0x400ce203 | test_and_set_bit(2, gc+0x68); ako je već postavljen, -EBUSY; inače speed, save_desc_tbl, gcw_start, pullup(1) |
-| Disconnect 0xe204 | test_and_clear_bit(2, gc+0x68); ako nije bio postavljen, povratak; inače pullup(0), setup_disconnect, gcw_stop, free_desc_tbl |
+| Commit `0x400ce203` | `test_and_set_bit(2, gc+0x68)`; if already set, `-EBUSY`; else speed, `save_desc_tbl`, `gcw_start`, `pullup(1)` |
+| Disconnect `0xe204` | `test_and_clear_bit(2, gc+0x68)`; if not set, return; else `pullup(0)`, `setup_disconnect`, `gcw_stop`, `free_desc_tbl` |
 
-Ostali bitovi ostaju očuvani. Posebno: nakon brisanja active bita, a prije prvog pullup(0), gc+0x6c još pokazuje stari root. U izričitom pokusu preplitanja drugi poziv originalnog commit puta na zasebnom stogu prolazi test_and_set_bit, ponovno postavlja active i dolazi do save_desc_tbl sa starim rootom još prisutnim.
+Other bits remain preserved. Notably: after clearing the active bit, and before the first `pullup(0)`, `gc+0x6c` still points to the old root. In an explicit interleaving test, a second call of the original commit path on a separate stack passes `test_and_set_bit`, sets active again, and reaches `save_desc_tbl` with the old root still present.
 
-Ovo dokazuje da ova oznaka sama ne osigurava međusobno isključivanje cijelog postupka. Ne dokazuje da fizički Sonyjev raspoređivač ili pozivatelji stvarno dopuštaju taj raspored. Vanjsko usklađivanje ostaje otvoreno pitanje. Nije dopušteno proglasiti active bit mutexom ili ga koristiti kao rezervaciju tijekom naše cijele zamjene.
+This proves that this flag alone does not provide mutual exclusion for the entire procedure. It does not prove that Sony's physical scheduler or callers actually permit that interleaving. External serialization remains an open question. It is not permitted to declare the active bit a mutex or use it as a reservation during our entire swap.
 
-## Izvorni korisnički pozivatelj
+## Original User-Space Caller
 
-Zadržana a6400 `libInfraUsbCmn.so`, SHA-256 `5338bafbb545ebc223fac15c9253a41ac9fe49c01fe32c73af40c3fb50eec0a6`, izvoz `CUsbSvc::stop_gadget` na Thumb 0x9c55:
+Preserved a6400 `libInfraUsbCmn.so`, SHA-256 `5338bafbb545ebc223fac15c9253a41ac9fe49c01fe32c73af40c3fb50eec0a6`, export `CUsbSvc::stop_gadget` at Thumb `0x9c55`:
 
-- 0x9c62 priprema ioctl 0xe204, a 0x9c72 poziva ioctl PLT 0x7b20.
-- 0x9c7a priprema ioctl 0xe202, a 0x9c80 opet poziva ioctl.
-- Tek 0x9c84 priprema this+0xa4 i 0x9c8e poziva pthread_mutex_lock preko PLT 0x7b94.
-- 0x9d34 poziva pthread_mutex_unlock preko PLT 0x7af4.
+- `0x9c62` prepares ioctl `0xe204`, and `0x9c72` calls ioctl PLT `0x7b20`.
+- `0x9c7a` prepares ioctl `0xe202`, and `0x9c80` calls ioctl again.
+- Only at `0x9c84` does it prepare `this+0xa4` and at `0x9c8e` call `pthread_mutex_lock` via PLT `0x7b94`.
+- `0x9d34` calls `pthread_mutex_unlock` via PLT `0x7af4`.
 
-PLT odredišta utvrđena su iz njihovih stvarnih ARM add/add/ldr instrukcija i `.rel.plt`: GOT 0x1b950=ioctl, 0x1b974=pthread_mutex_lock, 0x1b944=pthread_mutex_unlock. Nije korištena pretpostavka da sve PLT stavke imaju isti razmak (Thumb interworking umetci to onemogućuju).
+PLT targets were determined from their actual ARM add/add/ldr instructions and `.rel.plt`: GOT `0x1b950=ioctl`, `0x1b974=pthread_mutex_lock`, `0x1b944=pthread_mutex_unlock`. No assumption was made that all PLT entries have equal stride (Thumb interworking veneers prevent that).
 
-Disassembly je zadržan u `artifacts/analysis/uvc-ptp-serialization-e0165/original-userspace-callers.txt`. Završni literal pool u tom grubom ispisu nije dokaz izvršivog koda. Gore navedene upute nalaze se u stvarnom tijelu funkcije. Ispravak E0166: start_gadget 0x9ed9 predaje posao kroz **CUsb::request**, PLT 0x7b10 / GOT 0x1b94c. Ranija oznaka port_init bila je pogrešna jer je dobivena pretpostavkom stalnog razmaka PLT stavki, a ne stvarnim odredištem ove stavke. Njegov vanjski red poruka i radna dretva nisu izvršeni u E0165.
+Disassembly is preserved in `artifacts/analysis/uvc-ptp-serialization-e0165/original-userspace-callers.txt`. The trailing literal pool in that raw dump is not proof of executable code. The above instructions are in the actual function body. E0166 correction: `start_gadget` `0x9ed9` submits work through **CUsb::request**, PLT `0x7b10` / GOT `0x1b94c`. Earlier label `port_init` was wrong because it was obtained by assuming constant PLT stride rather than the actual target of that entry. Its external message queue and worker thread were not executed in E0165.
 
-Mutex this+0xa4 ne obuhvaća navedeni disconnect ioctl u ovom tijelu. Ne smije se uzeti kao zajednička zaštita za kernel modul bez dokaza o vanjskom pozivatelju, životnom vijeku i svim drugim USB ulazima.
+Mutex `this+0xa4` does not cover the listed disconnect ioctl in this body. It must not be taken as a shared guard for the kernel module without proof of external caller, lifetime, and all other USB entry points.
 
-## Daljnji rad
+## Next Steps
 
-Pratiti CUsb::request i red poruka CUsbSvc do stvarnog izvršitelja promjena (nastavak E0166). Utvrditi može li se zajednička konfiguracija postaviti kroz isti izvorni put ili treba zaštititi sve izvorne kernel ulaze. Samostalni mutex u našem modulu, active bit i spinlock gc+0x30 nisu zamjenjivi: posljednji štiti drukčije dijelove registra/callback podataka i ne smije se držati preko spavajućih operacija bez dokaza.
+Trace `CUsb::request` and `CUsbSvc` message queue to the actual executor of changes (continued in E0166). Determine whether shared configuration can be installed through the same original path or all original kernel entry points must be guarded. A standalone mutex in our module, the active bit, and spinlock `gc+0x30` are not interchangeable: the last protects different register/callback fields and must not be held across sleeping operations without proof.
 
-Nisu izvršeni novi projektni regresijski testovi jer produkcijski kandidat nije mijenjan. Prethodni rezultat E0164 ostaje 605 prolaznih testova. Novi probe prolazi svih 17 specifičnih provjera originalnog koda.
+No new project regression tests were run because the production candidate did not change. Previous E0164 result remains 605 passing tests. The new probe passes all 17 specific checks of original code.

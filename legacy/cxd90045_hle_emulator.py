@@ -133,16 +133,16 @@ class CXD90045_HLE_Emulator:
             "iso_val": 400,             # current metering ISO 400
             "exp_comp": "±0.0",         # +-0.0
             "picture_profile": 2,       # PP2
-            "quality": "RAW",           # RAW, RAW & JPEG, JPEG Ekstra fino, JPEG Fino, JPEG Standardno
-            "raw_type": "Kompresovan RAW",
+            "quality": "RAW",           # RAW, RAW & JPEG, JPEG Extra Fine, JPEG Fine, JPEG Standard
+            "raw_type": "Compressed RAW",
             "jpeg_size": "L: 24M",
             "aspect_ratio": "3:2",      # 3:2, 16:9, 1:1
-            "panorama": "Standardno",
-            "long_exp_nr": "Ukljuceno",
-            "shutter_type": "Mehanicki",
-            "silent_shutter": "Iskljuceno",
-            "release_w_o_lens": "Omoguceno",
-            "steadyshot": "Ukljuceno",
+            "panorama": "Standard",
+            "long_exp_nr": "On",
+            "shutter_type": "Mechanical",
+            "silent_shutter": "Off",
+            "release_w_o_lens": "Enable",
+            "steadyshot": "On",
             "color_space": "sRGB",
             "grid_line": "Rule of 3rds",
             "focus_mode": "AF-C",
@@ -255,53 +255,53 @@ class CXD90045_HLE_Emulator:
 
         # Detailed mapping of all 6 tabs and items to parameter options & backup tags
         self.menu_options_map = {
-            # Tab 1: 1 Snimanje (Image Quality)
-            (1, 0): {"name": "Format datoteke", "key": "quality", "options": ["RAW", "RAW & JPEG", "JPEG Ekstra fino", "JPEG Fino", "JPEG Standardno"], "tag": 0x0101},
-            (1, 1): {"name": "Kvalitet slike", "key": "raw_type", "options": ["Kompresovan RAW", "Nekompresovan RAW"], "tag": 0x0102},
-            (1, 2): {"name": "Velicina slike (JPEG)", "key": "jpeg_size", "options": ["L: 24M", "M: 12M", "S: 6.0M"], "tag": 0x0103},
-            (1, 3): {"name": "Odnos stranica", "key": "aspect_ratio", "options": ["3:2", "16:9", "1:1"], "tag": 0x0104},
-            (1, 4): {"name": "Format panorame", "key": "panorama", "options": ["Standardno", "Siroko"], "tag": 0x0105},
-            (1, 5): {"name": "Dugotrajna ekspozicija NR", "key": "long_exp_nr", "options": ["Ukljuceno", "Iskljuceno"], "tag": 0x0106},
+            # Tab 1: 1 Shooting (Image Quality)
+            (1, 0): {"name": "File Format", "key": "quality", "options": ["RAW", "RAW & JPEG", "JPEG Extra Fine", "JPEG Fine", "JPEG Standard"], "tag": 0x0101},
+            (1, 1): {"name": "Image Quality", "key": "raw_type", "options": ["Compressed RAW", "Uncompressed RAW"], "tag": 0x0102},
+            (1, 2): {"name": "JPEG Image Size", "key": "jpeg_size", "options": ["L: 24M", "M: 12M", "S: 6.0M"], "tag": 0x0103},
+            (1, 3): {"name": "Aspect Ratio", "key": "aspect_ratio", "options": ["3:2", "16:9", "1:1"], "tag": 0x0104},
+            (1, 4): {"name": "Panorama: Size", "key": "panorama", "options": ["Standard", "Wide"], "tag": 0x0105},
+            (1, 5): {"name": "Long Exposure NR", "key": "long_exp_nr", "options": ["On", "Off"], "tag": 0x0106},
 
-            # Tab 2: 2 Snimanje (Shooting Settings)
-            (2, 0): {"name": "Tip okidaca", "key": "shutter_type", "options": ["Mehanicki", "Elektronska prva zavesica", "Potpuno elektronski"], "tag": 0x0201},
-            (2, 1): {"name": "Tiho snimanje", "key": "silent_shutter", "options": ["Iskljuceno", "Ukljuceno"], "tag": 0x0202},
-            (2, 2): {"name": "Release bez objektiva", "key": "release_w_o_lens", "options": ["Omoguceno", "Onemoguceno"], "tag": 0x0203},
-            (2, 3): {"name": "SteadyShot", "key": "steadyshot", "options": ["Ukljuceno", "Iskljuceno"], "tag": 0x0204},
+            # Tab 2: 2 Shooting (Shooting Settings)
+            (2, 0): {"name": "Shutter Type", "key": "shutter_type", "options": ["Mechanical", "Electronic Front Curtain", "Fully Electronic"], "tag": 0x0201},
+            (2, 1): {"name": "Silent Shooting", "key": "silent_shutter", "options": ["Off", "On"], "tag": 0x0202},
+            (2, 2): {"name": "Release w/o Lens", "key": "release_w_o_lens", "options": ["Enable", "Disable"], "tag": 0x0203},
+            (2, 3): {"name": "SteadyShot", "key": "steadyshot", "options": ["On", "Off"], "tag": 0x0204},
             (2, 4): {"name": "Color Space", "key": "color_space", "options": ["sRGB", "AdobeRGB"], "tag": 0x0205},
-            (2, 5): {"name": "Grid Line", "key": "grid_line", "options": ["Rule of 3rds", "Square Grid", "Diag + Square", "Iskljuceno"], "tag": 0x0206},
+            (2, 5): {"name": "Grid Line", "key": "grid_line", "options": ["Rule of 3rds", "Square Grid", "Diag + Square", "Off"], "tag": 0x0206},
 
-            # Tab 3: Mreza
-            (3, 0): {"name": "Funkcija Slanja na Smartfon", "key": "send_smart", "options": ["Ukljuceno", "Iskljuceno"], "tag": 0x0301},
-            (3, 1): {"name": "Slanje na Racunar", "key": "send_pc", "options": ["Ukljuceno", "Iskljuceno"], "tag": 0x0302},
-            (3, 2): {"name": "Prikaz na TV", "key": "tv_out", "options": ["Spreman", "Prekid"], "tag": 0x0303},
-            (3, 3): {"name": "WLAN Podesavanja", "key": "wlan_mode", "options": ["WPS Push", "Access Point Povezivanje"], "tag": 0x0304},
-            (3, 4): {"name": "Bluetooth Podesavanja", "key": "bt_mode", "options": ["Ukljuceno", "Iskljuceno"], "tag": 0x0305},
-            (3, 5): {"name": "Uredjivanje naziva uredjaja", "key": "device_name", "options": ["ILCE-6400 (Sony α6400)"], "tag": 0x0306},
+            # Tab 3: Network
+            (3, 0): {"name": "Send to Smartphone Func.", "key": "send_smart", "options": ["On", "Off"], "tag": 0x0301},
+            (3, 1): {"name": "Send to Computer", "key": "send_pc", "options": ["On", "Off"], "tag": 0x0302},
+            (3, 2): {"name": "View on TV", "key": "tv_out", "options": ["Ready", "Stop"], "tag": 0x0303},
+            (3, 3): {"name": "Wi-Fi Settings", "key": "wlan_mode", "options": ["WPS Push", "Access Point Set"], "tag": 0x0304},
+            (3, 4): {"name": "Bluetooth Settings", "key": "bt_mode", "options": ["On", "Off"], "tag": 0x0305},
+            (3, 5): {"name": "Edit Device Name", "key": "device_name", "options": ["ILCE-6400 (Sony α6400)"], "tag": 0x0306},
 
-            # Tab 4: Reprodukcija
-            (4, 0): {"name": "Zastita (Protect)", "key": "protect", "options": ["Pojedinacno", "Vise slika", "Sve slike"], "tag": 0x0401},
-            (4, 1): {"name": "Rotiraj prikaz", "key": "rotate", "options": ["Automatski", "Rucno", "Iskljuceno"], "tag": 0x0402},
-            (4, 2): {"name": "Brisanje (Delete)", "key": "delete", "options": ["Obrisi ovu sliku", "Obrisi oznacene", "Obrisi sve"], "tag": 0x0403},
-            (4, 3): {"name": "Prikaz slajdova", "key": "slideshow", "options": ["3 sekunde", "5 sekundi", "10 sekundi"], "tag": 0x0404},
-            (4, 4): {"name": "Indeks prikaz", "key": "index_disp", "options": ["9 slika", "25 slika"], "tag": 0x0405},
-            (4, 5): {"name": "Kopiranje", "key": "copy", "options": ["Iskljuceno", "SD kartica -> Racunar"], "tag": 0x0406},
+            # Tab 4: Playback
+            (4, 0): {"name": "Protect", "key": "protect", "options": ["Single", "Multiple Images", "All Images"], "tag": 0x0401},
+            (4, 1): {"name": "Rotate", "key": "rotate", "options": ["Auto", "Manual", "Off"], "tag": 0x0402},
+            (4, 2): {"name": "Delete", "key": "delete", "options": ["Delete This Image", "Delete Selected", "Delete All"], "tag": 0x0403},
+            (4, 3): {"name": "Slide Show", "key": "slideshow", "options": ["3 Seconds", "5 Seconds", "10 Seconds"], "tag": 0x0404},
+            (4, 4): {"name": "Image Index", "key": "index_disp", "options": ["9 Images", "25 Images"], "tag": 0x0405},
+            (4, 5): {"name": "Copy", "key": "copy", "options": ["Off", "SD Card -> PC"], "tag": 0x0406},
 
-            # Tab 5: Podesavanja (Setup)
-            (5, 0): {"name": "Osvetljenost monitora", "key": "lcd_bright", "options": ["Rucno: ±0", "Rucno: +1", "Rucno: +2", "Suncano vreme"], "tag": 0x0501},
-            (5, 1): {"name": "Nacin prikaza tražila", "key": "evf_fps", "options": ["Standardno (60fps)", "Visoko (120fps)"], "tag": 0x0502},
-            (5, 2): {"name": "Automatsko iskljucivanje", "key": "auto_power_off", "options": ["1 Minut", "2 Minuta", "5 Minuta", "30 Minuta"], "tag": 0x0503},
-            (5, 3): {"name": "Verzija Firmware-a", "key": "fw_version", "options": ["Ver. 2.00 (CXD90045 BOSS ARMv7 HLE)"], "tag": 0x0504},
-            (5, 4): {"name": "Resetovanje podesavanja", "key": "reset_action", "options": ["Spreman", "Potvrdi Reset Fabrickih Podesavanja"], "tag": 0x0505},
-            (5, 5): {"name": "Formatiranje kartice", "key": "format_action", "options": ["Spreman [1] SD (256 GB)", "Izvrsi brzo formatiranje"], "tag": 0x0506},
+            # Tab 5: Setup
+            (5, 0): {"name": "Monitor Brightness", "key": "lcd_bright", "options": ["Manual: ±0", "Manual: +1", "Manual: +2", "Sunny Weather"], "tag": 0x0501},
+            (5, 1): {"name": "Finder Display Mode", "key": "evf_fps", "options": ["Standard (60fps)", "High (120fps)"], "tag": 0x0502},
+            (5, 2): {"name": "Power Save Start Time", "key": "auto_power_off", "options": ["1 Min", "2 Min", "5 Min", "30 Min"], "tag": 0x0503},
+            (5, 3): {"name": "Version", "key": "fw_version", "options": ["Ver. 2.00 (CXD90045 BOSS ARMv7 HLE)"], "tag": 0x0504},
+            (5, 4): {"name": "Setting Reset", "key": "reset_action", "options": ["Ready", "Confirm Factory Settings Reset"], "tag": 0x0505},
+            (5, 5): {"name": "Format", "key": "format_action", "options": ["Ready [1] SD (256 GB)", "Execute Quick Format"], "tag": 0x0506},
 
-            # Tab 6: Moj Meni (My Menu)
-            (6, 0): {"name": "Dodaj stavku u Moj Meni", "key": "my_menu_add", "options": ["Izaberi...", "Format datoteke", "Tiho snimanje", "SteadyShot"], "tag": 0x0601},
-            (6, 1): {"name": "Sortiraj stavke", "key": "my_menu_sort", "options": ["Normalno", "Prilagodjeno"], "tag": 0x0602},
-            (6, 2): {"name": "Obrisi stavku", "key": "my_menu_del", "options": ["Izaberi..."], "tag": 0x0603},
-            (6, 3): {"name": "Obrisi sve stavke", "key": "my_menu_del_all", "options": ["Ne", "Da, obrisi sve"], "tag": 0x0604},
-            (6, 4): {"name": "Prikaz sa Moga Menija", "key": "my_menu_disp", "options": ["Iskljuceno", "Ukljuceno"], "tag": 0x0605},
-            (6, 5): {"name": "Moj Meni Reset", "key": "my_menu_reset", "options": ["Spreman", "Resetuj Moj Meni"], "tag": 0x0606},
+            # Tab 6: My Menu
+            (6, 0): {"name": "Add Item to My Menu", "key": "my_menu_add", "options": ["Select...", "File Format", "Silent Shooting", "SteadyShot"], "tag": 0x0601},
+            (6, 1): {"name": "Sort Items", "key": "my_menu_sort", "options": ["Normal", "Custom"], "tag": 0x0602},
+            (6, 2): {"name": "Delete Item", "key": "my_menu_del", "options": ["Select..."], "tag": 0x0603},
+            (6, 3): {"name": "Delete All Items", "key": "my_menu_del_all", "options": ["No", "Yes, delete all"], "tag": 0x0604},
+            (6, 4): {"name": "Display From My Menu", "key": "my_menu_disp", "options": ["Off", "On"], "tag": 0x0605},
+            (6, 5): {"name": "My Menu Reset", "key": "my_menu_reset", "options": ["Ready", "Reset My Menu"], "tag": 0x0606},
         }
 
         self.param_val_nodes = {}
@@ -781,7 +781,7 @@ class CXD90045_HLE_Emulator:
             self.mu.mem_write(node + 0x10, struct.pack('<I', val))
 
     def instantiate_all_screens(self):
-        print("\n[*] Instanciram sve glavne ekrane kamere u ARMv7 masinskom kodu...")
+        print("\n[*] Instantiating all main camera screens in ARMv7 machine code...")
         screens_to_load = [
             ("LIVE_VIEW", "ViewStlrecToInstance"),
             ("MENU", "ViewSettingMenuToInstance"),
@@ -802,10 +802,10 @@ class CXD90045_HLE_Emulator:
                                      factory=factory_name)
                     continue
                 self.screen_instances[screen_key] = inst
-                print(f"  [+] Ekran '{screen_key}' instanciran na 0x{inst:08x}")
+                print(f"  [+] Screen '{screen_key}' instantiated at 0x{inst:08x}")
                 if addr_onload and screen_key == "LIVE_VIEW":
                     self.call_function(addr_onload, inst, is_thumb=True)
-                    print(f"      - ViewBase::onLoad() izvrsen za {screen_key}")
+                    print(f"      - ViewBase::onLoad() executed for {screen_key}")
 
         return True
 
@@ -832,51 +832,51 @@ class CXD90045_HLE_Emulator:
             KEY_OTHER_WHEEL_RIGHT: "WHEEL_RIGHT (CW)",
         }
         kname = key_names.get(key_code, f"0x{key_code:x}")
-        print(f"[SONY HARDWARE INPUT] Pritisnuta fizicka tipka: {kname} (kod: 0x{key_code:x})")
+        print(f"[SONY HARDWARE INPUT] Pressed physical key: {kname} (code: 0x{key_code:x})")
 
         # 1. Screen Switchers (MENU, DISP, PLAY, FN)
         if key_code == KEY_TACT_MENU:
             if self.menu_sub_active:
                 self.menu_sub_active = False
-                print("  -> Zatvoren podizbor menija (Nazad na glavni meni)")
+                print("  -> Closed menu submenu (Back to main menu)")
             elif self.active_screen == "MENU":
                 self.active_screen = "LIVE_VIEW"
-                print("  -> Ekran promenjen na: LIVE_VIEW")
+                print("  -> Screen switched to: LIVE_VIEW")
             else:
                 self.active_screen = "MENU"
                 self.menu_sub_active = False
-                print("  -> Ekran promenjen na: MENU")
+                print("  -> Screen switched to: MENU")
             return self.render_active_screen()
 
         elif key_code == KEY_TACT_DISP:
             if self.active_screen == "LIVE_VIEW":
                 self.liveview_disp_mode = (self.liveview_disp_mode + 1) % 4
-                modes = ["Graphic Display (Merači)", "All Info (Sve informacije)", "No Disp Info (Čist prikaz)", "Histogram Overlay"]
-                print(f"  -> DISP u Live View: {modes[self.liveview_disp_mode]}")
+                modes = ["Graphic Display", "Display All Info.", "No Disp. Info.", "Histogram"]
+                print(f"  -> DISP in Live View: {modes[self.liveview_disp_mode]}")
             elif self.active_screen == "QUICK_NAVI":
                 self.active_screen = "LIVE_VIEW"
-                print("  -> Ekran promenjen na: LIVE_VIEW")
+                print("  -> Screen switched to: LIVE_VIEW")
             elif self.active_screen == "PLAYBACK":
                 self.playback_disp_mode = (self.playback_disp_mode + 1) % 3
-                modes = ["Detaljni prikaz (Histogram + EXIF)", "Minimalni prikaz", "Čista fotografija"]
-                print(f"  -> DISP u Reprodukciji: {modes[self.playback_disp_mode]}")
+                modes = ["Detailed Display (Histogram + EXIF)", "Minimal Display", "No Info (Clean Photo)"]
+                print(f"  -> DISP in Playback: {modes[self.playback_disp_mode]}")
             return self.render_active_screen()
 
         elif key_code == KEY_TACT_PLAY:
             self.active_screen = "LIVE_VIEW" if self.active_screen == "PLAYBACK" else "PLAYBACK"
-            print(f"  -> Ekran promenjen na: {self.active_screen}")
+            print(f"  -> Screen switched to: {self.active_screen}")
             return self.render_active_screen()
 
         elif key_code == KEY_TACT_FN:
             self.active_screen = "LIVE_VIEW" if self.active_screen == "FN_MENU" else "FN_MENU"
-            print(f"  -> Ekran promenjen na: {self.active_screen}")
+            print(f"  -> Screen switched to: {self.active_screen}")
             return self.render_active_screen()
 
         # 2. Shutter Release & Focus Locking
         elif key_code == KEY_REMOTE_S1:
             self.af_locked = not self.af_locked
-            status = "ZAKLJUČAN (Zeleni AF okvir)" if self.af_locked else "OTKLJUČAN"
-            print(f"  -> Okidač polu-pritisak (S1): Fokus {status}")
+            status = "LOCKED (Green AF frame)" if self.af_locked else "UNLOCKED"
+            print(f"  -> Shutter half-press (S1): Focus {status}")
             return self.render_active_screen()
 
         elif key_code == KEY_REMOTE_S2:
@@ -897,7 +897,7 @@ class CXD90045_HLE_Emulator:
             }
             self.playback_photos.insert(0, new_photo)
             self.shutter_flash = True
-            print(f"  [OKIDAČ S2] Snimljena fotografija {new_id}! Preostalo na kartici: {self.camera_state['card_remaining']}")
+            print(f"  [SHUTTER S2] Captured photo {new_id}! Remaining on card: {self.camera_state['card_remaining']}")
             return self.render_active_screen()
 
         # 3. Contextual Navigation per screen
@@ -917,7 +917,7 @@ class CXD90045_HLE_Emulator:
                         self.camera_state[key_name] = selected_val
                         self.backup_write_param(item_info["tag"], self.menu_sub_index)
                         self.update_param_val_nodes()
-                        print(f"  [MENU ZAPIS] Potvrđena postavka '{item_info['name']}': {selected_val} (NVRAM Backup)")
+                        print(f"  [MENU WRITE] Confirmed setting '{item_info['name']}': {selected_val} (NVRAM Backup)")
                     self.menu_sub_active = False
                 elif key_code in (KEY_TACT_LEFT, KEY_TACT_MENU):
                     self.menu_sub_active = False
@@ -938,9 +938,9 @@ class CXD90045_HLE_Emulator:
                             self.menu_sub_index = item_info["options"].index(cur_val)
                         else:
                             self.menu_sub_index = 0
-                        print(f"  -> Otvoren podizbor za '{item_info['name']}' ({len(item_info['options'])} opcija)")
+                        print(f"  -> Opened submenu for '{item_info['name']}' ({len(item_info['options'])} options)")
                     else:
-                        print(f"  -> Izvršena akcija: '{item_info['name'] if item_info else 'Stavka'}'")
+                        print(f"  -> Executed action: '{item_info['name'] if item_info else 'Item'}'")
 
         elif self.active_screen == "FN_MENU":
             if key_code == KEY_TACT_UP:
@@ -962,13 +962,13 @@ class CXD90045_HLE_Emulator:
         elif self.active_screen == "PLAYBACK":
             if key_code in (KEY_TACT_LEFT, KEY_OTHER_WHEEL_LEFT):
                 self.playback_index = (self.playback_index + 1) % len(self.playback_photos)
-                print(f"  -> Reprodukcija: Slika {self.playback_photos[self.playback_index]['id']}")
+                print(f"  -> Playback: Image {self.playback_photos[self.playback_index]['id']}")
             elif key_code in (KEY_TACT_RIGHT, KEY_OTHER_WHEEL_RIGHT):
                 self.playback_index = (self.playback_index - 1) % len(self.playback_photos)
-                print(f"  -> Reprodukcija: Slika {self.playback_photos[self.playback_index]['id']}")
+                print(f"  -> Playback: Image {self.playback_photos[self.playback_index]['id']}")
             elif key_code in (KEY_TACT_UP, KEY_TACT_DOWN):
                 self.playback_grid_view = not self.playback_grid_view
-                print(f"  -> Prikaz reprodukcije: {'9-Grid Indeks' if self.playback_grid_view else 'Jedna fotografija'}")
+                print(f"  -> Playback view: {'9-Grid Index' if self.playback_grid_view else 'Single Image'}")
 
         elif self.active_screen in ("LIVE_VIEW", "QUICK_NAVI"):
             if key_code in (KEY_TACT_LEFT, KEY_OTHER_WHEEL_LEFT):
@@ -977,7 +977,7 @@ class CXD90045_HLE_Emulator:
                 idx = (speeds.index(curr) - 1) % len(speeds) if curr in speeds else 2
                 self.camera_state["shutter_den"] = speeds[idx]
                 self.update_param_val_nodes()
-                print(f"  -> Brzina zatvarača podešena na: 1/{self.camera_state['shutter_den']}")
+                print(f"  -> Shutter speed set to: 1/{self.camera_state['shutter_den']}")
 
             elif key_code in (KEY_TACT_RIGHT, KEY_OTHER_WHEEL_RIGHT):
                 fstops = [14, 18, 28, 40, 56, 80, 110, 160, 220]
@@ -985,7 +985,7 @@ class CXD90045_HLE_Emulator:
                 idx = (fstops.index(curr) + 1) % len(fstops) if curr in fstops else 1
                 self.camera_state["aperture_val"] = fstops[idx]
                 self.update_param_val_nodes()
-                print(f"  -> Otvor blende podešen na: F{self.camera_state['aperture_val']/10:.1f}")
+                print(f"  -> Aperture set to: F{self.camera_state['aperture_val']/10:.1f}")
 
             elif key_code == KEY_TACT_DOWN:
                 if self.camera_state["iso_mode"] == 0:
@@ -1084,10 +1084,10 @@ class CXD90045_HLE_Emulator:
             self.update_param_val_nodes()
             print(f"  [Fn] Picture Profile: PP{self.camera_state['picture_profile']}")
         elif idx == 9:
-            self.camera_state["steadyshot"] = "Off" if self.camera_state["steadyshot"] == "Ukljuceno" else "Ukljuceno"
+            self.camera_state["steadyshot"] = "Off" if self.camera_state["steadyshot"] == "On" else "On"
             print(f"  [Fn] SteadyShot: {self.camera_state['steadyshot']}")
         elif idx == 10:
-            self.camera_state["silent_shutter"] = "Ukljuceno" if self.camera_state["silent_shutter"] == "Iskljuceno" else "Iskljuceno"
+            self.camera_state["silent_shutter"] = "On" if self.camera_state["silent_shutter"] == "Off" else "Off"
             print(f"  [Fn] Silent Shoot: {self.camera_state['silent_shutter']}")
         elif idx == 11:
             peaking = ["Off", "Low/Whi", "Mid/Yel", "High/Red"]
@@ -1583,7 +1583,7 @@ class CXD90045_HLE_Emulator:
         draw.text((45, 8), self.camera_state["quality"], fill="#FFFFFF", font=self.f_sans_bold)
         draw.text((115, 8), self.camera_state["aspect_ratio"], fill="#AAAAAA", font=self.f_sans_small)
         draw.text((430, 8), "[1] SD", fill="#FFFFFF", font=self.f_sans_bold)
-        draw.text((485, 8), f"{self.camera_state['card_remaining']} slika", fill="#CCCCCC", font=self.f_sans_small)
+        draw.text((485, 8), f"{self.camera_state['card_remaining']} images", fill="#CCCCCC", font=self.f_sans_small)
         draw.text((810, 8), f"{self.camera_state['battery_pct']}%", fill="#FFFFFF", font=self.f_sans_bold)
         self.draw_battery(draw, 875, 11, pct=self.camera_state["battery_pct"])
 
@@ -1592,24 +1592,24 @@ class CXD90045_HLE_Emulator:
         aperture_str = f"F{self.camera_state['aperture_val']/10:.1f}"
         iso_str = "ISO AUTO" if self.camera_state["iso_mode"] == 0 else f"ISO {self.camera_state['iso_val']}"
 
-        draw.text((40, 80), "BRZINA OKIDAČA", fill="#777777", font=self.f_sans_tiny)
+        draw.text((40, 80), "SHUTTER SPEED", fill="#777777", font=self.f_sans_tiny)
         draw.text((40, 100), shutter_str, fill="#FFFFFF", font=self.f_sans_huge)
 
-        draw.text((360, 80), "OTVOR BLENDE", fill="#777777", font=self.f_sans_tiny)
+        draw.text((360, 80), "APERTURE", fill="#777777", font=self.f_sans_tiny)
         draw.text((360, 100), aperture_str, fill="#FFFFFF", font=self.f_sans_huge)
 
-        draw.text((680, 80), "ISO OSETLJIVOST", fill="#777777", font=self.f_sans_tiny)
+        draw.text((680, 80), "ISO SENSITIVITY", fill="#777777", font=self.f_sans_tiny)
         draw.text((680, 100), iso_str, fill="#D83010", font=self.f_sans_huge)
 
         draw.line([20, 175, w - 20, 175], fill="#282828", width=1)
 
-        draw.text((40, 200), "EKSPOZICIJA (MM)", fill="#777777", font=self.f_sans_tiny)
+        draw.text((40, 200), "EXPOSURE (MM)", fill="#777777", font=self.f_sans_tiny)
         draw.text((40, 220), self.camera_state["exp_comp"], fill="#FFFFFF", font=self.f_sans_bold)
 
-        draw.text((360, 200), "FOKUS MOD", fill="#777777", font=self.f_sans_tiny)
+        draw.text((360, 200), "FOCUS MODE", fill="#777777", font=self.f_sans_tiny)
         draw.text((360, 220), self.camera_state["focus_mode"], fill="#00FF00" if self.af_locked else "#FFFFFF", font=self.f_sans_bold)
 
-        draw.text((680, 200), "PROFIL SLIKE", fill="#777777", font=self.f_sans_tiny)
+        draw.text((680, 200), "PICTURE PROFILE", fill="#777777", font=self.f_sans_tiny)
         draw.text((680, 220), f"PP{self.camera_state['picture_profile']}", fill="#FFFFFF", font=self.f_sans_bold)
 
         self.mu.mem_write(FRAMEBUFFER, img.tobytes())
@@ -1627,7 +1627,7 @@ class CXD90045_HLE_Emulator:
         if self.playback_grid_view:
             draw = ImageDraw.Draw(img)
             draw.rectangle([0, 0, w, 36], fill="#181818")
-            draw.text((20, 8), f"REPRODUKCIJA INDEKS ({current_photo['id']})", fill="#FFFFFF", font=self.f_sans_bold)
+            draw.text((20, 8), f"PLAYBACK INDEX ({current_photo['id']})", fill="#FFFFFF", font=self.f_sans_bold)
             draw.text((500, 8), f"{self.playback_index + 1} / {len(self.playback_photos)}", fill="#AAAAAA", font=self.f_sans_small)
             self.draw_battery(draw, w - 80, 10, pct=self.camera_state["battery_pct"])
 
@@ -1703,16 +1703,16 @@ def main():
         emu.instantiate_all_screens()
         
         # Test hardware key input
-        print("\n[*] Testiram slanje hardverske tipke KEY_TACT_MENU...")
+        print("\n[*] Testing hardware key dispatch KEY_TACT_MENU...")
         img_menu = emu.send_hardware_key(KEY_TACT_MENU)
         img_menu.save(legacy_output("cxd90045_menu_test.png"))
 
-        print("\n[*] Testiram povratak na LIVE_VIEW...")
+        print("\n[*] Testing return to LIVE_VIEW...")
         img_lv = emu.send_hardware_key(KEY_TACT_MENU)
         img_lv.save(legacy_output("cxd90045_liveview_authentic.png"))
-        print("\n[+] Svi hardverski input testovi uspesno zavrseni!")
+        print("\n[+] All hardware input tests completed successfully!")
     else:
-        print("[-] Biblioteke nisu pronadjene!")
+        print("[-] Libraries not found!")
 
 if __name__ == '__main__':
     main()

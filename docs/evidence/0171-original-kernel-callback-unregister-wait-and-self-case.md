@@ -1,43 +1,43 @@
-# E0171 — Izvorno uklanjanje callbacka: čekanje, prekid i vlastiti poziv
+# E0171 — Original Callback Unregistration: Wait, Interrupt, and Self-Call
 
-Datum: 2026-11-08. Offline nastavak E0170. Nema pristupa fizičkoj kameri, učitavanja modula ni izmjene produkcijskog modula.
+Date: 2026-11-08. Offline continuation of E0170. No physical camera access, module loading, or production module changes.
 
-## Izvršeni izvorni ARM kod
+## Executed Original ARM Code
 
-`tools/research/probe_uvc_ptp_kernel_unregister.py` učitava izvorne allocatable ELF sekcije a6400 osal_uipc.ko (SHA-256 `3743275bc964a2804b80cde4f589f60876b795fbeeccd3cbf2c18a0da2dc8567`) i primjenjuje njegove ABS32/CALL relokacije. Nepoznate relokacije u tim sekcijama odbijaju se. Ne mijenja tijela funkcija niti izvodi module init.
+`tools/research/probe_uvc_ptp_kernel_unregister.py` loads the original allocatable ELF sections of a6400 `osal_uipc.ko` (SHA-256 `3743275bc964a2804b80cde4f589f60876b795fbeeccd3cbf2c18a0da2dc8567`) and applies its ABS32/CALL relocations. Unknown relocations in those sections are rejected. It does not modify function bodies or execute module init.
 
-Izvršeni su originalni unregister helper na .text+0x2f3c, wait helper na .text+0x27a0, wake helper na .text+0x28e0 te `free_cb` na .text+0x2b24. Konačni `free_fblock`, lock/unlock i wake_up_process izričite su servisne zamjene. `schedule` je granica zaustavljanja, ne simulirani raspoređivač.
+The original unregister helper at `.text+0x2f3c`, wait helper at `.text+0x27a0`, wake helper at `.text+0x28e0`, and `free_cb` at `.text+0x2b24` were executed. Final `free_fblock`, lock/unlock, and `wake_up_process` are explicit service replacements. `schedule` is a stop boundary, not a simulated scheduler.
 
-Queue, callback, trenutni task/TID, callback TID, brojači i signal flags eksplicitni su fixture podaci. Guardovi ograničavaju izvršenje na navedena originalna tijela i zapise na fixture/izvorne writable sekcije.
+Queue, callback, current task/TID, callback TID, counters, and signal flags are explicit fixture data. Guards restrict execution to the listed original bodies and writes to fixture/original writable sections.
 
-## Različiti ugovori uklanjanja
+## Different Unregistration Contracts
 
-| Slučaj | Izvorno ponašanje potvrđeno u pokusu |
+| Case | Original Behavior Confirmed in Test |
 |---|---|
-| Callback nije aktivan, count=0 | Postavi retire bit, ne čeka, pozove originalni free_cb i obriše registrirani slot. |
-| Aktivan callback druge dretve | Postavi retire bit, upiše waiter na stog, otpusti zaštite i dođe do schedule prije oslobađanja. Registrirani slot ostaje očuvan. |
-| Aktivan callback iste dretve/TID-a | Wait helper vrati 0 bez čekanja. Unregister pozove free_cb i obriše slot iako fixture active count ostaje 1. |
+| Callback not active, count=0 | Sets retire bit, does not wait, calls original `free_cb`, and clears the registered slot. |
+| Active callback on another thread | Sets retire bit, writes waiter onto stack, releases guards, and reaches `schedule` before freeing. Registered slot remains preserved. |
+| Active callback on the same thread/TID | Wait helper returns 0 without waiting. Unregister calls `free_cb` and clears slot even though fixture active count remains 1. |
 
-Originalni free_cb smanjuje globalni brojač putem stvarnog LDREX/STREX slijeda i predaje callback u free_fblock. U pokusu je provjeren 3→2 za neaktivni i self slučaj. Konačno ponašanje allocator-a nije izvršeno; ne tvrdi se da je fizički nastao use-after-free. Ali uspješan return sam po sebi očito nije univerzalni dokaz da callback više ne radi.
+Original `free_cb` decrements the global counter via an actual `LDREX/STREX` sequence and passes the callback to `free_fblock`. In the test, `3→2` was verified for the inactive and self cases. Final allocator behavior was not executed; it is not claimed that a use-after-free physically occurred. However, a successful return by itself is clearly not universal proof that the callback is no longer running.
 
-## Dovršetak druge dretve
+## Completion of Another Thread
 
-Nakon zaustavljanja na schedule pokus eksplicitno postavlja count=0 kao **vanjsku completion fixture promjenu**, ne kao dokaz izvršenja finish_callback. Na drugom stogu izvršava se originalni wake helper: on provjeri count, ukloni odgovarajući waiter, očisti njegov callback pointer i pozove wake_up_process za čekajući task.
+After stopping at `schedule`, the test explicitly sets `count=0` as an **external completion fixture change**, not as proof of executing `finish_callback`. On a second stack, the original wake helper executes: it checks `count`, removes the corresponding waiter, clears its callback pointer, and calls `wake_up_process` for the waiting task.
 
-Zatim se obnavlja spremljeni CPU kontekst točno nakon schedule. Originalni wait/unregister kod nastavi, vrati 0, pozove free_cb i obriše slot. Konačni free dolazi tek nakon izvornog wake puta. Stog i lokalni registri čekatelja nisu zamijenjeni hostovom aproksimacijom.
+Then the saved CPU context is restored immediately after `schedule`. The original wait/unregister code continues, returns 0, calls `free_cb`, and clears the slot. The final free comes only after the original wake path. The waiter's stack and local registers were not replaced by a host approximation.
 
-Wake helper s count=1 ne uklanja waiter i ne zove wake_up_process. To je zasebno provjereno.
+The wake helper with `count=1` does not remove the waiter and does not call `wake_up_process`. That was verified separately.
 
-## Prekinuto čekanje
+## Interrupted Wait
 
-Uz eksplicitni signal-pending fixture nakon schedule, wait helper sam uklanja svoj stogovni waiter, briše retire bit i vraća -1021 (0xfffffc03). Unregister ne oslobađa callback niti briše aktivni registrirani slot. Native globalni allocation counter ostaje 3. Pozivatelj mora sačuvati resurse i odraditi ugovor ponovnog pokušaja; ne smije taj povratak tretirati kao završeno čišćenje.
+With an explicit signal-pending fixture after `schedule`, the wait helper itself removes its stack waiter, clears the retire bit, and returns `-1021` (`0xfffffc03`). Unregister does not free the callback and does not clear the active registered slot. The native global allocation counter remains 3. The caller must retain resources and execute the retry contract; it must not treat that return as completed cleanup.
 
-## Posljedica za mod
+## Consequence for the Module
 
-OSAL callback registracije ne smijemo smatrati završenima samo zato što je unregister vratio uspjeh iz vlastitog callback konteksta. Budući upravljački put treba završno uklanjanje i oslobađanje obaviti iz odvojenog konteksta, provjeriti aktivne pozive te zadržati resurse nakon prekinutog čekanja. Ovo je OSAL ugovor; ne zamjenjuje zasebnu provjeru gadgetcore/EP0 callbackova E0164 niti samo po sebi rješava usklađivanje svih USB promjena.
+We must not consider OSAL callback registrations finished simply because unregister returned success from its own callback context. A future control path should perform final removal and freeing from a separate context, check active calls, and retain resources after an interrupted wait. This is the OSAL contract; it does not replace a separate check of gadgetcore/EP0 callbacks of E0164 nor by itself solve coordination of all USB changes.
 
-## Rezultati i daljnja granica
+## Results and Next Boundary
 
-**26 provjera prolazi**. Manifest: `artifacts/analysis/uvc-ptp-unregister-e0171/manifest.json`; zapis: `artifacts/uvc-ptp-unregister-e0171.log`. Pokus je prošao i provjeru Python sintakse.
+**26 checks pass**. Manifest: `artifacts/analysis/uvc-ptp-unregister-e0171/manifest.json`; log: `artifacts/uvc-ptp-unregister-e0171.log`. The probe also passed Python syntax checking.
 
-Još nisu izvršeni originalni kernel wait_cb acknowledgment i finish_callback, stvarne brave, raspoređivanje ni konačni allocator. Sljedeće treba povezati per-worker acknowledgment nakon korisničkog callbacka s originalnim finish_callback i wake putem. E0164 modul ostaje neučitan i `physical_test_ready:false`; produkcijski kod nije promijenjen, pa 605 testova iz E0164 ostaje zadnja puna regresija.
+The original kernel `wait_cb` acknowledgment and `finish_callback`, real locks, scheduling, and the final allocator have not yet been executed. Next, per-worker acknowledgment after the user callback should be connected with the original `finish_callback` and wake path. The E0164 module remains unloaded and `physical_test_ready:false`; production code was not modified, so 605 tests from E0164 remain the last full regression.

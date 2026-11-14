@@ -1,44 +1,44 @@
-# E0174 — MOD atomska zaštita promjene načina i izvorni ioctl ulaz
+# E0174 — MOD Atomic Mode Change Guard and Original ioctl Entry
 
-Datum: 2026-11-08. Offline implementacija. Nema prijenosa ili zapisa na kameru. E0164 kernel modul nije promijenjen.
+Date: 2026-11-08. Offline implementation. No transfer or writes to the camera. E0164 kernel module was not modified.
 
-## Implementacija
+## Implementation
 
-Novi `tools/native_camera/uvc_ptp_mode_gate.{c,h}` implementira **MOD pravilo pristupa**, ne zamjenu Sonyjevih odluka. Jedna atomska riječ sadrži broj aktivnih izvornih ulaza ili ekskluzivno vlasništvo MOD transakcije. CAS 0→HELD uklanja razmak između provjere aktivnih ulaza i preuzimanja transakcije.
+The new `tools/native_camera/uvc_ptp_mode_gate.{c,h}` implements a **MOD access rule**, not a replacement of Sony's decisions. A single atomic word holds the count of active original entries or exclusive ownership of a MOD transaction. CAS `0→HELD` eliminates the gap between checking active entries and acquiring the transaction.
 
-| Operacija | Ugovor |
+| Operation | Contract |
 |---|---|
-| mode_enter | Poveća broj aktivnih ulaza ako MOD ne drži transakciju. Odbije HELD i preljev. |
-| mode_leave | Smanji aktivni broj bez zadiranja u HELD. Odbije nulu i HELD stanje. |
-| mode_claim | Preuzme transakciju isključivo iz stanja 0. |
-| mode_release | Oslobodi isključivo točno HELD stanje. Ne briše broj tuđih aktivnih ulaza. |
+| `mode_enter` | Increments the count of active entries if MOD does not hold a transaction. Rejects `HELD` and overflow. |
+| `mode_leave` | Decrements the active count without touching `HELD`. Rejects zero and `HELD` state. |
+| `mode_claim` | Acquires the transaction exclusively from state 0. |
+| `mode_release` | Releases exclusively the exact `HELD` state. Does not clear other active entry counts. |
 
-Enter/leave imaju ograničen broj CAS pokušaja i u slučaju konflikta vraćaju busy. Pozivatelj ne smije ignorirati neuspješan leave niti tvrditi da je transakcija tada oslobođena. Null ulazi i dvostruko oslobađanje odbijaju se. Struktura mora trajati kroz sve ulaze; kod ne daje samostalno pravo uklanjanja hooka ili oslobađanja memorije.
+Enter/leave have a bounded number of CAS attempts and return busy on contention. The caller must not ignore a failed leave nor claim that the transaction was then released. Null inputs and double release are rejected. The structure must persist across all entries; the code does not grant an independent right to remove a hook or free memory.
 
-## Izgradnja i provjere
+## Build and Checks
 
-`tools/research/build_uvc_ptp_mode_gate.py` izgrađuje stvarni ARMv7 softfp ELF bez libc/importa i izvršava prevedene funkcije. Rezultat: `artifacts/native/uvc-ptp-mode-gate-e0174/mode-gate.elf`. Manifest u istoj mapi sadrži hashove izvora/headera/ELF-a i točan build argument vector. Zapis: `artifacts/uvc-ptp-mode-gate-e0174.log`.
+`tools/research/build_uvc_ptp_mode_gate.py` builds a real ARMv7 softfp ELF without libc/imports and executes the compiled functions. Output: `artifacts/native/uvc-ptp-mode-gate-e0174/mode-gate.elf`. The manifest in the same folder contains hashes of the source/header/ELF and the exact build argument vector. Log: `artifacts/uvc-ptp-mode-gate-e0174.log`.
 
-**28 provjera prolazi**: 22 provjere MOD atomskih funkcija i šest provjera izvornog kernel ulaza. Provjerena su dva aktivna izvorna ulaza, oba redoslijeda nadmetanja s MOD claimom, očuvanje broja pri odbijenom release-u, overflow i nepravilna HELD+count stanja. Ovo su sekvencijalna izvršenja ARM atomskih instrukcija; nisu fizički multicore pokus ili dokaz kompletnog Linux memory-model ugovora.
+**28 checks pass**: 22 checks for MOD atomic functions and six checks for the original kernel entry. Two active original entries, both contention orders with MOD claim, preserving count on rejected release, overflow, and invalid `HELD+count` states were verified. These are sequential executions of ARM atomic instructions; they are not a physical multicore test or proof of the full Linux memory-model contract.
 
-Izgradnja je prvo odbijena zbog preklapanja GNU build-id sekcije s odabranom offline adresom teksta; konačni reproducibilni builder izričito isključuje build-id. To ne mijenja tijela MOD funkcija niti native kernel.
+The build was initially rejected due to overlap of the GNU build-id section with the chosen offline text address; the final reproducible builder explicitly disables build-id. This does not change the bodies of the MOD functions or the native kernel.
 
-## Dokazan izvorni ulaz
+## Proven Original Entry
 
-SHA-provjereni kernel `12eeec829407595e28265f7d0db3b88c56f63a9f0fdd725c9c53c66a49643707` sadrži:
+SHA-verified kernel `12eeec829407595e28265f7d0db3b88c56f63a9f0fdd725c9c53c66a49643707` contains:
 
-- `usb_gcore_module_init` na 0x604a580c;
-- originalni LDR r1 na 0x604a590c čita literal 0x604a5990 = **0x604e5078**;
-- sljedeći originalni BL na 0x604a5910 poziva `cdev_init` na 0x601c241c;
-- file operations +0x20, adresa **0x604e5098**, pokazuje na izvorni `usb_gadgetcore_ioctl` **0x602b8844**;
-- susjedni open +0x2c i release +0x34 odgovaraju 0x602b8814 i 0x602b8284.
+- `usb_gcore_module_init` at `0x604a580c`;
+- original `LDR r1` at `0x604a590c` reads literal `0x604a5990 = 0x604e5078`;
+- the next original `BL` at `0x604a5910` calls `cdev_init` at `0x601c241c`;
+- `file_operations +0x20`, address **0x604e5098**, points to original `usb_gadgetcore_ioctl` **0x602b8844**;
+- adjacent `open +0x2c` and `release +0x34` correspond to `0x602b8814` and `0x602b8284`.
 
-Ovo vezuje kandidat za ulaz na stvarni cdev_init ugovor, a ne samo na slučajno pronađenu riječ u kernel slici. Nije izvršena izmjena te adrese. Live RAM sadržaj i mogućnost sigurne objave/uklanjanja posrednika nisu provjereni.
+This ties the entry candidate to the real `cdev_init` contract, not merely a randomly found word in the kernel image. No modification was made to that address. Live RAM contents and the feasibility of safe publication/removal of an intermediary have not been verified.
 
-## Integracijski uvjeti koji ostaju otvoreni
+## Integration Conditions Remaining Open
 
-Gate je `integrated:false`. Svi relevantni izvorni ulazi moraju stvarno prolaziti kroz njega; današnji modulov lokalni gate ne čini to. Poziv koji je već učitao stari function pointer, module lifetime pri objavi wrappera, izravni kernel izvozi, USB disconnect/suspend i EP0 callbackovi ne smiju se pretpostaviti pokrivenima samo ovim file-operations slotom.
+The gate is `integrated:false`. All relevant original entries must actually pass through it; today's module-local gate does not do so. A call that has already loaded the old function pointer, module lifetime when publishing the wrapper, direct kernel exports, USB disconnect/suspend, and EP0 callbacks must not be assumed covered by this `file_operations` slot alone.
 
-Za prvi test preostaju sigurna objava/vlasništvo posrednika za izvorne promjene USB načina i završetak/drain native gadget/EP0 callbackova, zatim ograničen activate/restore runner. Gate se ne smije uključiti slijepim RAM zapisom. OSAL acknowledgment dokazi E0172 rješavaju zaseban profil callbacka; nisu automatski EP0 ugovor.
+For the first test, safe publication/ownership of the intermediary for original USB mode changes and completion/drain of native gadget/EP0 callbacks remain, followed by a bounded activate/restore runner. The gate must not be enabled by blind RAM writes. OSAL acknowledgment evidence E0172 solves a separate callback profile; it is not automatically the EP0 contract.
 
-Trenutačna read-only provjera kamere E0173 (`artifacts/hardware/uvc-ptp-readiness-e0173/usb-current.json`) potvrdila je PC Remote 054c:0caa. Nije mijenjan način rada. Produkcijski `.ko` ostaje E0164, neučitan i `physical_test_ready:false`. Zadnja puna projektna regresija ostaje 605 testova; za novi izolirani ARM dio izvršene su gore navedene ciljane provjere.
+The current read-only camera check E0173 (`artifacts/hardware/uvc-ptp-readiness-e0173/usb-current.json`) confirmed PC Remote `054c:0caa`. Mode was not switched. The production `.ko` remains E0164, unloaded and `physical_test_ready:false`. The last full project regression remains 605 tests; the targeted checks listed above were executed for the new isolated ARM part.

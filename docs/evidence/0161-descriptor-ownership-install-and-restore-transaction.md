@@ -1,87 +1,43 @@
-# E0161: Vlasništvo pri instalaciji i obnovi descriptor tablica
+# E0161: Ownership During Descriptor Table Installation and Restoration
 
-Datum: 2026-11-08. Nastavak E0160. Bez pristupa kameri.
+Date: 2026-11-08. Continuation of E0160. No camera access.
 
-## Implementacija
+## Implementation
 
-`tools/native_camera/uvc_ptp_descriptor_lease.{c,h}` uvodi zasebnu ownership
-transakciju. Caller mora PRIJE poziva zaustaviti kontroler, povući callbackove,
-držati topologiju zaključanom i pripremiti odgovarajući native address-limit
-ugovor. Ti preduvjeti ovim helperom nisu implementirani niti dokazani.
-Helper sam ne isključuje USB, ne registrira drivere i ne tvrdi quiescence.
+`tools/native_camera/uvc_ptp_descriptor_lease.{c,h}` introduces a separate ownership transaction. Before calling, the caller must stop the controller, retire callbacks, hold topology locked, and prepare the appropriate native address-limit contract. Those preconditions are neither implemented nor proven by this helper. The helper itself does not disable USB, register drivers, or claim quiescence.
 
-Install prima12-byte originalni save argument ABI i dva ops pointera
-(native save/free u budućoj integraciji). Prima samo predviđeni jedan HS/FS
-kandidat bez extra/dual policy dodataka, verificira vlastito stablo i odbija
-ponovljenu aktivnu instalaciju.
+Install accepts the 12-byte original save argument ABI and two ops pointers (native save/free in future integration). It accepts only the intended single HS/FS candidate without extra/dual policy additions, verifies its own tree, and rejects repeated active installation.
 
-Prije native save poziva sprema originalni PC Remote root, flags i byteove
-84/85. Zatim gc+6c postavlja na nulu: originalna save failure grana tako ne
-može preko free_desc_tbl dobiti prethodnu PC Remote tablicu. Nakon save-a
-zasebno bilježi installed root. Success zahtijeva ne-null native kopiju
-različitu od stare tablice i caller templatea, te uspješan E0160 validator.
+Before the native save call it saves the original PC Remote root, flags, and bytes 84/85. Then it sets `gc+6c` to zero: the original save failure branch thus cannot reach the previous PC Remote table via `free_desc_tbl`. After save it separately records the installed root. Success requires a non-null native copy distinct from the old table and caller template, plus a passing E0160 validator.
 
-Pri native erroru uz null root vraća izvorni root/flags/mode i izvorni error.
-Success s null rootom vraća -5 i također obnavlja snapshot.
-Neočekivani alias, nevaljana kopija ili error koji ostavi neočekivani root
-prelazi u QUARANTINED. Source objekt ostaje zadržan; nema slijepog free poziva.
+On native error with null root it restores the original root/flags/mode and returns the original error. Success with null root returns `-5` and also restores the snapshot. Unexpected alias, invalid copy, or error leaving an unexpected root transitions to `QUARANTINED`. Source object remains retained; no blind free call.
 
-Restore radi samo za INSTALLED stanje i točno zabilježeni aktivni root.
-Provjerava i identitet free operacije. Oslobađa samo novu native kopiju,
-potvrđuje da je native free nulirao gc+6c, zatim vraća izvorni root/flags/mode
-i čisti ownership zapis. Ponavljanje restorea nakon uspjeha je idempotentno.
-Tuđi root vraća -116 bez oslobađanja. Free koji prekrši null-root ugovor
-prelazi u quarantine i ne ponavlja se; time se izbjegava mogući double free.
+Restore works only for `INSTALLED` state and the exact recorded active root. It also checks the identity of the free operation. It frees only the new native copy, confirms native free zeroed `gc+6c`, then restores the original root/flags/mode and clears the ownership record. Repeating restore after success is idempotent. Foreign root returns `-116` without freeing. A free that violates the null-root contract transitions to quarantine and is not repeated; this avoids a possible double free.
 
-`a6400_descriptor_source_releasable` vraća1 samo za EMPTY stanje. Time
-budući modul može spriječiti oslobađanje templatea dok je transakcija aktivna
-ili nepoznata. Module-unload zaštita još nije povezana s tim rezultatom.
+`a6400_descriptor_source_releasable` returns 1 only for `EMPTY` state. Thus a future module can prevent freeing the template while a transaction is active or unknown. Module-unload protection is not yet wired to this result.
 
-## Granice provjere i stvarni originalni ulaz
+## Verification Boundaries and Real Original Entry
 
-`tools.research.build_uvc_ptp_descriptor_lease` gradi stvarni samostalan ARM
-ELF zajedno s descriptor validatorom. Source/header/ELF hashovi i hashovi
-ulaznog template/copy fixturea vezani su u manifestima.
+`tools.research.build_uvc_ptp_descriptor_lease` builds a real standalone ARM ELF together with the descriptor validator. Source/header/ELF hashes and input template/copy fixture hashes are pinned in manifests.
 
-U transakcijskim testovima save/free su IZRIČITI RECORD DOUBLEOVI. Oni
-postavljaju provjereni neovisni descriptor fixture i vraćaju zadane greške;
-to nisu native allocator ili fizički controller acknowledgementi. Stvarno
-se izvršavaju kompajlirani ownership helper i validator, a zapisi su guardani.
+In transaction tests save/free are EXPLICIT RECORD DOUBLES. They install a verified independent descriptor fixture and return configured errors; these are not native allocator or physical controller acknowledgements. The compiled ownership helper and validator actually execute, and writes are guarded.
 
-73 provjere prolaze. Obuhvaćaju dva uzastopna ciklusa, error/null-success
-obnovu, zaštitu stare tablice, held-source stanje, duplu instalaciju,
-ponovljeni restore, stare/source aliase, nevaljanu kopiju, tuđi aktivni root,
-promijenjeni free callback i neispravan free ugovor.
+73 checks pass. They cover two consecutive cycles, error/null-success recovery, protection of the old table, held-source state, double install, repeated restore, stale/source aliases, invalid copy, foreign active root, changed free callback, and invalid free contract.
 
-Dodatni pokret ulazi iz stvarnog ownership helpera u ORIGINALNI a6400
-save_desc_tbl602bc550. Izvršavanje staje na602bc598 PRIJE __copy_from_user,
-bez izmišljenog copy/allocator povrata. U toj točki potvrđeni su originalni
-save argument pointer, sačuvani stari root u ownership objektu, gc+6c=0 i
-INSTALLING stanje. Cijeli native save ne vraća se i instalacija nije proglašena
-uspješnom. Thread address-limit i memorija su eksplicitni offline fixturei.
+An additional run enters from the real ownership helper into ORIGINAL a6400 `save_desc_tbl` `602bc550`. Execution stops at `602bc598` BEFORE `__copy_from_user`, with no fabricated copy/allocator return. At that point the original save argument pointer, saved old root in ownership object, `gc+6c=0`, and `INSTALLING` state are confirmed. Full native save does not return and installation is not declared successful. Thread address-limit and memory are explicit offline fixtures.
 
-## Artefakti
+## Artifacts
 
-- `artifacts/native/uvc-ptp-lease-input-e0161/`:573 prethodne descriptor
-  kontrole, owned template i neovisni copy fixture s hashovima.
-- `artifacts/native/uvc-ptp-descriptor-lease-e0161/manifest.json`:73 ownership
-  provjere i svi source/ELF/input hashovi.
-- `descriptor-lease.elf`:offline ARM izvršni artefakt, NIJE kernel modul.
+- `artifacts/native/uvc-ptp-lease-input-e0161/`: 573 previous descriptor checks, owned template, and independent copy fixture with hashes.
+- `artifacts/native/uvc-ptp-descriptor-lease-e0161/manifest.json`: 73 ownership checks and all source/ELF/input hashes.
+- `descriptor-lease.elf`: offline ARM executable artifact, NOT a kernel module.
 
 ```
 python -m tools.research.build_uvc_ptp_descriptor_lease --input-dir artifacts/native/uvc-ptp-lease-input-e0161 --output-dir artifacts/native/uvc-ptp-descriptor-lease-e0161
 ```
 
-## Nastavak integracije
+## Integration Next Steps
 
-Treba povezati stvarni controller quiesce i lock, native save/free wrapper
-s ispravnim address limitom, UVC shadow registraciju, EP0 hook i reconnect.
-Tek tada je dopušteno tvrditi da ownership helper obnavlja fizički PC Remote.
-Treba dokazati source/module lifetime dok su native callbackovi aktivni i
-oporavak iz quarantinea; nema automatskog fizičkog recovery koda u ovom koraku.
+Must wire real controller quiesce and lock, native save/free wrapper with proper address limit, UVC shadow registration, EP0 hook, and reconnect. Only then is it permitted to claim the ownership helper restores physical PC Remote. Must prove source/module lifetime while native callbacks are active and recovery from quarantine; no automatic physical recovery code in this step.
 
-Originalni PTP driver još nije uključivan/isključivan u zajedničkoj fizičkoj
-konfiguraciji. Native JPEG/DMM producer i senzorski UVC video ostaju otvoreni.
-Puni projektni runtime nije mijenjan pa prethodni605 testovi nisu ponavljani.
-Nema kamera uploadova, modula, feeder procesa, USB promjene, SD ili trajnih
-zapisa. Istovremeni fizički UVC+PTP i dalje nije potvrđen.
+Original PTP driver has not yet been enabled/disabled in a shared physical configuration. Native JPEG/DMM producer and sensor UVC video remain open. Full project runtime was not changed so the previous 605 tests were not repeated. No camera uploads, modules, feeder processes, USB changes, SD, or persistent writes. Simultaneous physical UVC+PTP remains unconfirmed.

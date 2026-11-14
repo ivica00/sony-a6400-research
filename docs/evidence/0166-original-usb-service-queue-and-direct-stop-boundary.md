@@ -1,33 +1,33 @@
-# E0166 — Izvorni USB red poruka i zaseban izravni stop
+# E0166 — Original USB Message Queue and Separate Direct Stop
 
-Datum: 2026-11-08. Nema pristupa kameri ni promjene produkcijskog modula. Nastavak E0165.
+Date: 2026-11-08. No camera access or production module change. Continuation of E0165.
 
-## Dokazani put pokretanja
+## Proven Launch Path
 
-Novi `tools/research/probe_uvc_ptp_service_queue.py` izvršava izvorna Thumb tijela u originalnoj a6400 `libInfraUsbCmn.so`, SHA-256 `5338bafbb545ebc223fac15c9253a41ac9fe49c01fe32c73af40c3fb50eec0a6`.
+New `tools/research/probe_uvc_ptp_service_queue.py` executes original Thumb bodies in original a6400 `libInfraUsbCmn.so`, SHA-256 `5338bafbb545ebc223fac15c9253a41ac9fe49c01fe32c73af40c3fb50eec0a6`.
 
-Izvorni `CUsbSvc::start_gadget` (0x9ed9) stvara 32-bajtnu poruku i predaje je kroz `CUsb::request` (0x848b). Potvrđeni su polja poruke: object+0, callback+8, user+12, byte argument+16, completion+20. Callback je originalni `CUsbSvc::createGadget` na 0xbbc5, dobiven kroz stvarnu ELF relokaciju; nije izmišljeni callback za test.
+Original `CUsbSvc::start_gadget` (`0x9ed9`) builds a 32-byte message and submits it via `CUsb::request` (`0x848b`). Confirmed message fields: `object+0`, `callback+8`, `user+12`, byte `argument+16`, `completion+20`. Callback is original `CUsbSvc::createGadget` at `0xbbc5`, obtained via real ELF relocation; not a fabricated test callback.
 
-`CUsb::request` zaključava this+0x40, izvršava originalni `que_push` (0x8433), signalizira this+0x58 i otključava. Ring koristi buffer+0x14, byte head+0x18, tail+0x19 i capacity+0x1a; slot je 32 bajta. Originalni push kopira svih 32 bajta i povećava tail s kružnim povratkom. Pun red vraća 12 bez promjene sadržaja.
+`CUsb::request` locks `this+0x40`, executes original `que_push` (`0x8433`), signals `this+0x58`, and unlocks. Ring uses `buffer+0x14`, byte `head+0x18`, `tail+0x19`, and `capacity+0x1a`; slot is 32 bytes. Original push copies all 32 bytes and increments tail with wraparound. Full queue returns 12 without modifying contents.
 
-Izvorni `CUsb::proc_service` (0x8529) pod istom zaštitom poziva originalni `que_pop` (0x8501), povećava head i otključava **prije** poziva callbacka iz slot+8. Na granici callbacka r0 pokazuje stvarni slot u fixture ringu, a zabilježeno stanje mutex zamjene je otključano.
+Original `CUsb::proc_service` (`0x8529`) under the same lock calls original `que_pop` (`0x8501`), increments head, and unlocks **before** calling the callback from `slot+8`. At the callback boundary `r0` points to the real slot in the fixture ring, and the recorded state of the mutex stub is unlocked.
 
-To je dokaz izvornog rasporeda instrukcija i rada reda na eksplicitnim podacima. Nije dokaz stvarnog raspoređivanja dretava, broja radnih dretava niti mogućnosti sigurnog ubacivanja MOD poruke u fizički aktivnu uslugu. `createGadget` nije izvršen; tu pokus staje.
+This is proof of original instruction sequence and queue operation on explicit data. It is not proof of real thread scheduling, worker thread count, or ability to safely inject a MOD message into a physically active service. `createGadget` was not executed; the experiment stops there.
 
-## Stop ne mora prolaziti kroz taj red
+## Stop Does Not Have to Go Through That Queue
 
-Izvorni javni `CUsbSvc::stop` (0x9e01) provjerava handle na this+0x9c (gadget) odnosno this+0xa0 (host) i stanje this+0x98. Za gadget handle i stanje 3 postavlja stanje 4 i **izravno** poziva `stop_gadget` preko PLT 0x81ac. U ovom tijelu nema zahtjeva redu ni provjere identiteta radne dretve. Pokus provjerava argumente, očuvane indekse reda, pogrešan handle (11) i pogrešno stanje (6), te staje prije stop_gadget.
+Original public `CUsbSvc::stop` (`0x9e01`) checks handle at `this+0x9c` (gadget) or `this+0xa0` (host) and state `this+0x98`. For gadget handle and state 3 it sets state 4 and **directly** calls `stop_gadget` via PLT `0x81ac`. In this body there is no queue request and no worker-thread identity check. The experiment checks arguments, preserved queue indices, wrong handle (11), and wrong state (6), and stops before `stop_gadget`.
 
-Ovo ne dokazuje da stvarni vanjski pozivatelj radi konkurentno s workerom. Dokazuje da sama izvedba reda i mutex this+0x40 nisu dovoljni kao univerzalni ugovor za sve ulaze. Osim toga, mutex se otključava prije createGadget callbacka. Držati ga preko naše transakcije značilo bi promijeniti izvorni ugovor, uz još nedokazane posljedice.
+This does not prove that a real external caller runs concurrently with the worker. It proves that the queue implementation and mutex `this+0x40` alone are insufficient as a universal contract for all entry points. Moreover, the mutex is unlocked before the `createGadget` callback. Holding it across our transaction would mean changing the original contract, with unproven consequences.
 
-## Točno razrješenje PLT-a
+## Exact PLT Resolution
 
-Probe za devet korištenih odredišta računa GOT iz stvarnih ARM add/add/ldr instrukcija PLT stavke i povezuje ga s `.rel.plt`. Ne koristi stalni razmak stavki. Tako se automatski provjeravaju request, que_push/pop, pthread lock/unlock, condition signal, getpid, cancellation i stop_gadget. E0165 pogrešna oznaka port_init za 0x7b10 ispravljena je u samom dokumentu: pravo odredište je request.
+The probe computes GOT for nine used targets from the actual ARM add/add/ldr instructions of the PLT entry and links it with `.rel.plt`. It does not assume fixed entry stride. This automatically verifies `request`, `que_push/pop`, `pthread lock/unlock`, `condition signal`, `getpid`, `cancellation`, and `stop_gadget`. E0165's wrong label `port_init` for `0x7b10` is corrected in that document itself: the real target is `request`.
 
-## Provjere
+## Checks
 
-**35 provjera prolazi**: 9 odredišta PLT-a, originalna poruka, red i worker, prazan/pun red i kružni povratak te izravni stop i negativni ulazi. Rezultati i hash samog probea nalaze se u `artifacts/analysis/uvc-ptp-service-queue-e0166/manifest.json`; zapis pokretanja je `artifacts/uvc-ptp-service-queue-e0166.log`.
+**35 checks pass**: 9 PLT targets, original message, queue and worker, empty/full queue and wraparound, and direct stop and negative inputs. Results and hash of the probe itself are in `artifacts/analysis/uvc-ptp-service-queue-e0166/manifest.json`; run log is `artifacts/analysis/uvc-ptp-service-queue-e0166.log`.
 
-Pthread, zapisivanje, getpid i cancellation izričite su servisne zamjene; GC/objekt, ring, stack i indeksi izričiti fixture podaci. Guard odbija neočekivano izvršavanje i zapise izvan dozvoljenih fixture regija. Nijedan hardverski servis, modul loader, originalni createGadget ni stop_gadget nije izvršen.
+Pthread, logging, `getpid`, and cancellation are explicit service stubs; GC/object, ring, stack, and indices are explicit fixture data. Guard rejects unexpected execution and writes outside allowed fixture regions. No hardware service, module loader, original `createGadget`, or `stop_gadget` was executed.
 
-Produkcijski kod nije mijenjan pa nisu ponavljani svi projektni testovi; prethodnih 605 prolaznih testova iz E0164 ostaje posljednja puna regresija. E0164 kandidat ostaje `physical_test_ready:false`. Sljedeće treba pratiti vanjske pozivatelje CUsbSvc::stop/start i njihove životne vijekove ili dokazati zajedničku zaštitu svih kernel ulaza. UVC senzorski tok s istodobnom PTP kontrolom ostaje nepotvrđen na kameri.
+Production code was not changed so all project tests were not repeated; previous 605 passing tests from E0164 remain the latest full regression. E0164 candidate remains `physical_test_ready:false`. Next must trace external callers of `CUsbSvc::stop/start` and their lifetimes, or prove shared protection of all kernel entry points. Sensor UVC stream with simultaneous PTP control remains unconfirmed on camera.

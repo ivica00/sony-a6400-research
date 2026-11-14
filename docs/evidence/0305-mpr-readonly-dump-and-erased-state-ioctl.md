@@ -1,7 +1,7 @@
 # E0305 — read-only MPR dump, the erased-state ioctl identity, and the first run past the `/dev/nflasha4` boundary
 
 Date: 2026-11-10. **Authorized read-only camera operations only** (explicit user
-authorization: "Nastavi, smiješ"). No camera write, no mode switch, no SD access,
+authorization: "Continue, you may proceed" [translated]). No camera write, no mode switch, no SD access,
 no writable internal flash, no GUI frame. The injected UIPC input remains a
 labelled experiment.
 

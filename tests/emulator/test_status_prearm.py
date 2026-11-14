@@ -91,34 +91,33 @@ class DispatchModel(unittest.TestCase):
 
 
 class ThunkGatingModel(unittest.TestCase):
-    def complete_thunk(self, pending, req, class_req, class_in, wlen, status=0):
-        """Model of the E0472 gating in ring queue wrapper + completion thunk."""
+    def complete_thunk(self, pending, req, class_req, wlen, status=0):
+        """Model of the E0472/E0511 gating in ring queue wrapper + completion thunk."""
         if status != 0:
             return {'pending': False, 'armed': False}  # error/setup-pending giveback
-        if not (class_in and wlen != 0):
+        if wlen == 0:
             return {'pending': False, 'armed': False}
         if pending and req == class_req:
             return {'pending': False, 'armed': True}
         return {'pending': pending, 'armed': False}
 
-    def test_only_matching_class_in_request_arms(self):
-        self.assertTrue(self.complete_thunk(1, 0x68A84560, 0x68A84560, True, 26)['armed'])
-        self.assertFalse(self.complete_thunk(1, 0x68A84DA0, 0x68A84560, True, 26)['armed'])
-        self.assertFalse(self.complete_thunk(1, 0x68A84560, 0x68A84560, False, 26)['armed'])
-        self.assertFalse(self.complete_thunk(1, 0x68A84560, 0x68A84560, True, 0)['armed'])
-        self.assertFalse(self.complete_thunk(0, 0x68A84560, 0x68A84560, True, 26)['armed'])
+    def test_only_matching_3stage_class_request_arms(self):
+        self.assertTrue(self.complete_thunk(1, 0x68A84560, 0x68A84560, 26)['armed'])
+        self.assertFalse(self.complete_thunk(1, 0x68A84DA0, 0x68A84560, 26)['armed'])
+        self.assertFalse(self.complete_thunk(1, 0x68A84560, 0x68A84560, 0)['armed'])
+        self.assertFalse(self.complete_thunk(0, 0x68A84560, 0x68A84560, 26)['armed'])
 
     def test_error_status_never_arms(self):
         # setup-pending / data-stage errors give back with req->status != 0;
         # the status stage must not be pre-armed from such a completion.
-        self.assertFalse(self.complete_thunk(1, 0x68A84560, 0x68A84560, True, 26,
+        self.assertFalse(self.complete_thunk(1, 0x68A84560, 0x68A84560, 26,
                                              status=-22)['armed'])
-        self.assertFalse(self.complete_thunk(1, 0x68A84560, 0x68A84560, True, 26,
+        self.assertFalse(self.complete_thunk(1, 0x68A84560, 0x68A84560, 26,
                                              status=-71)['armed'])
 
     def test_second_completion_cannot_arm_again(self):
-        first = self.complete_thunk(1, 0x68A84560, 0x68A84560, True, 26)
-        second = self.complete_thunk(first['pending'], 0x68A84560, 0x68A84560, True, 26)
+        first = self.complete_thunk(1, 0x68A84560, 0x68A84560, 26)
+        second = self.complete_thunk(first['pending'], 0x68A84560, 0x68A84560, 26)
         self.assertTrue(first['armed'])
         self.assertFalse(second['armed'])
 
@@ -130,8 +129,11 @@ class SourceContract(unittest.TestCase):
 
     def test_ep0state_status_write_precedes_kernel_call(self):
         write = self.src.index('*(volatile uvc_u32 *)(dwc+A6400_DWC_EVENT)=3u;')
-        call = self.src.index('A6400_FN_EP0_DO_CONTROL_STATUS)(dwc,eps0)')
+        call = self.src.index('A6400_FN_EP0_DO_CONTROL_STATUS)(dwc,status_ep)')
         self.assertLess(write, call, 'ep0state=3 must be written before the arm')
+
+    def test_status_ep_selects_eps0_for_in_and_eps1_for_out(self):
+        self.assertIn('dwc+A6400_DWC_EPS+(dir_out?4u:0u)', self.src)
 
     def test_guard_requires_state2_and_next3(self):
         self.assertIn('if (state!=2u || next!=3u', self.src)
@@ -142,10 +144,10 @@ class SourceContract(unittest.TestCase):
         orig = self.src.index('((void (*)(void *,void *))orig)((void *)ep,(void *)req);', thunk)
         self.assertLess(prearm, orig)
 
-    def test_class_gate_is_in_direction_with_wlength(self):
-        self.assertIn('if (drq && (drq[0]&0x80u) &&', self.src)
-        self.assertIn('(((uvc_u32)drq[6]|((uvc_u32)drq[7]<<8))!=0u)', self.src)
-        self.assertIn('if (g_prearm_active && !g_class_dir_out', self.src)
+    def test_class_gate_covers_3stage_wlength_and_records_direction(self):
+        self.assertIn('if (drq && (((uvc_u32)drq[6]|((uvc_u32)drq[7]<<8))!=0u))', self.src)
+        self.assertIn('g_prearm_dir_out=((drq[0]&0x80u)==0u)?1u:0u;', self.src)
+        self.assertIn('if (g_prearm_active && r && a6400_uvc_kernel_ptr(r))', self.src)
 
     def test_error_giveback_guard_present(self):
         self.assertIn('(int)a6400_uvc_rd32(r+0x2cu)!=0', self.src)
