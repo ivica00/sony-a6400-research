@@ -226,15 +226,18 @@ def check_markdown_links(root: Path, files: list[Path] | None = None) -> CheckRe
     ]
     broken: list[str] = []
     link_count = 0
+    gitignored_roots = tuple((root / name).resolve() for name in ("artifacts", "firmware", "backups"))
     for rel in md_files:
         full = root / rel
         text = full.read_text(encoding="utf-8", errors="replace")
         for target in iter_relative_markdown_links(text):
-            link_count += 1
             path_part = target.split("#", 1)[0].split("?", 1)[0]
             if not path_part:
                 continue
             resolved = (full.parent / path_part).resolve()
+            if any(resolved == g or g in resolved.parents for g in gitignored_roots):
+                continue
+            link_count += 1
             if not resolved.exists():
                 broken.append(f"{rel.as_posix()} -> {target}")
     if broken:
@@ -259,6 +262,7 @@ def check_guardrail_tests(root: Path, include_self: bool = True) -> CheckResult:
     runner = unittest.TextTestRunner(stream=stream, verbosity=1)
     result = runner.run(suite)
     if not result.wasSuccessful():
+        sys.stderr.write(stream.getvalue() + "\n")
         tail = stream.getvalue().strip().splitlines()[-10:]
         return CheckResult(
             "guardrail_tests",
