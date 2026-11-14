@@ -169,6 +169,8 @@ class UpdaterBootContract:
             extra = self.cmdline_extra
             if 'init=' in extra:
                 sony = _re.sub(r'(^|\s)init=\S+', ' ', sony)
+            if 'amba2.console=' in extra:
+                sony = _re.sub(r'(^|\s)amba2\.console=\S+', ' ', sony)
             sony = (sony + ' ' + extra).strip()
         self.sony_cmdline = sony
         self.sony_payload = sony.encode('latin1') + b'\x00'
@@ -181,6 +183,9 @@ class UpdaterBootContract:
             if 'init=' in extra:
                 import re as _re
                 self.cmdline = _re.sub(r'(^|\s)init=\S+', ' ', self.cmdline)
+            if 'amba2.console=' in extra:
+                import re as _re
+                self.cmdline = _re.sub(r'(^|\s)amba2\.console=\S+', ' ', self.cmdline)
             self.cmdline = (extra + ' ' + self.cmdline).strip()
         self.memory = parse_mem_parameters(self.cmdline)
         self.banks = [(record['start'], record['size']) for record in self.memory

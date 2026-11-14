@@ -304,22 +304,33 @@ class TestSugiliteMmioModel(unittest.TestCase):
 
 
 class TestGicItargetsrPreRoute(unittest.TestCase):
+    def _make_machine(self):
+        from src.a6400.execution.machine_contract import build_atags
+        from src.a6400.execution.unicorn_machine import UnicornMachine
+        from tests.emulator.test_data_abort import tiny_kernel
+        return UnicornMachine(
+            tiny_kernel(),
+            b'\x00' * 64,
+            build_atags('console=ttyAM0', [(0, 0x40000000)]),
+            machine_id=0x0DA9,
+            instruction_limit=100,
+        )
+
     def test_spis_default_to_cpu0(self) -> None:
         try:
-            from src.a6400.execution.unicorn_machine import UnicornMachine
+            machine = self._make_machine()
         except ImportError as exc:
             self.skipTest(f'Unicorn/ctypes unavailable in this shell: {exc}')
-        machine = UnicornMachine()
         self.assertEqual(machine._gic_regs.get(('dist', 0x820)), 0x01010101)
         self.assertEqual(machine._gic_regs.get(('dist', 0xBFC)), 0x01010101)
         self.assertNotIn(('dist', 0x800), machine._gic_regs)
 
     def test_sugilite_clock_and_mmio_wired(self) -> None:
         try:
-            from src.a6400.execution.unicorn_machine import SUGILITE_IRQ, UnicornMachine
+            from src.a6400.execution.unicorn_machine import SUGILITE_IRQ
+            machine = self._make_machine()
         except ImportError as exc:
             self.skipTest(f'Unicorn/ctypes unavailable in this shell: {exc}')
-        machine = UnicornMachine()
         self.assertEqual(SUGILITE_IRQ, 76)
         self.assertIsNotNone(machine._sugilite_mmio)
 

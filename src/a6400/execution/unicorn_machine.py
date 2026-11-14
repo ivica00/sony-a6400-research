@@ -63,6 +63,7 @@ GIC_CPU = 0xF8000100
 TIMER_BASE = 0xF2403000
 TIMER_COUNTER_OFFSET = 0x10C
 TIMER_IRQ = 153  # 0x99: ext_timer_setup setup_irq(irq = context[4] + 0x99)
+UART_IRQ = 150   # ttyAM0 PL011 UART0 interrupt
 TIMER_HZ = 100  # clock_event period 0x2710 on a 1 MHz timer
 TIMER_TICKS_PER_JIFFY = 0x2710
 VECTORS_BASE = 0xFFFF0000
@@ -815,7 +816,8 @@ class UnicornMachine:
                 target = frame['pc']
                 if (spsr & 0x1F) != 0x10:
                     return
-                if not (0x1000 <= (target or 0) < 0x60000000):
+                if not ((0x1000 <= (target or 0) < 0x60000000)
+                        or (0xFFFF0000 <= (target or 0) < 0xFFFF1000)):
                     self.pt_frame_consumed = frame['gen']
                     return
                 if not (0x1000 <= (frame['sp'] or 0) < 0x60000000):
@@ -841,6 +843,8 @@ class UnicornMachine:
                     self._set_pc_and_cpsr(target, spsr)
                     self._pending_user_resume = (
                         self.thumb_pc(target, spsr), spsr)
+                    self._pending_user_frame = frame
+                    self._restore_user_sp = False
                     try:
                         uc.emu_stop()
                     except Exception:
@@ -968,8 +972,13 @@ class UnicornMachine:
         def uart_register_value(offset):
             if offset == PL011_DR:
                 if self.serial_input:
-                    self._uart_regs[PL011_RIS] = self._uart_regs.get(PL011_RIS, 0) | 0x10  # RX interrupt status
-                    return self.serial_input.pop(0)
+                    ch = self.serial_input.pop(0)
+                    if self.serial_input:
+                        self._uart_regs[PL011_RIS] = self._uart_regs.get(PL011_RIS, 0) | 0x10
+                    else:
+                        self._uart_regs[PL011_RIS] = self._uart_regs.get(PL011_RIS, 0) & ~0x10
+                    self._sync_uart_irq()
+                    return ch
                 return 0
             if offset == PL011_FR:
                 rxfe = 0x10 if not self.serial_input else 0
@@ -1077,6 +1086,7 @@ class UnicornMachine:
                 if cpu_side and offset == GIC_ICCEOIR:
                     self._gic_active_irq = None
                     self._gic_eoir_writes += 1
+                    self._sync_uart_irq()
                 if cpu_side and offset == GIC_ICCICR:
                     self._gic_enabled = bool(
                         (value & 1) and (self._gic_regs.get(('dist', 0x000), 0) & 1))
@@ -1122,8 +1132,11 @@ class UnicornMachine:
                     self.serial.append(value & 0xFF)
                 elif offset == PL011_ICR:
                     self._uart_regs[PL011_RIS] = self._uart_regs.get(PL011_RIS, 0) & ~value
+                    self._sync_uart_irq()
                 else:
                     self._uart_regs[offset] = value & 0xFFFFFFFF
+                    if offset == PL011_IMSC:
+                        self._sync_uart_irq()
             if size <= 4:
                 stream = self.mmio_write_bytes.setdefault(address, bytearray())
                 if len(stream) < 2048:
@@ -1378,7 +1391,9 @@ class UnicornMachine:
             self.uc.hook_add(UC_HOOK_CODE, page_fault_hook,
                              begin=page_fault, end=page_fault + 3)
         self._install_fault_mrc_hooks()
-        if self.enable_svc_dispatch and self.virtual_tlb:
+        if self.enable_svc_dispatch and (
+                self.virtual_tlb or self.virtual_tlb_enabled
+                or self.virtual_tlb_on_userspace):
             self._install_kuser_hooks(tls_only=True)
         else:
             self._install_kuser_hooks()
@@ -1453,6 +1468,17 @@ class UnicornMachine:
         cpu_ctlr = self._gic_regs.get(('cpu', GIC_ICCICR), 0)
         dist_ctlr = self._gic_regs.get(('dist', 0x000), 0)
         return bool((cpu_ctlr & 1) and (dist_ctlr & 1))
+
+    def _sync_uart_irq(self) -> None:
+        """Assert or clear PL011 UART0 IRQ 150 from masked interrupt status."""
+        ris = self._uart_regs.get(PL011_RIS, 0) | 0x20  # TXRIS always ready
+        if self.serial_input:
+            ris |= 0x10  # RXRIS while RX FIFO non-empty
+        mis = ris & self._uart_regs.get(PL011_IMSC, 0)
+        if mis and self._gic_irq_enabled():
+            self._soft_pending_irqs.add(UART_IRQ)
+        else:
+            self._soft_pending_irqs.discard(UART_IRQ)
 
     def _try_inject_irq(self) -> bool:
         """Deliver a pending software or timer IRQ by emulating ARM IRQ entry."""
@@ -1666,7 +1692,6 @@ class UnicornMachine:
 
         def memory_barrier(uc, address, size, user):
             record(0xFFFF0FA0, 'memory_barrier')
-            uc.reg_write(UC_ARM_REG_R0, 0)
             uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
         def cmpxchg(uc, address, size, user):
@@ -2760,6 +2785,8 @@ class UnicornMachine:
                     if len(self.switch_mm_values) < 8:
                         self.switch_mm_values.append(pgd)
                     if 0x1000 <= pgd < 0x80000000:
+                        if pgd != self._cached_ttbr0:
+                            self._pending_cputlb_flush = True
                         self._last_switch_mm_pgd = pgd
                         self._cached_ttbr0 = pgd
                 except Exception:
@@ -3588,7 +3615,17 @@ class UnicornMachine:
                             if (0x1000 <= (_rpc & ~1) < 0x60000000
                                     and (_rcpsr & 0x1F) != 0x10):
                                 _rcpsr = ((_rcpsr & ~0x3F) | 0x10 | 0x20)
+                            self._apply_pending_tlb_work()
                             self._set_pc_and_cpsr(_rpc, _rcpsr)
+                            _uframe = getattr(self, '_pending_user_frame', None)
+                            self._pending_user_frame = None
+                            if _uframe is not None and (_rcpsr & 0x1F) == 0x10:
+                                for _ri in range(13):
+                                    self.uc.reg_write(UC_ARM_REG_R0 + _ri,
+                                                      _uframe['words'][_ri])
+                                self.uc.reg_write(UC_ARM_REG_SP, _uframe['sp'])
+                                self.uc.reg_write(UC_ARM_REG_LR, _uframe['lr'])
+                                self._restore_user_sp = False
                             try:
                                 self.uc.ctl_flush_tb()
                             except Exception:
@@ -3598,7 +3635,6 @@ class UnicornMachine:
                                 self.uc.ctl_remove_cache(_page, _page + 0x1000)
                             except Exception:
                                 pass
-                            self._apply_pending_tlb_work()
                             self.uc.emu_start(_rpc, 0, count=slice_size)
                         if self._user_refresh_requested:
                             self._user_refresh_requested = False
@@ -3782,8 +3818,9 @@ class UnicornMachine:
                                     self.insn_invalid_unsupported.append({
                                         'pc': f'0x{pc:08x}', 'bytes': _hex,
                                         'mnemonic': _mn})
+                            in_kuser = (0xFFFF0000 <= pc < 0xFFFF1000)
                             if (not is_mem and not is_fetch and user_mode
-                                    and 0x1000 <= pc < 0x60000000):
+                                    and (0x1000 <= pc < 0x60000000 or in_kuser)):
                                 # E0443: distinguish a real CPU exception (SWI/UNDEF)
                                 # from an instruction-fetch page fault by checking
                                 # whether the faulting page is mapped in the guest
@@ -3791,11 +3828,14 @@ class UnicornMachine:
                                 # unmapped -> fall through to the prefetch abort path.
                                 # E0444: decode is unconditional for a mapped page;
                                 # the capped dump is only for diagnostics.
-                                info = self._walk_user_va(pc)
-                                self._capture_live_fault_page(pc)
-                                page_pa = None
-                                if info is not None and 'pa' in info:
-                                    page_pa = int(info['pa'], 16)
+                                if in_kuser:
+                                    page_pa = self._walk_kernel_pt(pc)
+                                else:
+                                    info = self._walk_user_va(pc)
+                                    self._capture_live_fault_page(pc)
+                                    page_pa = None
+                                    if info is not None and 'pa' in info:
+                                        page_pa = int(info['pa'], 16)
                                 is_svc = False
                                 if page_pa is not None:
                                     try:

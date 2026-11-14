@@ -2,8 +2,8 @@ import gc
 import struct
 import unittest
 from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
-                              UC_ARM_REG_R0, UC_ARM_REG_R4, UC_ARM_REG_R8,
-                              UC_ARM_REG_SPSR,
+                              UC_ARM_REG_R0, UC_ARM_REG_R2, UC_ARM_REG_R4,
+                              UC_ARM_REG_R8, UC_ARM_REG_SPSR,
                               UC_ARM_REG_SP)
 
 from src.a6400.execution.machine_contract import build_atags
@@ -522,6 +522,103 @@ class VirtualTlbTest(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(entry.paddr, expected_pa)
             self.assertEqual(entry.perms, expected_perms)
+
+    def test_ret_tail_hook_allows_kuser_target_and_clears_stale_user_sp(self):
+        import struct
+        machine = make_machine(trace_user_mode=True)
+        machine.uc.mem_map(0x6010D000, 0x1000)
+        # nop at 0x6010DF64 (mov r0, r0)
+        machine.uc.mem_write(0x6010DF64, struct.pack('<I', 0xE1A00000))
+        machine.user_sp = 0x5E8CB81C
+        machine._restore_user_sp = True
+        words = [0] * 17
+        words[13] = 0x5E8CB830
+        words[14] = 0x0403E98D
+        words[15] = 0xFFFF0FC0
+        words[16] = 0x00000010
+        machine.pt_frame_last = {
+            'gen': 7,
+            'words': words,
+            'sp': 0x5E8CB830,
+            'lr': 0x0403E98D,
+            'pc': 0xFFFF0FC0,
+            'cpsr': 0x00000010,
+        }
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x93)
+        machine.uc.emu_start(0x6010DF64, 0x6010DF68, count=1)
+        self.assertEqual(machine.user_restores, 1)
+        self.assertFalse(machine._restore_user_sp)
+        self.assertIsNotNone(machine._pending_user_frame)
+        self.assertEqual(machine._pending_user_frame['sp'], 0x5E8CB830)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SP), 0x5E8CB830)
+
+    def test_decode_fault_address_kuser_strexeq_write(self):
+        import struct
+        machine = make_machine()
+        pa = 0x00000FCC
+        # strexeq r3, r1, [r2] (0x01823F91)
+        machine.uc.mem_write(pa, struct.pack('<I', 0x01823F91))
+        machine._set_pc_and_cpsr(0xFFFF0FCC, 0x00000010)
+        machine.uc.reg_write(UC_ARM_REG_R2, 0x00123450)
+        self.assertEqual(machine._decode_fault_address(0xFFFF0FCC, pa),
+                         (0x00123450, True))
+
+    def test_sync_uart_irq_asserts_and_clears_irq_150(self):
+        from src.a6400.execution.unicorn_machine import (
+            GIC_ICCICR, PL011_IMSC, UART_IRQ)
+        machine = make_machine()
+        machine._gic_regs[('cpu', GIC_ICCICR)] = 1
+        machine._gic_regs[('dist', 0x000)] = 1
+        machine._uart_regs[PL011_IMSC] = 0x10  # RXIM
+        machine.serial_input = bytearray()
+        machine._sync_uart_irq()
+        self.assertNotIn(UART_IRQ, machine._soft_pending_irqs)
+        machine.serial_input.extend(b'a')
+        machine._sync_uart_irq()
+        self.assertIn(UART_IRQ, machine._soft_pending_irqs)
+        machine._uart_regs[PL011_IMSC] = 0
+        machine._sync_uart_irq()
+        self.assertNotIn(UART_IRQ, machine._soft_pending_irqs)
+
+    def test_switch_mm_hook_sets_pending_cputlb_flush_on_pgd_change(self):
+        import struct
+        machine = make_machine(virtual_tlb_on_userspace=True)
+        addr = machine.switch_mm_address
+        page = addr & ~0xFFF
+        machine.uc.mem_map(page, 0x1000)
+        machine.uc.mem_write(addr, struct.pack('<I', 0xE1A00000))
+        machine._cached_ttbr0 = 0x1DC1C000
+        machine._pending_cputlb_flush = False
+        machine.uc.reg_write(UC_ARM_REG_R0, 0x1DC18000)
+        machine.uc.emu_start(addr, addr + 4, count=1)
+        self.assertTrue(machine._pending_cputlb_flush)
+
+    def test_updater_boot_contract_overrides_amba2_console(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from src.a6400.execution.machine_contract import UpdaterBootContract
+
+        boot_set = SimpleNamespace(
+            load_addresses=lambda: {
+                'kernel_load': 0x00108000,
+                'boot_params': 0x00000100,
+            },
+            raw_kernel_image=lambda: b'\x00' * 64,
+            kernel_file=lambda: SimpleNamespace(sha256='0' * 64),
+            read=lambda path: (
+                b'kemco amba2.console=0 init=/linuxrc mem=128M@0x00000000*\n'
+                if path == 'boot/kemco.txt' else b''
+            ),
+        )
+        with patch('src.a6400.execution.machine_contract.recover_machine_descriptor',
+                   return_value=SimpleNamespace(machine_id=0x0DA9)):
+            contract = UpdaterBootContract(
+                boot_set, cmdline_extra="init=/bin/ash amba2.console=1"
+            )
+        self.assertIn("amba2.console=1", contract.cmdline)
+        self.assertNotIn("amba2.console=0", contract.cmdline)
+        self.assertIn("amba2.console=1", contract.sony_cmdline)
+        self.assertNotIn("amba2.console=0", contract.sony_cmdline)
 
 
 if __name__ == '__main__':

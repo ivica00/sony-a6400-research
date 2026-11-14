@@ -218,29 +218,48 @@ class StatusSnapshot:
 
 STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
-    as_of="2026-11-13",
+    as_of="2026-11-14",
     latest=EvidenceRef(
-        evidence_id="E0509",
-        path="docs/evidence/0509-a6400a-msc-reply-lifetime-and-verified-native-identity.md",
-        date="2026-11-13",
-        title="a6400A normal identity query succeeds within its reply window",
+        evidence_id="E0510",
+        path="docs/evidence/0510-nflasha1-busybox-ash-ttyam0-shell.md",
+        date="2026-11-14",
+        title="Offline nflasha1 kernel boots cleanly to BusyBox /bin/ash shell on ttyAM0",
         demonstrated=(
-            "Original ARM/Thumb controls identify a finite 10,000 ms reply timeout. The client "
-            "now keeps one request and bounded polling together and refuses stale continuation. "
-            "One owner-run transaction returns ILCE-6400A and opaque product code 0032858730 "
-            "in 2.727 ms through unchanged Windows USBSTOR, with three SCSI operations, no "
-            "BUSY, no request replay, no driver/mode change and no sector/file operation."
+            "Offline (no camera). Fixed amba2.console=1 override in UpdaterBootContract, added "
+            "PL011 IRQ 150 (_sync_uart_irq), enabled kuser hooks/return targets and 0xFFFF0FCC strexeq "
+            "COW Data Abort decoding, set _pending_cputlb_flush on switch_mm PGD change, and preserved "
+            "per-process SP_usr across sys_clone via _pending_user_frame + _restore_user_sp=False. "
+            "800M nflasha1 boot reaches BusyBox v1.13.4 /bin/ash (/ # ) on ttyAM0, executes uname -a "
+            "and ls -la /, and idles cleanly at cpu_v7_do_idle+0x8 (user_restores=1083, serial_bytes=11420, unmapped=[])."
         ),
         boundary=(
-            "This verifies normal model information, not a debugger, live kernel identity, "
-            "/proc, /setting or physical dumps. The exact first-BUSY cause and cold-session "
-            "repeatability remain unproven; the delayed E0508 test could miss a finite reply. "
-            "The target remains reference."
+            "Updater kernel + initrd only (Phase 1 complete); main-firmware rootfs/services "
+            "(Appframework, gui.so, dmpgles2) and display rendering belong to Phases 2+."
         ),
-        tier="READ-ONLY PHYSICAL + OFFLINE",
+        tier="OFFLINE BOUNDED UNICORN BRING-UP",
     ),
-    headline="1782 tests recorded passing | No verified emulator GUI frame",
+    headline="1787 tests recorded passing | nflasha1 BusyBox /bin/ash shell | No verified emulator GUI frame",
     cards=(
+        EvidenceRef(
+            evidence_id="E0509",
+            path="docs/evidence/0509-a6400a-msc-reply-lifetime-and-verified-native-identity.md",
+            date="2026-11-13",
+            title="a6400A normal identity query succeeds within its reply window",
+            demonstrated=(
+                "Original ARM/Thumb controls identify a finite 10,000 ms reply timeout. The client "
+                "now keeps one request and bounded polling together and refuses stale continuation. "
+                "One owner-run transaction returns ILCE-6400A and opaque product code 0032858730 "
+                "in 2.727 ms through unchanged Windows USBSTOR, with three SCSI operations, no "
+                "BUSY, no request replay, no driver/mode change and no sector/file operation."
+            ),
+            boundary=(
+                "This verifies normal model information, not a debugger, live kernel identity, "
+                "/proc, /setting or physical dumps. The exact first-BUSY cause and cold-session "
+                "repeatability remain unproven; the delayed E0508 test could miss a finite reply. "
+                "The target remains reference."
+            ),
+            tier="READ-ONLY PHYSICAL + OFFLINE",
+        ),
         EvidenceRef(
             evidence_id="E0505",
             path="docs/evidence/0505-av-cam-cc-3dlut-and-ec-gamma-pipeline.md",
@@ -486,9 +505,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1782,
-        recorded_at="2026-11-13",
-        evidence_id="E0509",
+        test_count=1787,
+        recorded_at="2026-11-14",
+        evidence_id="E0510",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(

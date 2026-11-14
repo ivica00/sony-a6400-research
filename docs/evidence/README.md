@@ -10,6 +10,7 @@ Current consolidated state: [README research status](../../README.md) and
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0510](0510-nflasha1-busybox-ash-ttyam0-shell.md) | 2026-11-14 | Offline `nflasha1` kernel + initrd boots cleanly to interactive `BusyBox v1.13.4` `/bin/ash` (`/ # `) on PL011 `ttyAM0` (IRQ 150) and executes `uname -a` and `ls -la /` with zero unmapped accesses (`user_restores = 1083`, `serial_bytes = 11420`, `cpu_v7_do_idle+0x8`), completing Phase 1 of the boot-to-GUI plan. |
 | [E0509](0509-a6400a-msc-reply-lifetime-and-verified-native-identity.md) | 2026-11-13 | One uninterrupted normal-mode model query returns ILCE-6400A in 2.727 ms through unchanged Windows USBSTOR; finite reply-lifetime controls explain why delayed continuation was not a compatibility test; debugger and dump access remain unverified |
 | [E0508](0508-a6400a-native-readonly-transport-and-model-info-busy.md) | 2026-11-13 | Historical inquiry success and bounded model-info BUSY receipts, without driver, mode or storage changes; the delayed completion procedure is superseded by E0509 |
 | [E0507](0507-a6400a-kernel-partition-mmio-and-hook-map.md) | 2026-11-13 | Separate a6400A main/updater kernel, rootfs and hook maps; 30 static partition rows and eight MMIO mappings match the reference package; bounded updater execution stops at unsupported timer MMIO, not a full boot |
