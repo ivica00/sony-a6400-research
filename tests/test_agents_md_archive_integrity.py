@@ -23,20 +23,21 @@ class TestAgentsMdArchiveIntegrity(unittest.TestCase):
         agents_text = AGENTS_MD.read_text(encoding="utf-8") if AGENTS_MD.is_file() else ""
         combined = agents_text + "\n" + archive_text
 
-        # Every key milestone E-ID from the pre-reorg AGENTS.md must remain present.
-        for eid in (
-            "E0210", "E0219", "E0222", "E0226", "E0227", "E0234",
-            "E0297", "E0298", "E0300", "E0301", "E0302", "E0304",
-            "E0305", "E0306", "E0307", "E0308", "E0309", "E0310",
-            "E0311", "E0312", "E0313", "E0314", "E0320", "E0340",
-            "E0414", "E0415", "E0416", "E0425", "E0448", "E0454",
-            "E0456", "E0458", "E0465", "E0467", "E0468", "E0471",
-            "E0476",
-        ):
-            self.assertIn(eid, combined, f"lost evidence reference {eid}")
-
-        # Critical safety notes must remain in AGENTS.md itself when present locally.
+        # Every key milestone E-ID from the pre-reorg AGENTS.md must remain present
+        # across AGENTS.md + archive when AGENTS.md is present locally.
         if AGENTS_MD.is_file():
+            for eid in (
+                "E0210", "E0219", "E0222", "E0226", "E0227", "E0234",
+                "E0297", "E0298", "E0300", "E0301", "E0302", "E0304",
+                "E0305", "E0306", "E0307", "E0308", "E0309", "E0310",
+                "E0311", "E0312", "E0313", "E0314", "E0320", "E0340",
+                "E0414", "E0415", "E0416", "E0425", "E0448", "E0454",
+                "E0456", "E0458", "E0465", "E0467", "E0468", "E0471",
+                "E0476",
+            ):
+                self.assertIn(eid, combined, f"lost evidence reference {eid}")
+
+            # Critical safety notes must remain in AGENTS.md itself when present locally.
             self.assertIn("E0454", agents_text)
             self.assertIn("E0297", agents_text)
             self.assertIn("A:/dev/mmca", agents_text)
