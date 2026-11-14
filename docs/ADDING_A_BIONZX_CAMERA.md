@@ -4,6 +4,32 @@ This guide is for owners of another Sony BIONZ X / `CXD90045` body — a6100, a6
 a7 III, ZV-E10, or a model not listed yet — who want the project to know about their
 camera **without inventing anything about it**.
 
+**ILCE-6400A owners:** [E0506](evidence/0506-a6400a-offline-qualification-and-debugger-boundary.md)
+qualifies the signed 1.01 package and observes Mass Storage `054C:0F0F`. The
+`ilce_6400a` profile is **reference only**, not a verified execution or installation
+target. Its kernel addresses and driver differ from the original a6400. Start
+offline; do not run the old installer or assume a debugger is already available.
+
+[E0507](evidence/0507-a6400a-kernel-partition-mmio-and-hook-map.md) maps the
+a6400A's main/updater builds, static partition and MMIO geometry, rootfs versions
+and moved execution hooks with `tools.research.bionzx_machine_map`. It explicitly
+keeps live `/proc`, actual boot tags, `/setting` and physical dump facts unknown.
+Package images can be shorter than partition capacity; never pad or label them
+as complete camera dumps. A first-class runtime profile still needs captured
+identities and per-image execution contracts, not only a registry entry.
+
+[E0508](evidence/0508-a6400a-native-readonly-transport-and-model-info-busy.md)
+records the next access boundary: a narrow native Windows inquiry works, but
+normal model information remains BUSY. That does not provide `/proc` or dump
+access. Keep that failed, bounded result separate from the offline machine map;
+do not use generic updater/service wrappers as read-only onboarding commands.
+
+[E0509](evidence/0509-a6400a-msc-reply-lifetime-and-verified-native-identity.md)
+subsequently verifies the normal model query with one uninterrupted transaction.
+Its opaque wire product code is `0032858730`; the updater model id is separately
+`0x81030017`. Do not conflate those identifiers or promote a working identity API
+to a first-class executable machine or debugger/dump capability.
+
 Two ways to contribute, in increasing effort:
 
 | Contribution | Hardware needed | What it unlocks |
@@ -39,8 +65,8 @@ source, so you cannot accidentally publish an unsourced address.
 You need a legally acquired firmware update or a dump you already own; do not commit it.
 
 ```powershell
-# Unpack the Sony update container (delegates to the bundled fwtool)
-.\venv\Scripts\python.exe -m tools.research.unpack_firmware firmware\Update_ILCE6400V200.exe
+# Extract the container as data, without executing the updater
+.\venv\Scripts\python.exe -m tools.research.sony_updater_payload firmware\Update_ILCE6400AV101.exe artifacts\analysis\NEW-CAMERA-CHECK\payload
 
 # Inventory ELF/shared objects and kernel images found in the extracted partitions
 .\venv\Scripts\python.exe -m tools.research.elf_inventory --help
@@ -48,6 +74,14 @@ You need a legally acquired firmware update or a dump you already own; do not co
 # Decode the kernel kallsyms tables straight out of the extracted vmlinux.bin
 .\venv\Scripts\python.exe -m tools.research.decode_kernel_kallsyms --help
 ```
+
+The payload tool reports **UFU** or **CAB**. For CAB, extract only its
+`FirmwareData_*.dat` member with an archive reader, then pass that data to
+`fwtool.py unpack -f <payload> -o <new-output>`. For UFU, pass the extracted
+container directly. Never run the updater or extracted executables. Use fresh
+output directories; [E0506](evidence/0506-a6400a-offline-qualification-and-debugger-boundary.md)
+records the exact a6400A cabinet/data commands. The legacy UFU-only wrapper is
+not the procedure for PackMan updaters.
 
 What to look for, and where it belongs in the profile:
 
@@ -66,6 +100,11 @@ the `EvidenceRef.detail`.
 ---
 
 ## Step 2 — Capture a read-only runtime probe
+
+This step assumes a debugger has already been separately qualified and installed
+for your body. It is not an installer compatibility test. A stock camera without
+verified access stops here; bootstrap, startup changes and even staging helpers
+in camera RAM require their own explicit scope.
 
 The `probes/` directory contains a freestanding ARMv7 reader and its build/receipt harness.
 Read [`probes/README.md`](../probes/README.md) before running it: it documents the exact
@@ -232,4 +271,4 @@ PR checklist:
 
 ## Where the current profiles are
 
-Per-body modules live under `src/a6400/targets/bodies/` (`ilce_6400.py`, `zv_e10.py`, `ilce_6100.py`, `ilce_6600.py`, `ilce_7m3.py`) and are assembled into `DEFAULT_REGISTRY` in `src/a6400/targets/catalog.py`. `src/a6400/targets/profile.py` holds the schema (`TargetProfile`, `BootLayoutSpec`, `EvidenceRef`) and fail-closed validation.
+Per-body modules live under `src/a6400/targets/bodies/` (`ilce_6400.py`, `ilce_6400a.py`, `zv_e10.py`, `ilce_6100.py`, `ilce_6600.py`, `ilce_7m3.py`) and are assembled into `DEFAULT_REGISTRY` in `src/a6400/targets/catalog.py`. `src/a6400/targets/profile.py` holds the schema (`TargetProfile`, `BootLayoutSpec`, `EvidenceRef`) and fail-closed validation. A profile is evidence metadata, not an automatic port of every emulator or camera helper.

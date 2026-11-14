@@ -57,7 +57,7 @@ class TestRegistryContents(unittest.TestCase):
     def test_registered_targets(self):
         self.assertEqual(
             profile_ids(),
-            ("ilce_6100", "ilce_6400", "ilce_6600", "ilce_7m3", "zv_e10"),
+            ("ilce_6100", "ilce_6400", "ilce_6400a", "ilce_6600", "ilce_7m3", "zv_e10"),
         )
 
     def test_every_profile_is_a_bionz_x_cxd90045_body(self):
@@ -89,7 +89,7 @@ class TestRegistryContents(unittest.TestCase):
         self.assertEqual(tuple(p.target_id for p in stubs), ())
         self.assertEqual(
             tuple(p.target_id for p in DEFAULT_REGISTRY.by_status(STATUS_REFERENCE)),
-            ("ilce_6100", "ilce_6600", "ilce_7m3", "zv_e10"),
+            ("ilce_6100", "ilce_6400a", "ilce_6600", "ilce_7m3", "zv_e10"),
         )
         self.assertEqual(
             sum(len(DEFAULT_REGISTRY.by_status(status))

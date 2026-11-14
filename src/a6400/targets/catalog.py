@@ -9,18 +9,20 @@ from __future__ import annotations
 from src.a6400.targets.bodies import (
     ILCE_6100,
     ILCE_6400,
+    ILCE_6400A,
     ILCE_6600,
     ILCE_7M3,
     ZV_E10,
 )
 from src.a6400.targets.profile import TargetProfile, TargetRegistry
 
-DEFAULT_REGISTRY = TargetRegistry((ILCE_6400, ZV_E10, ILCE_6100, ILCE_6600, ILCE_7M3))
+DEFAULT_REGISTRY = TargetRegistry((ILCE_6400, ILCE_6400A, ZV_E10, ILCE_6100, ILCE_6600, ILCE_7M3))
 
 __all__ = [
     "DEFAULT_REGISTRY",
     "ILCE_6100",
     "ILCE_6400",
+    "ILCE_6400A",
     "ILCE_6600",
     "ILCE_7M3",
     "TargetProfile",

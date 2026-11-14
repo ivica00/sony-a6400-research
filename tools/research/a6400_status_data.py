@@ -218,25 +218,45 @@ class StatusSnapshot:
 
 STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
-    as_of="2026-11-14",
+    as_of="2026-11-13",
     latest=EvidenceRef(
-        evidence_id="E0505",
-        path="docs/evidence/0505-av-cam-cc-3dlut-and-ec-gamma-pipeline.md",
-        date="2026-11-14",
-        title="av-cam.bin CC: 3D LUT (YCbCr 5x9x9) and EC_Gamma pre-8-bit pipeline analysis + sensor tables",
+        evidence_id="E0509",
+        path="docs/evidence/0509-a6400a-msc-reply-lifetime-and-verified-native-identity.md",
+        date="2026-11-13",
+        title="a6400A normal identity query succeeds within its reply window",
         demonstrated=(
-            "Offline static analysis (Ghidra/REA + Capstone, no camera). Decoded the CC: 3D LUT controller "
-            "(FUN_63ad0fc8 / FUN_63ad0930) as a YCbCr-domain 5x9x9 LUT with Q14 BT.601/BT.709 conversion, "
-            "the EC_Gamma pre-8-bit gamma/knee pipeline (FUN_63ba8158 / FUN_63b1f614), and added typed sensor/LUT "
-            "table models in src/a6400/sensor/ with 7 new tests in tests/test_sensor_tables.py. Full suite: 1748 OK."
+            "Original ARM/Thumb controls identify a finite 10,000 ms reply timeout. The client "
+            "now keeps one request and bounded polling together and refuses stale continuation. "
+            "One owner-run transaction returns ILCE-6400A and opaque product code 0032858730 "
+            "in 2.727 ms through unchanged Windows USBSTOR, with three SCSI operations, no "
+            "BUSY, no request replay, no driver/mode change and no sector/file operation."
         ),
         boundary=(
-            "Static firmware/table decoding only; no live ISP register capture or runtime frame rendering claimed."
+            "This verifies normal model information, not a debugger, live kernel identity, "
+            "/proc, /setting or physical dumps. The exact first-BUSY cause and cold-session "
+            "repeatability remain unproven; the delayed E0508 test could miss a finite reply. "
+            "The target remains reference."
         ),
-        tier="OFFLINE STATIC IMAGE",
+        tier="READ-ONLY PHYSICAL + OFFLINE",
     ),
-    headline="1748 tests recorded passing | No verified emulator GUI frame",
+    headline="1782 tests recorded passing | No verified emulator GUI frame",
     cards=(
+        EvidenceRef(
+            evidence_id="E0505",
+            path="docs/evidence/0505-av-cam-cc-3dlut-and-ec-gamma-pipeline.md",
+            date="2026-11-14",
+            title="av-cam.bin CC: 3D LUT (YCbCr 5x9x9) and EC_Gamma pre-8-bit pipeline analysis + sensor tables",
+            demonstrated=(
+                "Offline static analysis (Ghidra/REA + Capstone, no camera). Decoded the CC: 3D LUT controller "
+                "(FUN_63ad0fc8 / FUN_63ad0930) as a YCbCr-domain 5x9x9 LUT with Q14 BT.601/BT.709 conversion, "
+                "the EC_Gamma pre-8-bit gamma/knee pipeline (FUN_63ba8158 / FUN_63b1f614), and added typed sensor/LUT "
+                "table models in src/a6400/sensor/ with 7 new tests in tests/test_sensor_tables.py. Full suite: 1748 OK."
+            ),
+            boundary=(
+                "Static firmware/table decoding only; no live ISP register capture or runtime frame rendering claimed."
+            ),
+            tier="OFFLINE STATIC IMAGE",
+        ),
         EvidenceRef(
             evidence_id="E0504",
             path="docs/evidence/0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md",
@@ -466,9 +486,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1748,
-        recorded_at="2026-11-14",
-        evidence_id="E0505",
+        test_count=1782,
+        recorded_at="2026-11-13",
+        evidence_id="E0509",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(

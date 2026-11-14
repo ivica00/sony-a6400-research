@@ -20,7 +20,7 @@ See [docs/INDEX.md](docs/INDEX.md) and [docs/CURRENT_STATE.md](docs/CURRENT_STAT
 - **L2 Kernel Boot (`UnicornMachine`):** `E0415–E0467` — `ARM-CXD900X0` (`0xDA9`), `UC_TLB_VIRTUAL` deferred at `ret_to_user` (`0x6010DF34`), reaches `ld-2.11.2.so` `USR` Thumb (`0x0402E790`, `CPSR=0x30`); next is Thumb TB warm-up at `0x0402E798` → BusyBox `_start` (`0x0000C439`) → `/bin/ash`.
 - **L3 User-Space (`InterpreterProbe`):** `E0298–E0340`, `E0473` — `--thread-timeslice` reaches 88+ threads (`THREAD_APP`, `Appframework`, `gui.so`); blocked on guest `stella HeapAllocator` `0x4C`/`0x50` pool-boundary overrun (`libObj+0x79FE14`).
 - **Track B Physical UVC/PTP (`054C:0322`):** `E0468`, `E0471`, `E0476` — Run B25 `S1` root-caused EP0 Status-OUT NAK window; `E0476` status pre-arm module (`dcc2f64f…`, `117/8/0`, Unicorn `8/8 PASS`) awaits explicit user GO for Run B26.
-- **Multi-Device Platform (`CXD90045`):** `E0477–E0489` — 13 bodies / 9 kernels mapped; `TargetProfile` registry in `src/a6400/targets/`.
+- **Multi-Device Platform (`CXD90045`):** `E0477–E0489`, `E0506–E0509` — 13 bodies / 9 kernels mapped + `ILCE-6400A` 1.01 reference qualification and USBSTOR native `GetModelInfo` (`0032858730`, 2.727 ms); `TargetProfile` registry in `src/a6400/targets/`.
 
 ## 4. Fidelity and evidence invariants
 

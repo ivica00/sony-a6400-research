@@ -4,12 +4,16 @@ One record per hardware or software claim. Records are dated and are **not** rew
 when a later result supersedes them: the newer record says what changed.
 
 Current consolidated state: [README research status](../../README.md) and
-[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0490**, 2026-11-13).
+[UVC/PTP status and next steps](../UVC_PTP_STATUS.md) (through **E0494**, 2026-11-13).
 
 ## Latest records
 
 | ID | Date | Claim |
 | --- | --- | --- |
+| [E0509](0509-a6400a-msc-reply-lifetime-and-verified-native-identity.md) | 2026-11-13 | One uninterrupted normal-mode model query returns ILCE-6400A in 2.727 ms through unchanged Windows USBSTOR; finite reply-lifetime controls explain why delayed continuation was not a compatibility test; debugger and dump access remain unverified |
+| [E0508](0508-a6400a-native-readonly-transport-and-model-info-busy.md) | 2026-11-13 | Historical inquiry success and bounded model-info BUSY receipts, without driver, mode or storage changes; the delayed completion procedure is superseded by E0509 |
+| [E0507](0507-a6400a-kernel-partition-mmio-and-hook-map.md) | 2026-11-13 | Separate a6400A main/updater kernel, rootfs and hook maps; 30 static partition rows and eight MMIO mappings match the reference package; bounded updater execution stops at unsupported timer MMIO, not a full boot |
+| [E0506](0506-a6400a-offline-qualification-and-debugger-boundary.md) | 2026-11-13 | Signed a6400A 1.01 package, original USB packing controls and host-only Mass Storage identity support a separately sourced reference profile, not a qualified debugger installation or runnable machine |
 | [E0505](0505-av-cam-cc-3dlut-and-ec-gamma-pipeline.md) | 2026-11-14 | `av-cam.bin` `CC:` 3D LUT (`FUN_63ad0fc8`/`FUN_63ad0930`, YCbCr 5×9×9 + Q14 BT.601/BT.709) and `EC_Gamma` pre-8-bit pipeline (`FUN_63ba8158`/`FUN_63b1f614`) decoded statically; typed sensor/LUT models added in `src/a6400/sensor/` (`test_sensor_tables.py`, 7 tests). |
 | [E0504](0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md) | 2026-11-14 | `0x0402F666` proven Thumb `USR` (`cpsr=0x60000030`, `T=1`); PC-relative `ldr.w r4,[pc,#0xbec]` decoded as Data Abort on `0x04030254` (`0x0402F666` runs once); `ret_fast_syscall` live `r0` preserved, ARM VFP (`FPEXC=0x40000000`) enabled for `__sigsetjmp`, `__strncpy_from_user` demand-paged, and `0xFFFF0000` walked via kernel PT → `ld-2.11.2.so` links `/lib/libc.so.6` and enters **BusyBox `_start` (`0x0000C439`)** (`svc_hits=71`, `kuser_hits=35`, `pt_frame_gen=330`); next frontier `0x041F2000` (`libc.so.6` RW page jump from `LR=0x0412EB07`), `serial 0 B`. |
 | [E0488](0488-no-framebuffer-node-on-any-body.md) | 2026-11-13 | None of thirteen packaged bodies registers an `fb*` device node and every one publishes `dmpgles2`; a program opening `/dev/fb0` by name cannot succeed on a stock body, though a live `/dev` was not read |

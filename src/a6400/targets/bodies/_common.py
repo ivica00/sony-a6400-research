@@ -20,6 +20,8 @@ E0416 = "docs/evidence/0416-cxd90045-qemu-updater-bringup.md"
 E0477 = "docs/evidence/0477-bionz-x-platform-map-13-updaters.md"
 E0479 = "docs/evidence/0479-uvc-is-a-module-package-delta.md"
 E0482 = "docs/evidence/0482-three-stubs-gain-sourced-values.md"
+E0506 = "docs/evidence/0506-a6400a-offline-qualification-and-debugger-boundary.md"
+E0509 = "docs/evidence/0509-a6400a-msc-reply-lifetime-and-verified-native-identity.md"
 ZVE10_ENABLEMENT = "src/a6400/execution/zve10_uvc_enablement.py"
 
 ILCE_6XXX_BOUNDARIES = (
