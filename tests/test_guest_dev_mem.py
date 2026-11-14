@@ -64,6 +64,8 @@ class DevMemModelTests(unittest.TestCase):
         fs = {'nodes': {'/dev/mem': {'kind': 'special', 'mode': 0o20640, 'size': 0, 'uid': 0, 'gid': 0, 'stat_metadata': {'device_number': {'major': 1, 'minor': 1}}}},
               'content_loader': lambda p, n: b'', 'images': []}
         vmlinux_path = PROJECT_ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin'
+        if not vmlinux_path.is_file():
+            self.skipTest('Kernel image not available')
         kuser_template = extract_kuser_template(vmlinux_path)
         probe = InterpreterProbe(syscall_policy='threads', uname_profile=uname_profile,
                                  filesystem=fs, kuser_template=kuser_template)

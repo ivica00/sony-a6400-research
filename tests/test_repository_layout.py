@@ -135,12 +135,23 @@ class TestDocumentationEntryPoints(unittest.TestCase):
     def test_ci_workflow_runs_the_structural_checks(self):
         workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
         for test_module in (
+            "tools.research.ci_check",
             "tests.test_repository_layout",
             "tests.test_target_profiles",
             "tests.test_research_status_sync",
             "tests.test_research_status_dashboard",
+            "tests.test_agents_md_archive_integrity",
+            "tests.test_ci_check",
         ):
             self.assertIn(test_module, workflow)
+
+    def test_ci_templates_and_runner_exist(self):
+        for relative in (
+            "tools/research/ci_check.py",
+            ".github/ISSUE_TEMPLATE/new-camera-body.yml",
+            ".github/pull_request_template.md",
+        ):
+            self.assertTrue((ROOT / relative).is_file(), f"missing CI file: {relative}")
 
 
 if __name__ == "__main__":

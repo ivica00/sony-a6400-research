@@ -4,9 +4,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from PIL import Image, ImageDraw, ImageFont
+if TYPE_CHECKING:
+    from PIL import Image, ImageDraw, ImageFont
 
 from src.a6400.visualization.treemap import Rect, compute_tile_grid, squarify_rects
 
@@ -61,6 +62,8 @@ class StatusRenderer:
         self._init_fonts()
 
     def _init_fonts(self) -> None:
+        from PIL import ImageFont
+
         font_paths = [
             ("segoeuib.ttf", "segoeui.ttf"),
             ("arialbd.ttf", "arial.ttf"),
@@ -131,6 +134,8 @@ class StatusRenderer:
 
     def render(self, panels: list[Panel], title: str = "Status") -> Image.Image:
         """Renders the complete AnyPS5-style status dashboard image."""
+        from PIL import Image, ImageDraw
+
         img = Image.new("RGB", (self.width, self.height), color=COLOR_BG)
         draw = ImageDraw.Draw(img)
 

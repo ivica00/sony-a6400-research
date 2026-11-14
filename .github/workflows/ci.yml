@@ -1,74 +1,119 @@
-name: checks
+name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  repository-checks:
+  guardrails:
+    name: Guardrails & Layout (stdlib)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
 
-      - name: Byte-compile Python sources
-        run: python -m compileall -q src tools tests legacy
+      - name: Run local/CI parity guardrails
+        run: python -m tools.research.ci_check --summary
 
-      - name: Install offline test dependencies
-        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Verify structural and status-sync suites
+        run: |
+          python -m unittest \
+            tests.test_repository_layout \
+            tests.test_target_profiles \
+            tests.test_research_status_sync \
+            tests.test_research_status_dashboard \
+            tests.test_agents_md_archive_integrity \
+            tests.test_ci_check -v
 
-      - name: Repository structure, target profiles and status synchronization
-        run: >-
-          python -m unittest
-          tests.test_repository_layout
-          tests.test_target_profiles
-          tests.test_research_status_sync
-          tests.test_research_status_dashboard
-          -v
-
-      - name: Verify the status card matches its snapshot
+      - name: Verify SVG status dashboard is up to date
         run: python -m tools.research.render_research_status --check
 
-      - name: Reject accidental large tracked files
-        run: |
-          git ls-files -z | xargs -0 -n1 --no-run-if-empty stat -c '%s %n' \
-            | awk '$1 > 2097152 { print "tracked file larger than 2 MiB: " $2; exit 1 }'
+  emulator-suite:
+    name: Emulator Suite (${{ matrix.os }})
+    needs: guardrails
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Reject tracked proprietary binaries
-        run: |
-          if git ls-files | grep -Ei '\.(so|ko|elf|bin|img|raw|dat|tar)$'; then
-            echo "proprietary binary extension tracked; see .gitignore" >&2
-            exit 1
-          fi
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
-      - name: Verify contributor docs and layout exist
+      - name: Install dependencies
         run: |
-          test -f docs/CONTRIBUTING_UVC_PTP.md
-          test -f docs/UVC_PTP_STATUS.md
-          test -f docs/ADDING_A_BIONZX_CAMERA.md
-          test -f docs/REPOSITORY.md
-          test -f docs/images/research-status.svg
-          test -f scripts/launch_cinemahud_ptp.bat
-          test -f scripts/launch_cinemahud_android.ps1
-          test -f scripts/launch_cinema_mpv.bat
-          test -f scripts/start_camera_shell.bat
-          test -f .github/ISSUE_TEMPLATE/uvc-ptp-task.yml
-          grep -q 'CONTRIBUTING_UVC_PTP' README.md
-          grep -q 'CONTRIBUTING_UVC_PTP' CONTRIBUTING.MD
-          grep -q 'ADDING_A_BIONZX_CAMERA' README.md
-          grep -q 'ADDING_A_BIONZX_CAMERA' CONTRIBUTING.MD
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Verify no forwarding shims returned to the root
+      - name: Run full offline test suite
+        run: python -m unittest discover -s tests -v
+
+  native-probes:
+    name: Native Probes (ARMv7 & Host)
+    needs: guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ARMv7 cross-compiler
         run: |
-          for name in analyze_hardware_drivers.py backup_camera.py check_camera.py \
-                      cxd90045_gui_runner.py cxd90045_hle_emulator.py firmware_analyzer.py \
-                      sony_gui_simulator.py test_authentic_screens.py unpack_firmware.py; do
-            if [ -e "$name" ]; then
-              echo "removed forwarding shim is back in the repository root: $name" >&2
-              exit 1
-            fi
-          done
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabi
+
+      - name: Run host-check probe harness
+        run: python probes/build_probe.py --host-check
+
+      - name: Cross-compile uvc_dma_probe for ARMv7
+        run: |
+          mkdir -p probes/build/ci-arm
+          arm-linux-gnueabi-gcc \
+            -std=gnu11 -march=armv7-a -mfloat-abi=softfp -O2 \
+            -Wall -Wextra -Werror \
+            -ffreestanding -nostdlib -static -fno-stack-protector -fno-pic -fno-pie \
+            -Wl,-e,_start \
+            probes/uvc_dma_probe.c -o probes/build/ci-arm/uvc_dma_probe
+
+      - name: Run probe report tests
+        run: python -m unittest tests.test_probes_report -v
+
+  pr-summary:
+    name: CI Summary
+    needs: [guardrails, emulator-suite, native-probes]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write workflow summary
+        run: |
+          {
+            echo "## CI Pipeline Results"
+            echo ""
+            echo "| Job | Result |"
+            echo "| :--- | :---: |"
+            echo "| \`guardrails\` | \`${{ needs.guardrails.result }}\` |"
+            echo "| \`emulator-suite\` | \`${{ needs.emulator-suite.result }}\` |"
+            echo "| \`native-probes\` | \`${{ needs.native-probes.result }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

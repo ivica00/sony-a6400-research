@@ -1,0 +1,49 @@
+name: Add Sony BIONZ X (CXD90045) Camera Body
+description: Propose or document support for an additional BIONZ X camera target profile.
+title: "[target] Add <model> (<device_id>)"
+labels: ["target-profile", "research"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Follow [docs/ADDING_A_BIONZX_CAMERA.md](../../docs/ADDING_A_BIONZX_CAMERA.md) when preparing a new `TargetProfile`.
+        **Never upload or attach proprietary Sony firmware images, memory dumps, or secrets.**
+  - type: input
+    id: model_name
+    attributes:
+      label: Camera Model & Target ID
+      description: e.g. ILCE-6400 / a6400 (a6400)
+      placeholder: "ILCE-6600 (a6600)"
+    validations:
+      required: true
+  - type: input
+    id: firmware_kernel
+    attributes:
+      label: Firmware & Kernel Version
+      description: Observed firmware version and Linux kernel release (e.g. 2.00 / 3.4.0)
+    validations:
+      required: true
+  - type: input
+    id: usb_ids
+    attributes:
+      label: USB VID:PID & SoC Family
+      description: e.g. 054C:0322, CXD90045
+      placeholder: "054C:xxxx, CXD90045"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Observed Hashes / Offsets / Boot Evidence
+      description: List SHA-256 hashes (not binaries), kernel/linker entry points, or `TargetProfile` field values.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Safety & Fidelity Checklist
+      options:
+        - label: No proprietary firmware images, dumps, or binaries are attached.
+          required: true
+        - label: Local `ci_check` and `tests.test_target_profiles` pass.
+          required: false

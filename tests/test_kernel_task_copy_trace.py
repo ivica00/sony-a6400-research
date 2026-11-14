@@ -94,6 +94,8 @@ class KernelTaskCopyTests(unittest.TestCase):
     def test_libobj_vdf_if_port_registers_queue_and_thread_name(self):
         from project_paths import PROJECT_ROOT
         libobj_path = PROJECT_ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/lib/libObj.so'
+        if not libobj_path.is_file():
+            self.skipTest('libObj.so not available')
         data = libobj_path.read_bytes()
         # Literal pool for queue 0x0080003b at 0x70f314
         self.assertEqual(struct.unpack_from('<I', data, 0x70f314)[0], 0x0080003b)

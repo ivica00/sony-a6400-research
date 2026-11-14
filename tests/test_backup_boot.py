@@ -21,6 +21,29 @@ def make_header_fixture(pa: int, cookie: int = 0xAAAAAAAA, magic: bytes = b"BK4\
     return bytes(raw)
 
 
+def _require_checked_input(
+    test_case: unittest.TestCase, inventory_file: str, collection_key: str, rel_path: str
+) -> bytes:
+    import json
+    from project_paths import PROJECT_ROOT
+    from tools.research.mount_evidence import checked_input
+
+    inv_path = PROJECT_ROOT / "artifacts/inventory" / inventory_file
+    if not inv_path.is_file() or not (PROJECT_ROOT / rel_path).is_file():
+        test_case.skipTest(f"Local firmware input not present: {rel_path}")
+    rows = json.loads(inv_path.read_text(encoding="utf-8"))[collection_key]
+    hashes = {row["path"]: row["sha256"] for row in rows}
+    return checked_input(PROJECT_ROOT, rel_path, hashes[rel_path])
+
+
+def _require_baseline_input(test_case: unittest.TestCase, rel_path: str) -> bytes:
+    return _require_checked_input(test_case, "baseline.json", "inputs", rel_path)
+
+
+def _require_elf_inventory_input(test_case: unittest.TestCase, rel_path: str) -> bytes:
+    return _require_checked_input(test_case, "elf-inventory.json", "entries", rel_path)
+
+
 class BackupBootOptionsTests(unittest.TestCase):
     def test_extract_init_backup_options(self):
         opts = extract_init_backup_options()
@@ -51,14 +74,10 @@ class ArchPhysToCacheTests(unittest.TestCase):
         pass
 
     def test_preset_pa_conversion(self):
-        from project_paths import PROJECT_ROOT
-        from tools.research.mount_evidence import checked_input
-        import json
-
-        inv_dir = PROJECT_ROOT / "artifacts/inventory"
-        baseline = {row["path"]: row["sha256"] for row in json.loads((inv_dir / "baseline.json").read_text(encoding="utf-8"))["inputs"]}
-        kernel_path = "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin"
-        kernel_raw = checked_input(PROJECT_ROOT, kernel_path, baseline[kernel_path])
+        kernel_raw = _require_baseline_input(
+            self,
+            "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin",
+        )
 
         # Test preset PA: 0x02e80000 -> 0x62e80000
         result = execute_arch_phys_to_cache(kernel_raw, 0x02E80000)
@@ -67,14 +86,10 @@ class ArchPhysToCacheTests(unittest.TestCase):
         self.assertEqual(result["instructions_executed"], 11)
 
     def test_liro_pa_conversion(self):
-        from project_paths import PROJECT_ROOT
-        from tools.research.mount_evidence import checked_input
-        import json
-
-        inv_dir = PROJECT_ROOT / "artifacts/inventory"
-        baseline = {row["path"]: row["sha256"] for row in json.loads((inv_dir / "baseline.json").read_text(encoding="utf-8"))["inputs"]}
-        kernel_path = "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin"
-        kernel_raw = checked_input(PROJECT_ROOT, kernel_path, baseline[kernel_path])
+        kernel_raw = _require_baseline_input(
+            self,
+            "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin",
+        )
 
         # Test LIRO PA: 0x035c6000 -> 0x635c6000
         result = execute_arch_phys_to_cache(kernel_raw, 0x035C6000)
@@ -84,14 +99,10 @@ class ArchPhysToCacheTests(unittest.TestCase):
 
 class BackupfileInitSliceTests(unittest.TestCase):
     def test_load_flag_0_skips_reload_and_reaches_data_init(self):
-        from project_paths import PROJECT_ROOT
-        from tools.research.mount_evidence import checked_input
-        import json
-
-        inv_dir = PROJECT_ROOT / "artifacts/inventory"
-        elf_inv = {row["path"]: row["sha256"] for row in json.loads((inv_dir / "elf-inventory.json").read_text(encoding="utf-8"))["entries"]}
-        module_path = "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/backup.ko"
-        module_raw = checked_input(PROJECT_ROOT, module_path, elf_inv[module_path])
+        module_raw = _require_elf_inventory_input(
+            self,
+            "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/backup.ko",
+        )
 
         hdr = make_header_fixture(0x02E80000)
         result = execute_backupfile_unpack(module_raw, hdr, load_flag=0)
@@ -99,14 +110,10 @@ class BackupfileInitSliceTests(unittest.TestCase):
         self.assertEqual(result["unpacked_r0_r4"], "0x62e80000")
 
     def test_load_flag_1_branches_to_reload_path(self):
-        from project_paths import PROJECT_ROOT
-        from tools.research.mount_evidence import checked_input
-        import json
-
-        inv_dir = PROJECT_ROOT / "artifacts/inventory"
-        elf_inv = {row["path"]: row["sha256"] for row in json.loads((inv_dir / "elf-inventory.json").read_text(encoding="utf-8"))["entries"]}
-        module_path = "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/backup.ko"
-        module_raw = checked_input(PROJECT_ROOT, module_path, elf_inv[module_path])
+        module_raw = _require_elf_inventory_input(
+            self,
+            "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/backup.ko",
+        )
 
         hdr = make_header_fixture(0x02E80000)
         result = execute_backupfile_unpack(module_raw, hdr, load_flag=1)
@@ -114,14 +121,10 @@ class BackupfileInitSliceTests(unittest.TestCase):
         self.assertEqual(result["unpacked_r0_r4"], "0x62e80000")
 
     def test_bad_cookie_rejects_header(self):
-        from project_paths import PROJECT_ROOT
-        from tools.research.mount_evidence import checked_input
-        import json
-
-        inv_dir = PROJECT_ROOT / "artifacts/inventory"
-        elf_inv = {row["path"]: row["sha256"] for row in json.loads((inv_dir / "elf-inventory.json").read_text(encoding="utf-8"))["entries"]}
-        module_path = "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/backup.ko"
-        module_raw = checked_input(PROJECT_ROOT, module_path, elf_inv[module_path])
+        module_raw = _require_elf_inventory_input(
+            self,
+            "firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/backup.ko",
+        )
 
         # Wrong cookie
         hdr = make_header_fixture(0x02E80000, cookie=0x12345678)
