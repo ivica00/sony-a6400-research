@@ -46,6 +46,7 @@ class ClassHandlerDecodeTests(unittest.TestCase):
         self.assertEqual(rows['T1']['return'].split()[0], '2')
 
 
+@unittest.skipUnless(all(p.exists() for p in FIXTURES), 'E0351 Unicorn fixtures absent')
 class SelectorUnicornTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -75,6 +76,7 @@ class SelectorUnicornTests(unittest.TestCase):
         self.assertEqual(self.cases['endpoint-0x81-rejected']['result'], 0)
 
 
+@unittest.skipUnless(all(p.exists() for p in FIXTURES), 'E0351 Unicorn fixtures absent')
 class BridgeAndReferenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
