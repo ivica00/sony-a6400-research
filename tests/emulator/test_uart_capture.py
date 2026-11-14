@@ -1,4 +1,5 @@
 """PL011 serial capture configuration tests (E0421)."""
+import gc
 import struct
 import unittest
 
@@ -27,6 +28,9 @@ def uart_program(base, chars):
 
 
 class UartCaptureTests(unittest.TestCase):
+    def tearDown(self):
+        gc.collect()
+
     def make_machine(self, base, **kwargs):
         return UnicornMachine(uart_program(base, 'Hi'), b'\x00' * 64,
                               build_atags('console=ttyAM0', [(0, 0x40000000)]),
@@ -49,6 +53,9 @@ class UartCaptureTests(unittest.TestCase):
 
 class UartReceiveTests(unittest.TestCase):
     """Bidirectional PL011: injected RX bytes are visible through DR/FR."""
+
+    def tearDown(self):
+        gc.collect()
 
     def make_machine(self, uart_base, data):
         return UnicornMachine(uart_program(uart_base, 'Hi'), b'\x00' * 64,
