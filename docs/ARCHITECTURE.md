@@ -1,58 +1,49 @@
-# Target architecture
+# Target Architecture
 
-Status: target architecture proposed, with a bounded process-execution research slice implemented. Directory names alone do not establish implemented functionality.
+See [docs/INDEX.md](INDEX.md) for the complete documentation map.
 
-Implementation update: the bounded process probe in `execution/` and `images/` now reaches the original interpreter's first syscall; see [E0003](evidence/0003-original-interpreter-boundary.md). Other architecture components remain proposed. No full-machine backend has been selected.
+The platform models the **Sony BIONZ X (`CXD90045`)** camera family across 13 bodies and 9 kernels ([PLATFORM_MODEL.md](PLATFORM_MODEL.md)), driving both full-system kernel boot (**L2**, `UnicornMachine`) and user-space process execution (**L3**, `InterpreterProbe`) from evidence-backed `TargetProfile` definitions.
 
 ```text
-Original or patched image + explicit device-state snapshot
+Original / patched image + TargetProfile (src/a6400/targets/)
                          |
-                  Image/partition loader
+           Machine & Boot Contract (src/a6400/machine/)
                          |
-        Execution backend + original software stack
+     Execution Backend: L2 UnicornMachine / L3 InterpreterProbe
                          |
-           Guest-visible device and bus contracts
+       Guest-visible Device & OSAL Contracts (src/a6400/devices/)
                          |
-      Display output / storage / traces / other observations
-                         |
-        Presentation frontend and differential validation
-
-Recorded physical inputs --> device input boundary
+     Display (OSD A/B) / Storage / Traces / Differential Validation
 ```
 
-## Responsibilities
+## Package Responsibilities (`src/a6400/`)
 
 | Component | Contract |
 | --- | --- |
-| `images` | Hash and inventory inputs; preserve originals; construct isolated patched overlays; record partition layout and loader decisions |
-| `execution` | CPU/backend integration, architectural state, execution stop reasons, guest startup, debugger integration |
-| `machine` | Evidence-backed memory map, address ownership, CPU configuration, reset and scheduling |
-| `devices` | Register semantics, resets, interrupts, DMA, clocks, storage, display and physical-input interfaces |
-| `trace` | Structured events, deterministic ordering, unsupported-operation reports, reproducible run metadata |
-| `frontend` | Present guest output; translate user actions to physical inputs; expose debugger status without inventing camera behavior |
+| `targets/` | Per-body `TargetProfile` definitions (`targets/bodies/`), fail-closed `EvidenceRef` validation, and `DEFAULT_REGISTRY` |
+| `machine/` | `CXD90045` SoC memory/MMIO layout (`soc_cxd90045.py`), `UpdaterBootContract`, `ATAGS`/`kemco`, `EXBL`, and `MachineDescriptor` |
+| `devices/` | Guest-visible hardware and kernel contracts (PL011 UART0, GICv1, CXD Timer, CRCDC, OSAL/UIPC, DWC3/USB, GPES/GRM, VFAT/eMMC) |
+| `execution/` | L2 full-system kernel runner (`unicorn_machine.py`) and L3 user-space process runner (`interpreter_probe.py`) + checkpointing |
+| `images/` | Hash-checked input inventory, ELF process mapping, partition layouts, and isolated patched overlays |
+| `trace/` | Structured execution events, deterministic ordering, and explicit boundary reports |
+| `frontend/` | OSD A/B presentation (`640×480` RGBA4444) and physical-input delivery without host-invented UI |
+| `visualization/` | Treemap and research status SVG rendering |
 
-Use typed interfaces once the backend and platform evidence are sufficient. Avoid premature device APIs based on the prototype's guessed addresses.
+## Deep-Dive Technical References
 
-## Backend decision
-
-First determine the real boot/runtime environment. Prefer a full-system backend with a custom machine model if original kernel and drivers must execute. QEMU is a candidate, not a selected or working a6400 implementation. A generic ARM board is not interchangeable with Sony hardware.
-
-Keep Unicorn for bounded routines and dependency discovery. A user-space vertical slice may accelerate original UI research, provided substituted services are explicit and results are scoped to that slice. This does not satisfy the full-machine milestone.
-
-Record the choice in `docs/decisions/` with evidence, alternatives, a minimal experiment, and rejection criteria. Reconsider it if the platform requires unsupported processor or device behavior.
+- [Multi-Device Abstraction](architecture/multi-device-abstraction.md) — how `TargetProfile` configures `UnicornMachine` and `InterpreterProbe`
+- [L2 Kernel Boot & MMU](architecture/l2-kernel-boot-and-mmu.md) — `EXBL`, `kemco`/ATAGS, `UC_TLB_VIRTUAL`, abort delivery, Thumb `ret_to_user`
+- [L3 User-Space & IPC](architecture/l3-userspace-and-ipc.md) — `im.elf`, OSAL/UIPC bit-15 local queues, `MWF::ObjMsg`, `--thread-timeslice`, `stella` heap bug
+- [Hardware & Partitions](architecture/hardware-and-partitions.md) — `nflasha` map, GPES `SMAPH-S30` BAR `0xF1000000`, DWC3 EP0
 
 ## Invariants
 
 - Original guest code owns application state, navigation, and rendering in fidelity runs.
-- Host code may decode the actual display format, composite hardware planes according to documented device behavior, and present pixels. It must not redraw camera widgets.
+- Host code may decode the display format (`640×480` RGBA4444) and present pixels; it must not redraw camera widgets.
 - Device models own hardware state; application-specific hooks do not silently substitute results.
-- Every unsupported access or service produces an explicit stop or a declared experimental approximation. Approximate runs cannot pass a strict fidelity gate.
-- Reset state, nonvolatile state, clock/event ordering, external inputs, and firmware identity belong to the run definition.
-- A function timeout is a distinct failure/stop reason, never a successful return.
-- Models are validated at their guest-visible boundary. Instruction compatibility does not imply cycle accuracy.
+- Every unsupported access or service produces an explicit stop (`boundary`) or a declared opt-in experimental policy.
+- Models are validated at their guest-visible boundary; instruction compatibility does not imply cycle accuracy.
 
-## Scope boundaries
+## Scope Boundaries
 
-Boot compatibility, UI compatibility, update acceptance, image-output equivalence, and timing fidelity are separate claims. Sensor, lens, analog effects, proprietary processing engines, and other processors may require additional models or physical hardware. No universal exactness claim follows from a successful boot or screen.
-
-Reference: [Unicorn's CPU scope](https://www.unicorn-engine.org/docs/beyond_qemu.html), [QEMU Arm board requirements](https://www.qemu.org/docs/master/system/target-arm.html). These explain backend boundaries, not Sony platform facts.
+Boot compatibility, UI compatibility, update acceptance, image-output equivalence, and timing fidelity are separate claims. Sensor, lens, analog effects, and proprietary DMP `SMAPH-S30` GPU rasterization require hardware or additional models.

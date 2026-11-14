@@ -170,7 +170,7 @@ class DataAbortDeliveryTests(unittest.TestCase):
         machine.uc.reg_write(UC_ARM_REG_PC, 0x04031AF0)
         machine._on_interrupt(machine.uc, 2)
         self.assertEqual(machine.svc_hits, 1)
-        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0xFFFF0008)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0x6010DFA0)
         self.assertEqual(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x1F, 0x13)
         self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SPSR), 0x50)
         self.assertEqual(machine.uc.reg_read(UC_ARM_REG_LR), 0x04031AF4)

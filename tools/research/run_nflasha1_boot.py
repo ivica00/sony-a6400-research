@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 from src.a6400.execution.machine_contract import UpdaterBootContract  # noqa: E402
 from src.a6400.execution.nflasha_boot_set import NflashaBootSet  # noqa: E402
 from src.a6400.execution.unicorn_machine import UnicornMachine  # noqa: E402
+from src.a6400.targets import get_profile  # noqa: E402
 from tools.research.decode_kernel_kallsyms import decode  # noqa: E402
 
 OUT = ROOT / 'artifacts/analysis/e0421-ttyam0-init'
@@ -49,6 +50,7 @@ def main():
     parser.add_argument('--no-data-abort-delivery', action='store_true')
     parser.add_argument('--patch-config-cmdline', action='store_true')
     parser.add_argument('--serial-input', default='')
+    parser.add_argument('--svc-dispatch', action='store_true')
     parser.add_argument('--trace-user-mode', action='store_true')
     parser.add_argument('--trace-reg', action='append', default=[],
                         metavar='PC:REGS')
@@ -58,7 +60,10 @@ def main():
                         metavar='ADDRESS=VALUE', help='MMIO read stub (hex)')
     parser.add_argument('--output', type=Path, default=OUT / 'nflasha1-boot-report.json')
     parser.add_argument('--serial-output', type=Path, default=OUT / 'nflasha1-ttyAM0.log')
+    parser.add_argument('--target', default='ilce_6400',
+                        help='registered CXD90045 target_id from src/a6400/targets/')
     args = parser.parse_args()
+    target_profile = get_profile(args.target)
 
     boot_set = NflashaBootSet.from_evidence(ROOT, 'nflasha1')
     contract = UpdaterBootContract(boot_set, cmdline_extra=args.cmdline_extra)
@@ -143,7 +148,8 @@ def main():
                 value = int.from_bytes(replacement[chunk:chunk + 4], 'little')
                 writes.append((base_pa + chunk, 4, value))
             boot_patches.setdefault(symbols['start_kernel'], []).extend(writes)
-    machine = UnicornMachine(
+    machine = UnicornMachine.from_target(
+        target_profile,
         contract.raw_kernel, contract.initrd, contract.atags,
         machine_id=contract.machine.machine_id,
         kernel_load=contract.load_addresses['kernel_load'],
@@ -160,6 +166,7 @@ def main():
         data_abort_fsr=args.fsr,
         virtual_tlb_enabled=True,
         virtual_tlb_on_userspace=True,
+        enable_svc_dispatch=args.svc_dispatch,
         data_abort_delivery=not args.no_data_abort_delivery,
         uart_base=args.uart_base,
         serial_input=args.serial_input.encode('latin1'),

@@ -15,6 +15,7 @@ from src.a6400.images.ext2_metadata import Ext2Metadata
 from tools.research.mount_evidence import checked_input, inspect_init, unsupplied_mount_roots
 from src.a6400.execution.guest_filesystem import UNKNOWN_ROOTS
 from src.a6400.execution.guest_kuser import extract_kuser_template
+from src.a6400.targets import get_profile
 
 
 def load_guest_image(manifest, inventory, guest_path):
@@ -43,7 +44,10 @@ def main():
     parser.add_argument('--report', type=Path)
     parser.add_argument('--respect-runtime-mounts', action='store_true',
                         help='stop at original init mount targets whose runtime contents are unsupplied')
+    parser.add_argument('--target', default='ilce_6400',
+                        help='registered CXD90045 target_id from src/a6400/targets/')
     args = parser.parse_args()
+    target_profile = get_profile(args.target)
     if args.report is None:
         name = {'stop': 'interpreter-probe.json', 'brk': 'interpreter-brk.json',
                 'brk-uname': 'interpreter-uname.json', 'files': 'interpreter-files.json',
@@ -124,7 +128,8 @@ def main():
                             node_stat['st_dev'] = dev
                         node['stat_metadata'] = node_stat
         probe = InterpreterProbe(syscall_policy=args.syscalls, uname_profile=uname_profile,
-                                 filesystem=filesystem, kuser_template=kuser_template)
+                                 filesystem=filesystem, kuser_template=kuser_template,
+                                 target_profile=target_profile)
         probe.prepare(application, interpreter, [args.entry, *args.argument])
         report = probe.run(args.instructions, args.timeout_us)
         if args.respect_runtime_mounts:

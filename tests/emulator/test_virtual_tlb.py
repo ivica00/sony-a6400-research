@@ -1,7 +1,9 @@
 import struct
 import unittest
 from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
-                              UC_ARM_REG_R4, UC_ARM_REG_SP)
+                              UC_ARM_REG_R0, UC_ARM_REG_R4, UC_ARM_REG_R8,
+                              UC_ARM_REG_SPSR,
+                              UC_ARM_REG_SP)
 
 from src.a6400.execution.machine_contract import build_atags
 from src.a6400.execution.unicorn_machine import UnicornMachine
@@ -327,6 +329,137 @@ class VirtualTlbTest(unittest.TestCase):
         pc, cpsr, trace = res
         self.assertEqual([t[0] for t in trace], ['alu'])
         self.assertEqual(pc, 0x04031AB0)
+
+
+    def test_take_user_frame_consumes_generation_once(self):
+        machine = make_machine()
+        machine.pt_frame_last = {
+            'gen': 7, 'words': [0] * 18, 'sp': 0x5E864F10,
+            'lr': 0x0402E790, 'pc': 0x0402E790, 'cpsr': 0x30}
+        first = machine._take_user_frame()
+        self.assertIsNotNone(first)
+        self.assertEqual(first['gen'], 7)
+        self.assertEqual(machine.pt_frame_consumed, 7)
+        # a second hit without a new frame must not replay it
+        self.assertIsNone(machine._take_user_frame())
+        machine.pt_frame_last = dict(machine.pt_frame_last, gen=8)
+        third = machine._take_user_frame()
+        self.assertEqual(third['gen'], 8)
+        self.assertEqual(machine.pt_frame_consumed, 8)
+
+
+    def test_stepper_mov_high_register_r8(self):
+        machine = make_machine()
+        base = 0x04031A00
+        # mov r8, r0 (Thumb 16-bit high-register MOV, 0x4680 -> bytes 80 46)
+        code = bytes.fromhex('8046')
+        machine._read_user_bytes = lambda va, size: code[va - base:va - base + size]
+        machine.uc.reg_write(UC_ARM_REG_R0, 0x5E864F10)
+        res = machine._step_user_thumb_insns(0x04031A00, 0x30, max_steps=1)
+        self.assertIsNotNone(res)
+        self.assertEqual(res[0], 0x04031A02)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R8), 0x5E864F10)
+
+    def test_user_frame_keeps_r8_slot_for_restore(self):
+        machine = make_machine()
+        words = [0] * 18
+        words[8] = 0x5E864F10   # pt_regs + 0x20 == r8
+        words[0x34 // 4] = 0x5E864F10
+        words[0x3C // 4] = 0x0402E790
+        words[0x40 // 4] = 0x30
+        machine.pt_frame_last = {'gen': 1, 'words': words,
+                                 'sp': words[13], 'lr': 0,
+                                 'pc': words[15], 'cpsr': words[16]}
+        frame = machine._take_user_frame()
+        self.assertIsNotNone(frame)
+        self.assertEqual(frame['words'][8], 0x5E864F10)
+        self.assertEqual(frame['words'][0x20 // 4], 0x5E864F10)
+        self.assertEqual(frame['words'][0x34 // 4], 0x5E864F10)
+
+
+    def test_recovery_syncs_user_bank_from_frame(self):
+        machine = make_machine()
+        words = [0] * 18
+        words[0] = 0x5E864F10
+        words[8] = 0x5E864F10
+        words[0x34 // 4] = 0x5E864F10
+        words[0x3C // 4] = 0x04031AA8
+        words[0x40 // 4] = 0x30
+        machine.pt_frame_last = {'gen': 5, 'words': words, 'sp': 0x5E864F10,
+                                 'lr': 0, 'pc': 0x04031AA8, 'cpsr': 0x30}
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x13 | 0xC0)
+        machine.uc.reg_write(UC_ARM_REG_SP, 0x60472990)  # kernel stack
+        synced = machine._sync_user_bank_for_recovery(0x04031AAC, 0x30)
+        self.assertTrue(synced)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SP), 0x5E864EEC)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R0), 0x5E864F10)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R8), 0x5E864F10)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x1F, 0x10)
+
+
+    def test_svc_return_address_uses_true_instruction(self):
+        machine = make_machine()
+        # SVC at 0x1000 (Thumb 0xDF00); Unicorn reports PC after it (0x1002)
+        machine.uc.mem_write(0x1000, b'\x00\xdf')
+        self.assertEqual(machine._svc_return_address(0x1002, True), 0x1002)
+        self.assertEqual(machine._svc_return_address(0x1000, True), 0x1002)
+        # ARM SVC (0xEF000000) at 0x2000, reported after it (0x2004)
+        machine.uc.mem_write(0x2000, b'\x00\x00\x00\xef')
+        self.assertEqual(machine._svc_return_address(0x2004, False), 0x2004)
+
+
+    def test_swi_captures_user_bank_before_switch(self):
+        machine = make_machine()
+        machine._symbol_address = lambda name: 0x6010DFA0
+        machine.uc.mem_write(0x1000, b'\x00\xdf')
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x30)   # USR + Thumb
+        machine.uc.reg_write(UC_ARM_REG_SP, 0x5E864F10)
+        machine.uc.reg_write(UC_ARM_REG_LR, 0x0403E98D)
+        machine.uc.mem_write(0x1000, b'\x00\xdf')
+        machine.uc.reg_write(UC_ARM_REG_PC, 0x1001)  # odd PC keeps Thumb
+        machine._on_interrupt(machine.uc, 2)
+        self.assertEqual(machine.svc_hits, 1)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SPSR), 0x30)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_CPSR) & 0x1F, 0x13)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC), 0x6010DFA0)
+        self.assertEqual(machine._pending_swi_usr_sp, 0x5E864F10)
+        self.assertEqual(machine._pending_swi_usr_lr, 0x0403E98D)
+
+    def test_vector_stmdb_is_single_shot_into_ptregs(self):
+        machine = make_machine()
+        machine._pending_swi_usr_sp = 0x5E864C04
+        machine._pending_swi_usr_lr = 0x0403E98D
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x93)
+        machine.uc.reg_write(UC_ARM_REG_R8, 0x6000303C)
+        self.assertTrue(machine._emulate_vector_stmdb(machine.uc))
+        self.assertFalse(machine._emulate_vector_stmdb(machine.uc))
+        sp_word = int.from_bytes(bytes(machine.uc.mem_read(0x3034, 4)), 'little')
+        lr_word = int.from_bytes(bytes(machine.uc.mem_read(0x3038, 4)), 'little')
+        self.assertEqual(sp_word, 0x5E864C04)
+        self.assertEqual(lr_word, 0x0403E98D)
+
+
+    def test_fast_syscall_return_enforces_usr_thumb_odd_pc(self):
+        machine = make_machine()
+        words = [0] * 20
+        words[0] = 0x00055000          # r0 = new brk value
+        words[13] = 0x5E864C04         # SP_usr
+        words[14] = 0x0403E98D         # LR_usr
+        words[15] = 0x0403EB16         # ARM_pc (even, Thumb code)
+        words[16] = 0x600000F0         # ARM_cpsr USR|Thumb
+        machine._fast_frame = {'words': words[:17], 'sp': 0x5E864C04,
+                               'lr': 0x0403E98D, 'pc': 0x0403EB16,
+                               'cpsr': 0x600000F0}
+        machine.uc.reg_write(UC_ARM_REG_CPSR, 0x93)
+        machine.uc.reg_write(UC_ARM_REG_LR, 0x0403EB16)
+        self.assertTrue(machine._restore_fast_syscall_user_return(machine.uc))
+        cpsr = machine.uc.reg_read(UC_ARM_REG_CPSR)
+        self.assertEqual(cpsr & 0x1F, 0x10)     # USR
+        self.assertTrue(cpsr & 0x20)            # Thumb
+        # Unicorn stores the architectural (even) PC; CPSR.T carries Thumb.
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_PC) & ~1, 0x0403EB16)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_SP), 0x5E864C04)
+        self.assertEqual(machine.uc.reg_read(UC_ARM_REG_R0), 0x00055000)
 
 
 if __name__ == '__main__':

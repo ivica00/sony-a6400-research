@@ -126,9 +126,15 @@ The JSON validator must accept your receipt:
 
 ---
 
-## Step 3 — Register the profile
+## Step 3 — Register the profile (`src/a6400/targets/bodies/<target_id>.py`)
 
-Add (or replace the stub for) your body in `src/a6400/targets/catalog.py`:
+You can scaffold a clean profile skeleton directly from your extracted `vmlinux.bin` (never copying `a6400` values):
+
+```powershell
+.\venv\Scripts\python.exe -m tools.research.scaffold_target --target-id ilce_6100 --model-name "Sony ILCE-6100 (a6100)" --firmware-version 1.01 --vmlinux <path\to\vmlinux.bin> --evidence-path docs\evidence\NNNN-ilce-6100.md --output src\a6400\targets\bodies\ilce_6100.py
+```
+
+Or write it manually in `src/a6400/targets/bodies/<target_id>.py` and register it in `src/a6400/targets/catalog.py`:
 
 ```python
 from src.a6400.targets import EvidenceRef, STATUS_VERIFIED, TargetProfile
@@ -174,7 +180,23 @@ boundaries listed) and add claims as evidence arrives. That is a mergeable contr
 
 ---
 
-## Step 4 — Open the pull request
+## Step 4 — Run the target in the universal emulator (L2 & L3)
+
+Once your body's `TargetProfile` (and optional `BootLayoutSpec`) is registered, both execution runners accept `--target <target_id>`:
+
+```powershell
+# L2: Full-system updater/kernel boot via UnicornMachine.from_target()
+.\venv\Scripts\python.exe -m tools.research.run_nflasha1_boot --target <target_id>
+
+# L3: User-space process execution via InterpreterProbe
+.\venv\Scripts\python.exe -m tools.research.probe_interpreter --target <target_id> --syscalls stop
+```
+
+Unsupported symbols, UIPC queues, or device nodes stop fail-closed with a `boundary` report telling you exactly what needs to be decoded for your body.
+
+---
+
+## Step 5 — Open the pull request
 
 Include:
 
@@ -210,6 +232,4 @@ PR checklist:
 
 ## Where the current profiles are
 
-`src/a6400/targets/catalog.py` — Sony ILCE-6400 (verified), ZV-E10 (reference UVC chain), and
-the declared stubs for ILCE-6100, ILCE-6600 and ILCE-7M3. `src/a6400/targets/profile.py`
-holds the schema and the fail-closed validation.
+Per-body modules live under `src/a6400/targets/bodies/` (`ilce_6400.py`, `zv_e10.py`, `ilce_6100.py`, `ilce_6600.py`, `ilce_7m3.py`) and are assembled into `DEFAULT_REGISTRY` in `src/a6400/targets/catalog.py`. `src/a6400/targets/profile.py` holds the schema (`TargetProfile`, `BootLayoutSpec`, `EvidenceRef`) and fail-closed validation.

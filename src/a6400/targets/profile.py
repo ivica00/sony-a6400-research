@@ -113,6 +113,25 @@ class UsbIdentity:
 
 
 @dataclass(frozen=True)
+class BootLayoutSpec:
+    """Evidence-backed boot and memory layout for a CXD90045 body."""
+
+    machine_id: int
+    page_offset: int = 0x60000000
+    kernel_load: int = 0x00108000
+    initrd_load: int = 0x00700000
+    boot_params: int = 0x00103000
+    ram_banks: tuple[tuple[int, int], ...] = ((0x00000000, 0x40000000), (0x80000000, 0x40000000))
+    uart_base: int = 0xF2000000
+
+    def __post_init__(self) -> None:
+        if not 0 < self.machine_id < 0x10000:
+            raise ValueError(f"machine_id must be a positive 16-bit integer, got {self.machine_id:#x}")
+        if not self.ram_banks:
+            raise ValueError("boot layout needs at least one RAM bank")
+
+
+@dataclass(frozen=True)
 class TargetProfile:
     """Verified per-body invariants and the evidence that backs each claim."""
 
@@ -129,6 +148,7 @@ class TargetProfile:
     uipc_queues: Mapping[str, int | None] = field(default_factory=dict)
     usb: UsbIdentity | None = None
     modules: Mapping[str, ModuleComponent] = field(default_factory=dict)
+    boot_layout: BootLayoutSpec | None = None
     sources: Mapping[str, tuple[EvidenceRef, ...]] = field(default_factory=dict)
     boundaries: tuple[str, ...] = ()
     notes: str = ""
@@ -201,6 +221,8 @@ class TargetProfile:
             found["usb"] = self.usb
         for name, component in self.modules.items():
             found[f"modules.{name}"] = component
+        if self.boot_layout is not None:
+            found["boot_layout"] = self.boot_layout
         return found
 
     def as_dict(self) -> dict[str, object]:
@@ -230,6 +252,17 @@ class TargetProfile:
             "modules": {
                 name: {"size": component.size, "sha256": component.sha256, "role": component.role}
                 for name, component in self.modules.items()
+            },
+            "boot_layout": None
+            if self.boot_layout is None
+            else {
+                "machine_id": self.boot_layout.machine_id,
+                "page_offset": self.boot_layout.page_offset,
+                "kernel_load": self.boot_layout.kernel_load,
+                "initrd_load": self.boot_layout.initrd_load,
+                "boot_params": self.boot_layout.boot_params,
+                "ram_banks": [list(bank) for bank in self.boot_layout.ram_banks],
+                "uart_base": self.boot_layout.uart_base,
             },
             "sources": {
                 claim: [{"path": ref.path, "detail": ref.detail} for ref in refs]

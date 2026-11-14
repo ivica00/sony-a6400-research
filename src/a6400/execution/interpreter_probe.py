@@ -299,7 +299,9 @@ class InterpreterProbe:
                  media_service_policy='stop', hook_mode='instruction',
                  mmap_base=None, mmap_ceiling=None, mmap_search_low=None,
                  display_profile=None, grm_pool_policy='gl-common-only',
-                 mmap_eof_policy='zero-fill'):
+                 mmap_eof_policy='zero-fill', target_profile=None):
+        self.target_profile = target_profile
+        self.target_id = getattr(target_profile, 'target_id', None)
         if mmap_eof_policy not in ('zero-fill', 'sigbus'):
             raise ValueError('Unknown mmap EOF policy')
         self.mmap_eof_policy = mmap_eof_policy

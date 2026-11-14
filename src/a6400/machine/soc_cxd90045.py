@@ -1,0 +1,38 @@
+"""Shared Sony BIONZ X (``CXD90045`` / ``ARM-CXD900X0``) SoC hardware layout.
+
+These constants represent SoC-level physical addresses and peripheral bases
+recovered from ``CXD90045`` kernels (``E0415–E0424``). Per-body kernel symbol
+addresses, UIPC queue IDs, and USB identities belong in ``TargetProfile``, not
+here.
+"""
+from __future__ import annotations
+
+MACHINE_NAME = b"ARM-CXD900X0"
+DEFAULT_MACHINE_ID = 0x00000DA9  # 3497
+
+KERNEL_PAGE_OFFSET = 0x60000000
+UPDATER_LOADADDR = {
+    "kernel_load": 0x00108000,
+    "initrd_load": 0x00700000,
+    "boot_params": 0x00103000,
+}
+
+DEFAULT_RAM_BANKS = ((0x00000000, 0x40000000), (0x80000000, 0x40000000))
+DEFAULT_MMIO_RANGES = ((0xF0000000, 0xFDFFFFFF), (0xFE100000, 0xFFFFFFFF))
+DEFAULT_SRAM = (0xFE000000, 0x00100000)
+
+# Core SoC peripherals
+UART0_BASE = 0xF2000000
+GIC_DIST_BASE = 0xF8001000
+GIC_CPU_BASE = 0xF8000100
+TIMER_BASE = 0xF2403000
+TIMER_COUNTER_OFFSET = 0x10C
+TIMER_IRQ = 153  # 0x99
+TIMER_HZ = 100
+TIMER_TICKS_PER_JIFFY = 0x2710
+VECTORS_BASE = 0xFFFF0000
+CRCDC_BASE = 0xF2A31000
+CRCDC_STATUS = 0xF2A31030
+GPES_BAR_BASE = 0xF1000000
+
+DEFAULT_MMIO_READ_STUBS = {0xF800277C: 0x100}

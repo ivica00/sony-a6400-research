@@ -1,0 +1,136 @@
+"""Sony ILCE-6400 (a6400) verified target profile."""
+from __future__ import annotations
+
+from src.a6400.targets.bodies._common import (
+    E0068,
+    E0152,
+    E0158,
+    E0207,
+    E0310,
+    E0315,
+    E0316,
+    E0320,
+    E0334,
+    E0347,
+    E0348,
+    E0416,
+    ref,
+)
+from src.a6400.targets.profile import (
+    PID_TIER_OBSERVED,
+    PID_TIER_PROJECT_AUTHORED,
+    PID_TIER_STOCK,
+    STATUS_VERIFIED,
+    BootLayoutSpec,
+    EvidenceRef,
+    ModuleComponent,
+    TargetProfile,
+    UsbIdentity,
+    UsbPid,
+)
+
+ILCE_6400 = TargetProfile(
+    target_id="ilce_6400",
+    model_name="Sony ILCE-6400 (a6400)",
+    status=STATUS_VERIFIED,
+    soc_verified=True,
+    firmware_version="8.2.5.7",
+    live_build_version="8.2.6.0",
+    kernel_version="3.0.27_nl-rt106+ SMP preempt mod_unload ARMv7",
+    kallsyms={
+        # From the live read-only /proc/kallsyms read in E0348 (976,469 bytes).
+        "usb_gadgetcore_ioctl": 0x602B8844,
+        "usb_gadgetcore_register_driver": 0x602B8610,
+        "usb_gadgetcore_unregister_driver": 0x602B8560,
+        "usb_gcw_start": 0x602BD7F8,
+        "usb_gcw_stop": 0x602BD834,
+        "osal_snd_msg": 0x5F04916C,
+        "osal_rcv_msg_tmo": 0x5F0494F0,
+        "setup_req": 0x602B94A4,
+        "make_config_desc": 0x602BBC54,
+        "dma330_mem_transfer_async": 0x5F49D768,
+    },
+    uipc_queues={
+        # Local user-space queues decoded in E0310; sync-channel handles in E0334.
+        "usb_control": 0x00CA8192,
+        "usb_bus_power": 0x012182EB,
+        "bus_power": 0x012282F6,
+        "buspower_event_lane": 0x012002DA,
+        "usb_relay": 0x008F013A,
+        "usb_control_sync_adjust": 0x00CA0288,
+        "usb_control_sync_input": 0x00CA01A4,
+    },
+    usb=UsbIdentity(
+        vid=0x054C,
+        pids={
+            "mass_storage": UsbPid(0x0CA8, PID_TIER_STOCK),
+            "pc_remote": UsbPid(0x0CAA, PID_TIER_OBSERVED),
+            "uvc_composite": UsbPid(0x0322, PID_TIER_PROJECT_AUTHORED),
+        },
+        bcd_device=0x0200,
+    ),
+    modules={
+        "devno.ko": ModuleComponent(
+            size=4308,
+            sha256="3b36fcea8687d7f29112a7008ce61fde9229679ebc24c65ec2d21cf3af632f56",
+            role="device-node table; a6400 build has no /dev/usb/video or /dev/usb/audio rows",
+        ),
+        "usbg_buspower.ko": ModuleComponent(
+            size=14068,
+            sha256="81fee5ccc6b14bc9f46e7f8315308b2476ba056763bf16e84ccaf053e38cea41",
+            role="USB bus-power module mapped by the application; present in the stock kmod set",
+        ),
+    },
+    boot_layout=BootLayoutSpec(
+        machine_id=0x00000DA9,
+        page_offset=0x60000000,
+        kernel_load=0x00108000,
+        initrd_load=0x00700000,
+        boot_params=0x00103000,
+        ram_banks=((0x00000000, 0x40000000), (0x80000000, 0x40000000)),
+        uart_base=0xF2000000,
+    ),
+    sources={
+        "firmware_version": ref(E0315, "inputs: extracted a6400 8.2.5.7 firmware (nflasha15 image)"),
+        "live_build_version": ref(E0348, "live kernel banner gcc tag: Sony CE Linux 8.2.6.0"),
+        "kernel_version": ref(E0316, "kernel vermagic observed on the a6400 8.2.5.7 module chain"),
+        "kallsyms.usb_gadgetcore_ioctl": ref(E0348, "live /proc/kallsyms: 0x602b8844 (entry-hook target)"),
+        "kallsyms.usb_gadgetcore_register_driver": ref(E0348, "live /proc/kallsyms: 0x602b8610"),
+        "kallsyms.usb_gadgetcore_unregister_driver": ref(E0348, "live /proc/kallsyms: 0x602b8560"),
+        "kallsyms.usb_gcw_start": ref(E0348, "live /proc/kallsyms: 0x602bd7f8"),
+        "kallsyms.usb_gcw_stop": ref(E0348, "live /proc/kallsyms: 0x602bd834"),
+        "kallsyms.osal_snd_msg": ref(E0348, "live /proc/kallsyms: 0x5f04916c"),
+        "kallsyms.osal_rcv_msg_tmo": ref(E0348, "live /proc/kallsyms: 0x5f0494f0"),
+        "kallsyms.setup_req": ref(E0348, "live /proc/kallsyms: 0x602b94a4"),
+        "kallsyms.make_config_desc": ref(E0348, "live /proc/kallsyms: 0x602bbc54"),
+        "kallsyms.dma330_mem_transfer_async": ref(E0348, "live /proc/kallsyms: 0x5f49d768"),
+        "uipc_queues.usb_control": ref(E0310, "UsbControl receiver queue 0x00CA8192 (bit-15 local queue)"),
+        "uipc_queues.usb_bus_power": ref(E0310, "UsbBusPower local queue 0x012182EB"),
+        "uipc_queues.bus_power": ref(E0310, "BusPower local queue 0x012282F6"),
+        "uipc_queues.buspower_event_lane": ref(E0310, "buspower event lane 0x012002DA (a power lane, not connect)"),
+        "uipc_queues.usb_relay": ref(E0310, "0x008F013A is the UFW relay/ULOG queue, not UsbControl inbound"),
+        "uipc_queues.usb_control_sync_adjust": ref(E0334, "sync callback handle 4109 -> queue 0x00CA0288 (ADJ channel)"),
+        "uipc_queues.usb_control_sync_input": ref(E0334, "sync callback handle 4110 -> queue 0x00CA01A4 (input callback)"),
+        "usb": (
+            EvidenceRef(path=E0152, detail="Mass Storage 054c:0ca8, single configuration/interface"),
+            EvidenceRef(path=E0207, detail="PC Remote 054C:0CAA composite PC Remote enumeration"),
+            EvidenceRef(path=E0158, detail="bcdDevice 0x0200 retained on the owned identity"),
+            EvidenceRef(path=E0347, detail="project-authored composite identity 054C:0322 parent + MI_00/MI_01"),
+        ),
+        "modules.devno.ko": ref(E0320, "a6400 devno.ko sha256; major 248 minors 0..31, no video/audio rows"),
+        "modules.usbg_buspower.ko": ref(E0068, "usbg_buspower.ko size 14,068 bytes and SHA-256 as mapped by the app"),
+        "boot_layout": ref(E0416, "recovered machine_id 0xDA9, loadaddr.txt (0x108000/0x700000/0x103000), kemco.txt RAM banks"),
+    },
+    boundaries=(
+        "Addresses are per-boot kernel/library values; only kallsyms addresses are ASLR-free. "
+        "Library bases and the gadgetcore fd change between boots.",
+        "A resolved symbol is presence evidence, not loadability or callability proof.",
+        "The uvc_composite USB PID is the project-authored composite identity, not a stock Sony PID.",
+        "The extracted 8.2.5.7 image and the live 8.2.6.0 build are different bases: offline "
+        "addresses come from the image, live kallsyms values from the boot that was read.",
+        "usbg_cmn.ko is not in the runtime /proc/modules set: the usbg_cmn_* symbols appear as "
+        "local copies in usbg_sen/stillimage/buspower/storage, so no runtime export is claimed here.",
+        "Module hashes/sizes not listed in the catalog are local artifact measurements, not profile claims.",
+    ),
+    notes="Primary verified execution target.",
+)

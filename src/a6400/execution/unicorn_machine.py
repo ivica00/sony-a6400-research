@@ -94,6 +94,48 @@ class MachineError(RuntimeError):
 class UnicornMachine:
     """Bounded Unicorn machine model for the updater Linux bring-up."""
 
+    @classmethod
+    def from_target(cls, profile, kernel_raw: bytes, initrd: bytes, atags: bytes, *,
+                    machine_id: int | None = None,
+                    symbols: dict[str, int] | None = None,
+                    **kwargs) -> 'UnicornMachine':
+        """Construct a ``UnicornMachine`` configured from a ``TargetProfile``.
+
+        Boot layout parameters (``machine_id``, ``kernel_load``, ``initrd_load``,
+        ``boot_params``, ``ram_banks``, ``uart_base``) are taken from
+        ``profile.boot_layout`` when present, and ``profile.kallsyms`` is merged
+        as the base symbol table before applying any decoded ``symbols``.
+        """
+        layout = getattr(profile, 'boot_layout', None)
+        resolved_machine_id = machine_id if machine_id is not None else (
+            layout.machine_id if layout is not None else None
+        )
+        if not resolved_machine_id:
+            raise MachineError(
+                f'target {profile.target_id!r} has no boot_layout.machine_id; pass machine_id explicitly'
+            )
+        merged_symbols = {
+            name: addr for name, addr in (getattr(profile, 'kallsyms', None) or {}).items()
+            if addr is not None
+        }
+        if symbols:
+            merged_symbols.update(symbols)
+        if layout is not None:
+            kwargs.setdefault('kernel_load', layout.kernel_load)
+            kwargs.setdefault('initrd_load', layout.initrd_load)
+            kwargs.setdefault('boot_params', layout.boot_params)
+            kwargs.setdefault('ram_banks', layout.ram_banks)
+            kwargs.setdefault('uart_base', layout.uart_base)
+        return cls(
+            kernel_raw,
+            initrd,
+            atags,
+            machine_id=resolved_machine_id,
+            symbols=merged_symbols,
+            target_id=profile.target_id,
+            **kwargs,
+        )
+
     def __init__(self, kernel_raw: bytes, initrd: bytes, atags: bytes, *,
                  machine_id: int, kernel_load: int = KERNEL_LOAD,
                  initrd_load: int = INITRD_LOAD, boot_params: int = BOOT_PARAMS,
@@ -102,6 +144,7 @@ class UnicornMachine:
                  mmio_read_stubs: dict[int, int] | None = None,
                  timer_irq_model: bool = True, virtual_tlb_enabled: bool = False,
                  virtual_tlb_on_userspace: bool = False,
+                 enable_svc_dispatch: bool = False,
                  timer_ticks_per_instruction: int = 1,
                  timer_ticks_per_jiffy: int = TIMER_TICKS_PER_JIFFY,
                  timer_irq_start_instructions: int = 5_000_000,
@@ -125,13 +168,15 @@ class UnicornMachine:
                  sample_interval: int = 250_000,
                  use_code_hook: bool = False,
                  boot_patches: dict | None = None,
-                 symbols: dict[str, int] | None = None):
+                 symbols: dict[str, int] | None = None,
+                 target_id: str | None = None):
         if int.from_bytes(kernel_raw[0:4], 'little') != 0xE321F0D3:
             raise MachineError('kernel_raw does not start with the ARM kernel head')
         if not machine_id:
             raise MachineError('machine ID required')
         if instruction_limit <= 0:
             raise MachineError('positive instruction limit required')
+        self.target_id = target_id
         self.kernel_raw = kernel_raw
         self.initrd = initrd
         self.atags = atags
@@ -155,6 +200,8 @@ class UnicornMachine:
         self.timer_irq_model = timer_irq_model
         self.virtual_tlb_enabled = virtual_tlb_enabled
         self.virtual_tlb_on_userspace = virtual_tlb_on_userspace
+        self.enable_svc_dispatch = enable_svc_dispatch
+        self._svc_hook_installed = False
         self._vtlb_requested = False
         self._user_refresh_requested = False
         self._user_refresh_done = False
@@ -173,6 +220,20 @@ class UnicornMachine:
         self.insn_invalid_unsupported: list[dict] = []
         self._step_last_error = None
         self.e0475_trace: list[dict] = []
+        self.e0483_trace: list[dict] = []
+        self.e0483_entry_stack: dict = {}
+        self.pt_frame_gen = 0
+        self.pt_frame_last = None
+        self.pt_frame_consumed = -1
+        self.e0492_frames: list[dict] = []
+        self.e0492_msr: list[dict] = []
+        self.e0493_trace: list[dict] = []
+        self.e0495_trace: list[dict] = []
+        self.e0496_kernel: list[dict] = []
+        self.e0497_svc = None
+        self.e0497_trace: list[dict] = []
+        self.e0499_trace: list[dict] = []
+        self.e0500_frames: list[dict] = []
         self.timer_ticks_per_instruction = timer_ticks_per_instruction
         self.timer_ticks_per_jiffy = timer_ticks_per_jiffy
         self.timer_irq_start_instructions = timer_irq_start_instructions
@@ -293,6 +354,10 @@ class UnicornMachine:
         self._pte_dirty = False
         self.mm_fault_returns: list[dict] = []
         self._page_cache_drops = 0
+        self._pending_evict_pages = set()
+        self._pending_cputlb_flush = False
+        self.e0502_fill: list[dict] = []
+        self._fast_frame = None
 
 
 
@@ -391,6 +456,188 @@ class UnicornMachine:
         self._install_ttbr0_write_hooks()
 
         try:
+            _e0483_pcs = (0x04031ABA, 0x04031ABC, 0x04031AC4, 0x04031AD0,
+                          0x04031AD8, 0x04031AEA, 0x04031B00, 0x04031A00,
+                          0x04031A30, 0x04031A42, 0x04031A68,
+                          0x0403D6A8, 0x0403D6B2)
+
+            def _e0483_hook(uc, address, size, user):
+                if len(self.e0483_trace) >= 40:
+                    return
+                try:
+                    self.e0483_trace.append({
+                        'tag': f'0x{address:08x}',
+                        'r0': f'0x{uc.reg_read(UC_ARM_REG_R0):08x}',
+                        'r1': f'0x{uc.reg_read(UC_ARM_REG_R1):08x}',
+                        'r2': f'0x{uc.reg_read(UC_ARM_REG_R2):08x}',
+                        'r3': f'0x{uc.reg_read(UC_ARM_REG_R3):08x}',
+                        'r7': f'0x{uc.reg_read(UC_ARM_REG_R7):08x}',
+                        'r8': f'0x{uc.reg_read(UC_ARM_REG_R8):08x}',
+                        'sp': f'0x{uc.reg_read(UC_ARM_REG_SP):08x}',
+                        'lr': f'0x{uc.reg_read(UC_ARM_REG_LR):08x}',
+                        'cpsr': f'0x{uc.reg_read(UC_ARM_REG_CPSR):08x}'})
+                except Exception:
+                    pass
+            for _pc in _e0483_pcs:
+                self.uc.hook_add(UC_HOOK_CODE, _e0483_hook,
+                                 begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+        try:
+            _e0493_pcs = (0x04031AB6, 0x04031BDE, 0x04031BE8, 0x04031A0C,
+                          0x04031A42, 0x04031A68, 0x04031AA8, 0x0403FEA0,
+                          0x0403609C)
+
+            def _e0493_hook(uc, address, size, user):
+                if len(self.e0493_trace) >= 24:
+                    return
+                try:
+                    sp = uc.reg_read(UC_ARM_REG_SP)
+                    slot = None
+                    try:
+                        slot = self._read_user32(sp + 0x20)
+                    except Exception:
+                        slot = None
+                    self.e0493_trace.append({
+                        'tag': f'0x{address:08x}',
+                        'r0': f'0x{uc.reg_read(UC_ARM_REG_R0):08x}',
+                        'r4': f'0x{uc.reg_read(UC_ARM_REG_R4):08x}',
+                        'r7': f'0x{uc.reg_read(UC_ARM_REG_R7):08x}',
+                        'r8': f'0x{uc.reg_read(UC_ARM_REG_R8):08x}',
+                        'sp': f'0x{sp:08x}',
+                        'lr': f'0x{uc.reg_read(UC_ARM_REG_LR):08x}',
+                        'sp20': (f'0x{slot:08x}' if slot is not None else None)})
+                except Exception:
+                    pass
+            for _pc in _e0493_pcs:
+                self.uc.hook_add(UC_HOOK_CODE, _e0493_hook,
+                                 begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+        try:
+            _e0495_pcs = (0x0403EB14, 0x0403EB16, 0x0403EB20, 0x0403EB24,
+                          0x0403EB26, 0x0403EB28)
+
+            def _e0495_hook(uc, address, size, user):
+                if len(self.e0495_trace) >= 24:
+                    return
+                try:
+                    self.e0495_trace.append({
+                        'tag': f'0x{address:08x}',
+                        'r0': f'0x{uc.reg_read(UC_ARM_REG_R0):08x}',
+                        'r1': f'0x{uc.reg_read(UC_ARM_REG_R1):08x}',
+                        'r2': f'0x{uc.reg_read(UC_ARM_REG_R2):08x}',
+                        'r3': f'0x{uc.reg_read(UC_ARM_REG_R3):08x}',
+                        'r4': f'0x{uc.reg_read(UC_ARM_REG_R4):08x}',
+                        'r7': f'0x{uc.reg_read(UC_ARM_REG_R7):08x}',
+                        'sp': f'0x{uc.reg_read(UC_ARM_REG_SP):08x}',
+                        'lr': f'0x{uc.reg_read(UC_ARM_REG_LR):08x}',
+                        'cpsr': f'0x{uc.reg_read(UC_ARM_REG_CPSR):08x}'})
+                except Exception:
+                    pass
+            for _pc in _e0495_pcs:
+                self.uc.hook_add(UC_HOOK_CODE, _e0495_hook,
+                                 begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+        try:
+            _e0496_pcs = (0x6010DEE0, 0x6010DEE4, 0x6010DEEC, 0x6010DEF8,
+                          0x6010DF34, 0x6010DF50, 0x6010DF58, 0x6010DF64)
+
+            def _e0496_hook(uc, address, size, user):
+                if len(self.e0496_kernel) >= 24:
+                    return
+                try:
+                    frame = self.pt_frame_last or {}
+                    self.e0496_kernel.append({
+                        'tag': f'0x{address:08x}',
+                        'sp': f'0x{uc.reg_read(UC_ARM_REG_SP):08x}',
+                        'lr': f'0x{uc.reg_read(UC_ARM_REG_LR):08x}',
+                        'pc': f'0x{uc.reg_read(UC_ARM_REG_PC):08x}',
+                        'cpsr': f'0x{uc.reg_read(UC_ARM_REG_CPSR):08x}',
+                        'spsr': f'0x{uc.reg_read(UC_ARM_REG_SPSR):08x}',
+                        'frame_gen': frame.get('gen'),
+                        'frame_cpsr': (f"0x{frame['cpsr']:08x}"
+                                       if frame else None)})
+                except Exception:
+                    pass
+            for _pc in _e0496_pcs:
+                self.uc.hook_add(UC_HOOK_CODE, _e0496_hook,
+                                 begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+        try:
+            _e0499_pcs = (0x0403E980, 0x0403E98C, 0x0403E992, 0x0403E9A2,
+                          0x0403EB10, 0x0403EB20, 0x0403EB22, 0x0403EB26,
+                          0x0403EB28, 0x0403EB2C)
+
+            def _e0499_hook(uc, address, size, user):
+                if len(self.e0499_trace) >= 32:
+                    return
+                try:
+                    self.e0499_trace.append({
+                        'tag': f'0x{address:08x}',
+                        'r0': f'0x{uc.reg_read(UC_ARM_REG_R0):08x}',
+                        'r1': f'0x{uc.reg_read(UC_ARM_REG_R1):08x}',
+                        'r2': f'0x{uc.reg_read(UC_ARM_REG_R2):08x}',
+                        'r3': f'0x{uc.reg_read(UC_ARM_REG_R3):08x}',
+                        'r4': f'0x{uc.reg_read(UC_ARM_REG_R4):08x}',
+                        'r7': f'0x{uc.reg_read(UC_ARM_REG_R7):08x}',
+                        'sp': f'0x{uc.reg_read(UC_ARM_REG_SP):08x}',
+                        'lr': f'0x{uc.reg_read(UC_ARM_REG_LR):08x}',
+                        'cpsr': f'0x{uc.reg_read(UC_ARM_REG_CPSR):08x}'})
+                except Exception:
+                    pass
+            for _pc in _e0499_pcs:
+                self.uc.hook_add(UC_HOOK_CODE, _e0499_hook,
+                                 begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+        try:
+            def _fast_entry_hook(uc, address, size, user):
+                self._capture_fast_syscall_frame(uc)
+            self.uc.hook_add(UC_HOOK_CODE, _fast_entry_hook,
+                             begin=0x6010DEC0, end=0x6010DEC4)
+
+            def _fast_return_hook(uc, address, size, user):
+                if self._restore_fast_syscall_user_return(uc):
+                    try:
+                        uc.emu_stop()
+                    except Exception:
+                        pass
+            self.uc.hook_add(UC_HOOK_CODE, _fast_return_hook,
+                             begin=0x6010DEF8, end=0x6010DEFC)
+        except Exception:
+            pass
+
+        try:
+            def _e0500_hook(uc, address, size, user):
+                if len(self.e0500_frames) >= 8:
+                    return
+                try:
+                    sp = uc.reg_read(UC_ARM_REG_SP)
+                    words = [self._read32_phys((sp + 4 * i) & 0x1FFFFFFF)
+                             for i in range(20)]
+                    self.e0500_frames.append({
+                        'tag': f'0x{address:08x}',
+                        'sp': f'0x{sp:08x}',
+                        'lr': f'0x{uc.reg_read(UC_ARM_REG_LR):08x}',
+                        'cpsr': f'0x{uc.reg_read(UC_ARM_REG_CPSR):08x}',
+                        'words': [f'0x{w:08x}' for w in words]})
+                except Exception:
+                    pass
+            for _pc in (0x6010DEC0, 0x6010DEE0, 0x6010DEEC, 0x6010DEF8):
+                self.uc.hook_add(UC_HOOK_CODE, _e0500_hook,
+                                 begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+        try:
             _regmap = ((0, UC_ARM_REG_R0), (1, UC_ARM_REG_R1), (2, UC_ARM_REG_R2),
                        (3, UC_ARM_REG_R3), (4, UC_ARM_REG_R4), (5, UC_ARM_REG_R5),
                        (6, UC_ARM_REG_R6), (7, UC_ARM_REG_R7),
@@ -447,6 +694,34 @@ class UnicornMachine:
 
 
         try:
+            def _ret_ldmdb_hook(uc, address, size, user):
+                # E0496: `ldmdb sp,{r0-r12,sp,lr}^` must not load the user PC in
+                # SVC mode (that resumed user code in SVC/ARM). Skip it; the
+                # generation restore at 0x6010DF64 applies the user frame.
+                frame = self.pt_frame_last
+                if frame is not None and (frame['cpsr'] & 0x1F) == 0x10:
+                    try:
+                        uc.reg_write(UC_ARM_REG_PC, 0x6010DF60)
+                    except Exception:
+                        pass
+            self.uc.hook_add(UC_HOOK_CODE, _ret_ldmdb_hook,
+                             begin=0x6010DF58, end=0x6010DF5C)
+        except Exception:
+            pass
+
+        try:
+            def _vector_stmdb_hook(uc, address, size, user):
+                if self._emulate_vector_stmdb(uc):
+                    try:
+                        uc.reg_write(UC_ARM_REG_PC, 0x6010DFB4)
+                    except Exception:
+                        pass
+            self.uc.hook_add(UC_HOOK_CODE, _vector_stmdb_hook,
+                             begin=0x6010DFB0, end=0x6010DFB4)
+        except Exception:
+            pass
+
+        try:
             def _ret_msr_hook(uc, address, size, user):
                 # E0463: 0x6010DF50 msr spsr_fsxc, r1 (lr already = user PC)
                 try:
@@ -458,6 +733,13 @@ class UnicornMachine:
                     return
                 self.pending_user_spsr = r1
                 self.pending_user_lr = lr
+                if len(self.e0492_msr) < 12:
+                    self.e0492_msr.append({
+                        'r1': f'0x{r1:08x}', 'lr': f'0x{lr:08x}',
+                        'usr': bool((r1 & 0x1F) == 0x10),
+                        'frame_gen': (self.pt_frame_last or {}).get('gen'),
+                        'frame_cpsr': (f"0x{self.pt_frame_last['cpsr']:08x}"
+                                       if self.pt_frame_last else None)})
                 if len(self.ret_tail_trace) < 16:
                     self.ret_tail_trace.append({
                         'tag': 'msr50', 'spsr': f'0x{r1:08x}',
@@ -469,39 +751,40 @@ class UnicornMachine:
 
         try:
             def _ret_tail_hook(uc, address, size, user):
-                # E0463: 0x6010DF64 movs pc, lr - restore the captured user frame.
-                spsr = self.pending_user_spsr
-                plr = self.pending_user_lr
-                if spsr is None or plr is None:
+                # E0492: consume the pt_regs frame captured at 0x6010DF34 at
+                # most once. A second 0x6010DF64 hit without a new frame is not
+                # a user return - never replay it (that set SP_usr = 0).
+                frame = self._take_user_frame()
+                if frame is None:
                     return
-                try:
-                    sp = uc.reg_read(UC_ARM_REG_SP)
-                    base = (sp - 0x48) & 0xFFFFFFFF
-                    frame = [self._read32_phys(base + off)
-                             for off in range(0, 0x44, 4)]
-                    frame_pc = self._read32_phys(base + 0x3C)
-                    frame_cpsr = self._read32_phys(base + 0x40)
-                except Exception:
-                    return
-                target = plr or frame_pc
-                if not target:
-                    return
+                spsr = frame['cpsr']
+                target = frame['pc']
                 if (spsr & 0x1F) != 0x10:
+                    return
+                if not (0x1000 <= (target or 0) < 0x60000000):
+                    self.pt_frame_consumed = frame['gen']
+                    return
+                if not (0x1000 <= (frame['sp'] or 0) < 0x60000000):
+                    self.pt_frame_consumed = frame['gen']
                     return
                 self.user_restores += 1
                 if len(self.ret_tail_trace) < 16:
                     self.ret_tail_trace.append({
-                        'tag': 'restore', 'spsr': f'0x{spsr:08x}',
-                        'lr': f'0x{plr:08x}', 'pc': f'0x{target:08x}',
-                        'frame_cpsr': f'0x{frame_cpsr:08x}'})
+                        'tag': 'restore', 'gen': frame['gen'],
+                        'spsr': f'0x{spsr:08x}',
+                        'lr': f'0x{(frame["lr"] or 0):08x}',
+                        'pc': f'0x{target:08x}',
+                        'sp': f'0x{frame["sp"]:08x}',
+                        'frame_cpsr': f'0x{spsr:08x}'})
                 try:
-                    for i in range(13):
-                        uc.reg_write(UC_ARM_REG_R0 + i, frame[i])
+                    # E0496: switch to the USR bank *before* restoring GPRs so
+                    # the writes land in the user register bank.
                     uc.reg_write(UC_ARM_REG_CPSR, spsr)
-                    uc.reg_write(UC_ARM_REG_SP, frame[0x34 // 4])
-                    uc.reg_write(UC_ARM_REG_LR, frame[0x38 // 4])
+                    for i in range(13):
+                        uc.reg_write(UC_ARM_REG_R0 + i, frame['words'][i])
+                    uc.reg_write(UC_ARM_REG_SP, frame['sp'])
+                    uc.reg_write(UC_ARM_REG_LR, frame['lr'])
                     self._set_pc_and_cpsr(target, spsr)
-                    # E0465: queue an explicit odd-address resume for the run loop.
                     self._pending_user_resume = (
                         self.thumb_pc(target, spsr), spsr)
                     try:
@@ -860,7 +1143,10 @@ class UnicornMachine:
                              begin=restore_pc, end=restore_pc + 3)
         # E0436: SWI dispatch implemented but gated off (it stalled early boot at
         # cmpxchg_futex_value_locked under the current ABT/futex handling).
-        if getattr(self, 'enable_svc_dispatch', False):
+        if (getattr(self, 'enable_svc_dispatch', False)
+                and not self.virtual_tlb_on_userspace):
+            # E0492: deferred activation - install the INTR hook only once user
+            # mode starts; a boot-wide hook stalls early init (E0436).
             self.uc.hook_add(UC_HOOK_INTR, self._on_interrupt)
         ret_to_user = self._symbol_address('ret_to_user')
         if ret_to_user is not None:
@@ -870,6 +1156,37 @@ class UnicornMachine:
                     self._record_user_frame('ret', uc.reg_read(UC_ARM_REG_SP))
                 except Exception:
                     pass
+                # E0492: generation-tagged pt_regs snapshot (base == SP at
+                # ret_to_user entry, proven in E0461). Consumed once at DF64.
+                try:
+                    _sp = uc.reg_read(UC_ARM_REG_SP)
+                    _words = [self._read32_phys(_sp + 4 * i) for i in range(18)]
+                except Exception:
+                    _words = None
+                if _words is not None:
+                    _w_sp = _words[0x34 // 4]
+                    _w_lr = _words[0x38 // 4]
+                    _w_pc = _words[0x3C // 4]
+                    _w_cpsr = _words[0x40 // 4]
+                    if 0x1000 <= (_w_pc or 0) < 0x60000000:
+                        self._pending_evict_pages.add(_w_pc & ~0xFFF)
+                        self._pending_cputlb_flush = True
+                    if ((_w_cpsr & 0x1F) == 0x10 or
+                            0x1000 <= (_w_pc or 0) < 0x60000000):
+                        self.pt_frame_gen += 1
+                        self.pt_frame_last = {
+                            'gen': self.pt_frame_gen, 'words': _words,
+                            'sp': _w_sp, 'lr': _w_lr,
+                            'pc': _w_pc, 'cpsr': _w_cpsr}
+                        if len(self.e0492_frames) < 8:
+                            self.e0492_frames.append({
+                                'gen': self.pt_frame_gen,
+                                'sp': f'0x{(_w_sp or 0):08x}',
+                                'lr': f'0x{(_w_lr or 0):08x}',
+                                'pc': f'0x{(_w_pc or 0):08x}',
+                                'cpsr': f'0x{(_w_cpsr or 0):08x}',
+                                'user': bool((_w_cpsr & 0x1F) == 0x10),
+                                'words': [f'0x{w:08x}' for w in _words]})
                 # E0452: keep UC_TLB_CPU through kernel init; switch to the
                 # virtual TLB on the first ret_to_user (userspace entry).
                 if (self.virtual_tlb_on_userspace and not self.virtual_tlb
@@ -1274,6 +1591,80 @@ class UnicornMachine:
                             (0xFFFF0FE0, get_tls), (0xFFFF0FFC, helper_version)):
             self.uc.hook_add(UC_HOOK_CODE, handler, begin=pc, end=pc + 3)
 
+    def _svc_return_address(self, pc: int, thumb: bool) -> int:
+        """E0496/E0500: compute the true SVC return address.
+
+        Unicorn reports the PC *after* the SVC instruction in UC_HOOK_INTR.  The
+        probe must use the guest page-table walk (direct uc.mem_read from a hook
+        can fail for user VAs, which previously fell back to pc+2 and skipped
+        the user epilogue `pop {r7, pc}` at 0x0403EB16).
+        """
+        def _read16(addr: int):
+            # E0500: never run a nested MRC/emu_start from inside the INT hook.
+            if self._cached_ttbr0:
+                try:
+                    value = self._read_user16(addr)
+                    if value is not None:
+                        return value
+                except Exception:
+                    pass
+            try:
+                return struct.unpack('<H', bytes(self.uc.mem_read(addr, 2)))[0]
+            except Exception:
+                return None
+
+        def _read32(addr: int):
+            if self._cached_ttbr0:
+                try:
+                    value = self._read_user32(addr)
+                    if value is not None:
+                        return value
+                except Exception:
+                    pass
+            try:
+                return struct.unpack('<I', bytes(self.uc.mem_read(addr, 4)))[0]
+            except Exception:
+                return None
+
+        if thumb:
+            before = _read16((pc - 2) & ~1)
+            if before is not None and (before & 0xFF00) == 0xDF00:
+                return pc
+            after = _read16(pc & ~1)
+            if after is not None and (after & 0xFF00) == 0xDF00:
+                return pc + 2
+            return pc + 2
+        before = _read32((pc - 4) & ~3)
+        if before is not None and (before & 0xFF000000) == 0xEF000000:
+            return pc
+        after = _read32(pc & ~3)
+        if after is not None and (after & 0xFF000000) == 0xEF000000:
+            return pc + 4
+        return pc + 4
+
+    def _emulate_vector_stmdb(self, uc) -> bool:
+        """E0498/E0500: emulate `stmdb r8,{sp,lr}^` inside vector_swi from the
+        pre-switch USR bank capture; returns True after a single application."""
+        sp = self._pending_swi_usr_sp
+        lr = self._pending_swi_usr_lr
+        if sp is None or lr is None:
+            return False
+        try:
+            r8 = uc.reg_read(UC_ARM_REG_R8)
+            pa_sp = self._kernel_phys((r8 - 8) & 0xFFFFFFFF)
+            pa_lr = self._kernel_phys((r8 - 4) & 0xFFFFFFFF)
+            uc.mem_write(pa_sp, struct.pack('<I', sp & 0xFFFFFFFF))
+            uc.mem_write(pa_lr, struct.pack('<I', lr & 0xFFFFFFFF))
+        except Exception:
+            return False
+        self._pending_swi_usr_sp = None
+        self._pending_swi_usr_lr = None
+        if len(self.e0497_trace) < 16:
+            self.e0497_trace.append({
+                'tag': 'vector_stmdb', 'r8': f'0x{r8:08x}',
+                'sp_usr': f'0x{sp:08x}', 'lr_usr': f'0x{lr:08x}'})
+        return True
+
     def _on_interrupt(self, uc, intno, user_data=None) -> None:
         """Dispatch ARM supervisor calls to the kernel SWI vector (E0436).
 
@@ -1302,11 +1693,33 @@ class UnicornMachine:
         if len(self.svc_trace) < 32:
             self.svc_trace.append({'pc': f'0x{pc:08x}', 'r7': uc.reg_read(UC_ARM_REG_R7)})
         thumb = bool(cpsr & 0x20)
-        target = (cpsr & 0xF0000000) | 0x13 | 0x80   # SVC, IRQ masked, ARM state
+        user_cpsr = (cpsr & ~0x3F) | 0x10 | (0x20 if thumb else 0)
+        user_mode = (cpsr & 0x1F) == 0x10
+        # E0498: capture the USER bank values *before* switching CPSR to SVC.
+        self._pending_swi_usr_sp = None
+        self._pending_swi_usr_lr = None
+        if user_mode and 0x1000 <= (pc & ~1) < 0x60000000:
+            try:
+                self._pending_swi_usr_sp = uc.reg_read(UC_ARM_REG_SP)
+                self._pending_swi_usr_lr = uc.reg_read(UC_ARM_REG_LR)
+            except Exception:
+                self._pending_swi_usr_sp = None
+                self._pending_swi_usr_lr = None
+        if len(self.e0497_trace) < 16:
+            self.e0497_trace.append({'tag': 'swi_entry', 'pc': f'0x{pc:08x}',
+                                     'cpsr': f'0x{cpsr:08x}',
+                                     'mode': f'0x{cpsr & 0x1F:02x}',
+                                     'user_mode': user_mode,
+                                     'pend_sp': (f'0x{self._pending_swi_usr_sp:08x}'
+                                                 if self._pending_swi_usr_sp is not None
+                                                 else None)})
+        target = (cpsr & ~0x3F) | 0x13 | 0x80   # SVC, IRQ masked, ARM state
         uc.reg_write(UC_ARM_REG_CPSR, target)
-        uc.reg_write(UC_ARM_REG_SPSR, cpsr & 0xFFFFFFFF)
-        uc.reg_write(UC_ARM_REG_LR, (pc + (2 if thumb else 4)) & 0xFFFFFFFF)
-        uc.reg_write(UC_ARM_REG_PC, 0xFFFF0008)
+        uc.reg_write(UC_ARM_REG_SPSR, user_cpsr if user_mode else (cpsr & 0xFFFFFFFF))
+        _ret_pc = self._svc_return_address(pc, thumb) & 0xFFFFFFFF
+        uc.reg_write(UC_ARM_REG_LR, _ret_pc)
+        _vector = self._symbol_address('vector_swi') or 0x6010DFA0
+        uc.reg_write(UC_ARM_REG_PC, _vector)
 
     def _capture_fault_frame(self, pc: int) -> None:
         """Dump r0/r1/r2, SP and the 18-word pt_regs [r2] at do_page_fault entry."""
@@ -1709,6 +2122,16 @@ class UnicornMachine:
             self._cap_reg_ids = cache
         return cache
 
+    def _take_user_frame(self):
+        """E0492: consume the generation-tagged pt_regs frame at most once."""
+        frame = self.pt_frame_last
+        if frame is None:
+            return None
+        if frame['gen'] <= self.pt_frame_consumed:
+            return None
+        self.pt_frame_consumed = frame['gen']
+        return frame
+
     def _should_recover_insn_invalid(self, pc: int, message: str) -> bool:
         """E0473: top-of-classifier decode-failure recovery gate."""
         if not (0x1000 <= (pc & ~1) < 0x60000000):
@@ -1716,6 +2139,36 @@ class UnicornMachine:
         if 'INSN' not in (message or '').upper():
             return False
         return self._user_pa(pc & ~1) is not None
+
+    def _sync_user_bank_for_recovery(self, pc: int, usr_cpsr: int) -> bool:
+        """E0494: if the live SP is a kernel pointer, force USR|Thumb and load
+        r0-r12/SP/LR from the active pt_regs frame before manual stepping."""
+        try:
+            sp_live = self.uc.reg_read(UC_ARM_REG_SP)
+        except Exception:
+            sp_live = 0
+        if sp_live < 0x60000000:
+            return False
+        frame = self.pt_frame_last
+        self.uc.reg_write(UC_ARM_REG_CPSR, usr_cpsr)
+        if (frame is None or (frame['cpsr'] & 0x1F) != 0x10
+                or not 0x1000 <= frame['sp'] < 0x60000000):
+            return False
+        for i in range(13):
+            self.uc.reg_write(UC_ARM_REG_R0 + i, frame['words'][i])
+        self.uc.reg_write(UC_ARM_REG_SP, frame['sp'])
+        self.uc.reg_write(UC_ARM_REG_LR, frame['lr'])
+        if frame['pc'] == 0x04031AA8 and pc >= 0x04031AAC:
+            # 0x04031AA8 push.w {r4-r11,lr} already ran before the fault.
+            self.uc.reg_write(UC_ARM_REG_SP, (frame['sp'] - 0x24) & 0xFFFFFFFF)
+        if len(self.e0493_trace) < 40:
+            self.e0493_trace.append({
+                'tag': 'recover_usr_sync', 'frame_gen': frame['gen'],
+                'frame_pc': f"0x{frame['pc']:08x}",
+                'sp': f'0x{self.uc.reg_read(UC_ARM_REG_SP):08x}',
+                'r0': f'0x{self.uc.reg_read(UC_ARM_REG_R0):08x}',
+                'r8': f'0x{self.uc.reg_read(UC_ARM_REG_R8):08x}'})
+        return True
 
     def _step_user_thumb_insns(self, pc: int, cpsr: int, max_steps: int = 6):
         """E0470: bounded general Thumb/Thumb-2 user stepper."""
@@ -2244,12 +2697,101 @@ class UnicornMachine:
             return vaddr
         return self._walk_page_tables_phys(vaddr)
 
+    def _capture_fast_syscall_frame(self, uc) -> None:
+        """E0503: snapshot the pt_regs at ret_fast_syscall entry (base = SP+8)."""
+        try:
+            sp = uc.reg_read(UC_ARM_REG_SP)
+            words = [self._read32_phys((sp + 4 * i) & 0x1FFFFFFF)
+                     for i in range(20)]
+            base = 2  # SP + 8
+            f_sp = words[base + 0x34 // 4]
+            f_lr = words[base + 0x38 // 4]
+            f_pc = words[base + 0x3C // 4]
+            f_cpsr = words[base + 0x40 // 4]
+            if ((f_cpsr & 0x1F) == 0x10 and
+                    0x1000 <= (f_pc or 0) < 0x60000000):
+                self._fast_frame = {'words': words[base:base + 17],
+                                    'sp': f_sp, 'lr': f_lr, 'pc': f_pc,
+                                    'cpsr': f_cpsr}
+        except Exception:
+            pass
+
+    def _restore_fast_syscall_user_return(self, uc) -> bool:
+        """E0503: enforce USR|Thumb + odd PC at ret_fast_syscall `movs pc, lr`."""
+        try:
+            spsr = uc.reg_read(UC_ARM_REG_SPSR)
+            lr = uc.reg_read(UC_ARM_REG_LR)
+        except Exception:
+            return False
+        frame = self._fast_frame
+        if frame is not None:
+            cpsr = frame['cpsr']
+            target = frame['pc'] or frame['lr'] or lr
+            user_sp = frame['sp']
+        else:
+            if (spsr & 0x1F) != 0x10 or not (0x1000 <= (lr or 0) < 0x60000000):
+                return False
+            cpsr = spsr
+            target = lr
+            user_sp = None
+        if (spsr & 0x1F) != 0x10 and (cpsr & 0x1F) != 0x10:
+            return False
+        user_cpsr = (cpsr & ~0x3F) | 0x10 | (0x20 if (cpsr & 0x20) else 0)
+        try:
+            uc.reg_write(UC_ARM_REG_CPSR, user_cpsr)
+            if frame is not None:
+                for i in range(13):
+                    uc.reg_write(UC_ARM_REG_R0 + i, frame['words'][i])
+                if user_sp is not None:
+                    uc.reg_write(UC_ARM_REG_SP, user_sp)
+                uc.reg_write(UC_ARM_REG_LR, frame['lr'])
+            uc.reg_write(UC_ARM_REG_SPSR, user_cpsr)
+            uc.reg_write(UC_ARM_REG_PC, self.thumb_pc(target & 0xFFFFFFFF,
+                                                     user_cpsr))
+        except Exception:
+            return False
+        return True
+
+    def _apply_pending_tlb_work(self) -> None:
+        """E0502: run cache/flush work in the outer run loop, never in a hook
+        (nested emu_start from a callback breaks the machine, see E0456/E0501)."""
+        pages = self._pending_evict_pages
+        need_flush = self._pending_cputlb_flush
+        if not pages and not need_flush:
+            return
+        remove = getattr(self.uc, 'ctl_remove_cache', None)
+        if remove is not None:
+            for page in pages:
+                try:
+                    remove(page, page + 0x1000)
+                    self._page_cache_drops += 1
+                except Exception:
+                    pass
+        if need_flush:
+            try:
+                self._flush_cputlb()
+            except Exception:
+                pass
+            try:
+                self._flush_tlb()
+            except Exception:
+                pass
+        self._pending_evict_pages = set()
+        self._pending_cputlb_flush = False
+
     def _on_tlb_fill(self, uc, vaddr, access, entry, user_data=None) -> bool:
         self.tlb_fills += 1
         try:
             if access == 18 and vaddr >= 0x60000000:  # UC_MEM_FETCH
                 self._mmu_enabled = True
             target = self._translate_virtual(vaddr)
+            if 0x0402F000 <= vaddr < 0x04030000 and len(self.e0502_fill) < 24:
+                self.e0502_fill.append({
+                    'vaddr': f'0x{vaddr:08x}', 'access': access,
+                    'target': (f'0x{target:08x}' if target is not None else None),
+                    'mmu': self._mmu_enabled,
+                    'ttbr0': (f'0x{self._cached_ttbr0:08x}'
+                              if self._cached_ttbr0 else None)})
             if target is None:
                 self.tlb_fill_misses += 1
                 if len(self.tlb_fill_samples) < 64:
@@ -2804,6 +3346,7 @@ class UnicornMachine:
                     thumb = self.uc.reg_read(UC_ARM_REG_CPSR) & 0x20
                     self._last_unmapped = None
                     try:
+                        self._apply_pending_tlb_work()
                         self.uc.emu_start(pc_now | (1 if thumb else 0), 0,
                                           count=slice_size)
                         _resume = self._pending_user_resume
@@ -2818,6 +3361,26 @@ class UnicornMachine:
                             if _rpc == 0x0402E791:
                                 try:
                                     self._set_pc_and_cpsr(_rpc, _rcpsr)
+                                    if not self.e0483_entry_stack:
+                                        _sp0 = self.uc.reg_read(UC_ARM_REG_SP)
+                                        _words = []
+                                        for _i in range(16):
+                                            try:
+                                                _words.append(
+                                                    self._read_user32(_sp0 + 4 * _i))
+                                            except Exception:
+                                                _words.append(None)
+                                        self.e0483_entry_stack = {
+                                            'pc': f'0x{_rpc:08x}',
+                                            'cpsr': f'0x{_rcpsr:08x}',
+                                            'sp': f'0x{_sp0:08x}',
+                                            'stack': [f'0x{w:08x}' if w is not None
+                                                      else None for w in _words]}
+                                        # verify argc/argv/auxv shape
+                                        self.e0483_entry_stack['argc'] = _words[0]
+                                        self.e0483_entry_stack['argv0_is_ptr'] = (
+                                            _words[1] is not None and
+                                            0x1000 <= _words[1] < 0x60000000)
                                     _pro = self._emulate_thumb_prologue(
                                         _rpc, _rcpsr)
                                 except Exception:
@@ -2832,11 +3395,22 @@ class UnicornMachine:
                                 self._pending_user_resume = None
                                 self._set_pc_and_cpsr(_npc, _ncpsr)
                                 continue
+                            # E0496: a user PC must never resume in SVC/ARM;
+                            # force USR|Thumb while preserving the flag bits.
+                            if (0x1000 <= (_rpc & ~1) < 0x60000000
+                                    and (_rcpsr & 0x1F) != 0x10):
+                                _rcpsr = ((_rcpsr & ~0x3F) | 0x10 | 0x20)
                             self._set_pc_and_cpsr(_rpc, _rcpsr)
                             try:
                                 self.uc.ctl_flush_tb()
                             except Exception:
                                 pass
+                            try:
+                                _page = _rpc & ~0xFFF
+                                self.uc.ctl_remove_cache(_page, _page + 0x1000)
+                            except Exception:
+                                pass
+                            self._apply_pending_tlb_work()
                             self.uc.emu_start(_rpc, 0, count=slice_size)
                         if self._user_refresh_requested:
                             self._user_refresh_requested = False
@@ -2851,6 +3425,14 @@ class UnicornMachine:
                             self._install_virtual_tlb()
                             self._vtlb_requested = False
                             self._mmu_enabled = True
+                            if (getattr(self, 'enable_svc_dispatch', False)
+                                    and not self._svc_hook_installed):
+                                try:
+                                    self.uc.hook_add(UC_HOOK_INTR,
+                                                     self._on_interrupt)
+                                    self._svc_hook_installed = True
+                                except Exception:
+                                    pass
                             # Prime the page-table caches before any user fetch.
                             if self._activation_pgd:
                                 self._cached_ttbr0 = self._activation_pgd
@@ -2922,9 +3504,24 @@ class UnicornMachine:
                                 _pro = None
                                 _thumb_cpsr = ((cpsr & ~0x3F) | 0x10 | 0x20)
                                 try:
-                                    # E0474: switch to the USR bank *before* stepping,
-                                    # otherwise SP reads/writes hit the SVC bank and the
-                                    # frame base becomes 0 (observed VA 0x28 store).
+                                    # E0474/E0494: switch to the USR bank *before*
+                                    # stepping; if the live SP became a kernel stack
+                                    # pointer, reload the full user register file from
+                                    # the active pt_regs frame first.
+                                    try:
+                                        if len(self.e0493_trace) < 60:
+                                            self.e0493_trace.append({
+                                                'tag': 'rec_state',
+                                                'pc': f'0x{pc:08x}',
+                                                'cpsr': f'0x{cpsr:08x}',
+                                                'r0': f'0x{self.uc.reg_read(UC_ARM_REG_R0):08x}',
+                                                'r1': f'0x{self.uc.reg_read(UC_ARM_REG_R1):08x}',
+                                                'r2': f'0x{self.uc.reg_read(UC_ARM_REG_R2):08x}',
+                                                'sp': f'0x{self.uc.reg_read(UC_ARM_REG_SP):08x}',
+                                                'lr': f'0x{self.uc.reg_read(UC_ARM_REG_LR):08x}'})
+                                    except Exception:
+                                        pass
+                                    self._sync_user_bank_for_recovery(pc, _thumb_cpsr)
                                     self._set_pc_and_cpsr(pc, _thumb_cpsr)
                                     _pro = self._step_user_thumb_insns(
                                         pc, _thumb_cpsr, max_steps=6)
@@ -3047,6 +3644,9 @@ class UnicornMachine:
                                     continue
                             if prefetch:
                                 address = access_addr if access_addr is not None else pc
+                                if 0x1000 <= (pc & ~1) < 0x60000000:
+                                    self._pending_evict_pages.add(pc & ~0xFFF)
+                                    self._pending_cputlb_flush = True
                                 if self._deliver_prefetch_abort(pc, cpsr, address):
                                     executed += 1
                                     remaining = max(0, remaining - 1)
@@ -3178,6 +3778,19 @@ class UnicornMachine:
             'insn_invalid_recoveries': self.insn_invalid_recoveries,
             'insn_invalid_unsupported': list(self.insn_invalid_unsupported),
             'e0475_trace': list(self.e0475_trace),
+            'e0483_trace': list(self.e0483_trace),
+            'e0483_entry_stack': dict(self.e0483_entry_stack),
+            'e0492_frames': list(self.e0492_frames),
+            'e0492_msr': list(self.e0492_msr),
+            'pt_frame_gen': self.pt_frame_gen,
+            'pt_frame_consumed': self.pt_frame_consumed,
+            'e0493_trace': list(self.e0493_trace),
+            'e0495_trace': list(self.e0495_trace),
+            'e0496_kernel': list(self.e0496_kernel),
+            'e0497_trace': list(self.e0497_trace),
+            'e0499_trace': list(self.e0499_trace),
+            'e0500_frames': list(self.e0500_frames),
+            'e0502_fill': list(self.e0502_fill),
             'user_entry_trace': list(self.user_entry_trace),
             'ret_user_returns': list(self.ret_user_returns),
             'activation_pgd': (f'0x{self._activation_pgd:08x}'

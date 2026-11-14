@@ -220,39 +220,30 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-13",
     latest=EvidenceRef(
-        evidence_id="E0490",
-        path="docs/evidence/0490-platform-model-and-flash-boundary.md",
+        evidence_id="E0503",
+        path="docs/evidence/0503-cxd90045-ret-fast-syscall-0x6010def8-and-ash.md",
         date="2026-11-13",
-        title="The platform model, and the boundary it does not cross",
+        title="enforced USR|Thumb return at 0x6010DEF8 (ret_fast_syscall): second syscall now executes; 0x0402F666 repeat persists",
         demonstrated=(
-            "The ecosystem claim that the image is AES-encrypted with per-model keys does not "
-            "hold for the packaged files: 484 files under the a6400 tree are ELF objects readable "
-            "as-is, integrity is CRC32 and MD5 rather than a signature, and the only AES helper "
-            "uses sha256('')[:16] in ECB, identical on all thirteen bodies. The application "
-            "library then becomes legible: libObj.so defines 1,853 code symbols at 1,851 distinct addresses and holds 29 "
-            "direct IPC call sites, 17 of which pass a constant queue id matched to its mov/movw "
-            "immediate (E0483). Two classes of fabricated result were found and removed while "
-            "building that table: 28 bogus call sites from an unconfirmed branch decode, and "
-            "invented argument values from reading instruction bytes as a literal pool. With "
-            "callers resolved to their enclosing symbol the graph carries 6,713 named-to-named "
-            "edges, and tracing input to display shows the display entry points have no direct "
-            "caller at all: their addresses are stored as data, so the route is a function "
-            "pointer (E0484). The work is also predictive rather than descriptive: a command-id "
-            "rule fitted on four bodies recalls 0.997, 0.885 and 0.973 of three bodies it never "
-            "saw (E0485), while the USB and device-node columns stay at zero because no rule was "
-            "derived for them. The modifiable surface is separated from the flash boundary: six "
-            "mount points are writable at runtime and three flash partitions are read-only "
-            "(E0486), and the record states plainly that a writable mount is not a modified "
-            "image."
+            "Offline (no camera). Enforced user return added for the fast syscall path: 0x6010DEC0 snapshots the "
+            "kernel-built pt_regs (base=SP+8, backing the E0500 dump values ARM_sp=0x5E864C04, ARM_lr=0x0403E98D, "
+            "ARM_pc=0x0403EB16, ARM_cpsr=0x600000F0) and 0x6010DEF8 (movs pc, lr) performs the same enforced restore as "
+            "0x6010DF64: CPSR=USR|Thumb, r0-r12/SP_usr/LR_usr from the frame and PC=thumb_pc(frame.pc) so Unicorn's "
+            "Thumb LSB binding is applied instead of decoding the even return PC as ARM. Effect: the second syscall now "
+            "executes - svc_trace shows two brk entries ({pc 0x0403EB16, r7 45} twice, svc_hits=2) instead of one, "
+            "proving the fast-syscall return reaches user code and can issue another SVC. However the 0x0402F666 repeat "
+            "persists: stop instruction_limit PC 0x6010DE20, pt_frame_gen=30, classification still ends with repeating "
+            "0x0402F666 prefetch entries, serial 0 B, no shell. The even-PC/T-bit theory is therefore only partially "
+            "supported; next trace must log CPSR.T/CPSR.M at that fetch (candidate: 0x0402F666 is genuinely entered in "
+            "ARM state via blx to an ARM-only routine and the recovery path treats it as Thumb). New test "
+            "test_fast_syscall_return_enforces_usr_thumb_odd_pc; suite 1728 OK."
         ),
         boundary=(
-            "The update-chain work establishes what the packaged files contain and what the "
-            "updater scripts check, not that the bootloader accepts an image whose CRC list was "
-            "recomputed; that needs a camera and is recorded as unknown. The IPC table is exact "
-            "for the a6400 library by SHA-256 and no other, covers direct calls only, and claims "
-            "nothing about what a queue id's consumer does at runtime."
+            "No shell: serial 0 B, two SVCs. Next: add cpsr to the fault classification entry and print CPSR.T/CPSR.M at "
+            "the 0x0402F666 fetch; if T=0 (ARM) fix the fault trigger/recovery instead of forcing Thumb; then re-run and "
+            "expect 0x0402F666 once, the loader's syscall chain, BusyBox _start 0x0000C439 and live ash."
         ),
-        tier="OFFLINE PACKAGED FIRMWARE",
+        tier="OFFLINE BOUNDED UNICORN BRING-UP",
     ),
     headline="1720 tests recorded passing | No verified emulator GUI frame",
     cards=(
