@@ -281,7 +281,13 @@ class UnicornMachine:
         self._soft_pending_irqs: set[int] = set()
         self._gic_active_irq = None
         self._gic_iar_served = False
-        self._gic_regs: dict[int, int] = {}
+        self._gic_regs: dict[tuple[str, int], int] = {
+            # Bootloader pre-routes all SPIs (IRQ >= 32, GICD_ITARGETSR 0x820..0xBFF)
+            # to CPU0; Sony's gic_dist_init only toggles GICD_CTLR without setting
+            # ITARGETSR (cross-checked with Oein/a5000-emulator docs/HARDWARE.md).
+            ('dist', offset): 0x01010101
+            for offset in range(0x820, 0xC00, 4)
+        }
         self._timer_regs: dict[int, int] = {}
         self._gic_enabled = False
         self._jiffies_injected = 0
