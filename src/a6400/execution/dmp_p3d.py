@@ -273,3 +273,250 @@ def detile_morton_8x8(
             out[dst_off : dst_off + bpp] = data[src_off : src_off + bpp]
 
     return bytes(out)
+
+
+def tile_morton_8x8(
+    data: bytes,
+    width: int,
+    height: int,
+    bpp: int,
+) -> bytes:
+    """Convert a linear row-major buffer to 8x8 Morton-tiled DMP format."""
+    if width <= 0 or height <= 0:
+        raise ValueError(f'Invalid dimensions: {width}x{height}')
+    if bpp not in (1, 2, 4):
+        raise ValueError(f'Unsupported bpp={bpp}; expected 1, 2, or 4')
+
+    row_stride = width * bpp
+    if len(data) < row_stride * height:
+        raise ValueError(
+            f'Linear buffer too small: got {len(data)} bytes, need {row_stride * height}'
+        )
+
+    tiles_x = (width + 7) // 8
+    tiles_y = (height + 7) // 8
+    tile_stride = 64 * bpp
+    out = bytearray(tiles_x * tiles_y * tile_stride)
+
+    for y in range(height):
+        ty = y >> 3
+        ly = y & 7
+        src_row_off = y * row_stride
+        tile_row_base = ty * tiles_x * tile_stride
+        for x in range(width):
+            tx = x >> 3
+            lx = x & 7
+            src_off = src_row_off + x * bpp
+            dst_off = tile_row_base + tx * tile_stride + morton_index_8x8(lx, ly) * bpp
+            out[dst_off : dst_off + bpp] = data[src_off : src_off + bpp]
+
+    return bytes(out)
+
+
+def flip_vertical(data: bytes, width: int, height: int, bpp: int) -> bytes:
+    """Vertically flip a linear row-major pixel buffer."""
+    row_stride = width * bpp
+    if len(data) < row_stride * height:
+        raise ValueError(
+            f'Linear buffer too small for flip: got {len(data)}, need {row_stride * height}'
+        )
+    out = bytearray(row_stride * height)
+    for y in range(height):
+        src_off = (height - 1 - y) * row_stride
+        dst_off = y * row_stride
+        out[dst_off : dst_off + row_stride] = data[src_off : src_off + row_stride]
+    return bytes(out)
+
+
+#: PPF format codes from Oein/a5000-emulator (RE_DISPLAY_GPU.md §2.3).
+PPF_FMT_BPP = {
+    0: 4,  # RGBA8
+    1: 3,  # RGB8
+    2: 2,  # RGB565
+    3: 2,  # RGB5A1
+    4: 2,  # RGBA4444
+}
+
+#: Sugilite GPU MMIO offsets and IRQ status bits (RE_DISPLAY_GPU.md §2.2-2.4).
+SUGI_REG_PSC_START = 0x0010
+SUGI_REG_PSC_END = 0x0014
+SUGI_REG_PSC_VALUE = 0x0018
+SUGI_REG_PSC_CTRL = 0x001C
+SUGI_REG_IRQ_STATUS = 0x0034
+SUGI_REG_PPF_SRC = 0x0C00
+SUGI_REG_PPF_DST = 0x0C04
+SUGI_REG_PPF_DIM0 = 0x0C08
+SUGI_REG_PPF_DIM1 = 0x0C0C
+SUGI_REG_PPF_FLAGS = 0x0C10
+SUGI_REG_PPF_TRIGGER = 0x0C18
+SUGI_REG_PPF_COPY_SIZE = 0x0C20
+SUGI_REG_P3D_ACK = 0x1000
+SUGI_REG_P3D_KICK = 0x1800
+SUGI_REG_P3D_LIST_PA = 0x1804
+
+SUGI_IRQ_P3D_DONE = 1 << 31
+SUGI_IRQ_PPF_DONE = 1 << 30
+SUGI_IRQ_PSC0_DONE = 1 << 26
+
+
+def execute_ppf_transfer(
+    memory_reader: Callable[[int, int], Optional[bytes]],
+    memory_writer: Callable[[int, bytes], None],
+    src_pa: int,
+    dst_pa: int,
+    width: int,
+    height: int,
+    flags: int,
+    copy_size: int = 0,
+) -> Tuple[bool, str]:
+    """Execute a DMP PPF display transfer or texture copy.
+
+    Follows the register semantics documented in ``Oein/a5000-emulator``
+    (``docs/RE_DISPLAY_GPU.md`` §2.3, CC BY 4.0):
+    - ``flags & 8``: raw linear texture copy of ``copy_size`` bytes.
+    - ``flags & 2``: 0 = 8x8 Morton-tiled -> linear; 1 = linear -> 8x8 tiled.
+    - ``flags & 1``: vertical flip (used to convert GL y-up to panel y-down).
+    """
+    if flags & 8:
+        if copy_size <= 0:
+            return False, 'ppf-copy-zero-size'
+        raw = memory_reader(src_pa, copy_size)
+        if raw is None or len(raw) < copy_size:
+            return False, f'ppf-unmapped-src:0x{src_pa:08x}'
+        memory_writer(dst_pa, raw[:copy_size])
+        return True, 'ppf-copy'
+
+    if width <= 0 or height <= 0:
+        return False, f'ppf-invalid-dims:{width}x{height}'
+
+    in_fmt = (flags >> 8) & 0x7
+    out_fmt = (flags >> 12) & 0x7
+    if in_fmt != out_fmt:
+        return False, f'ppf-unsupported-fmt-conv:{in_fmt}->{out_fmt}'
+
+    bpp = PPF_FMT_BPP.get(in_fmt)
+    if bpp not in (2, 4):
+        return False, f'ppf-unsupported-bpp:fmt={in_fmt}'
+
+    flip_v = bool(flags & 1)
+    linear_to_tiled = bool(flags & 2)
+
+    if linear_to_tiled:
+        needed = width * height * bpp
+        raw = memory_reader(src_pa, needed)
+        if raw is None or len(raw) < needed:
+            return False, f'ppf-unmapped-src:0x{src_pa:08x}'
+        pixels = flip_vertical(raw[:needed], width, height, bpp) if flip_v else raw[:needed]
+        out = tile_morton_8x8(pixels, width, height, bpp)
+        memory_writer(dst_pa, out)
+        return True, 'ppf-linear-to-tiled'
+
+    tiles_x = (width + 7) // 8
+    tiles_y = (height + 7) // 8
+    needed = tiles_x * tiles_y * 64 * bpp
+    raw = memory_reader(src_pa, needed)
+    if raw is None or len(raw) < needed:
+        return False, f'ppf-unmapped-src:0x{src_pa:08x}'
+    linear = detile_morton_8x8(raw[:needed], width, height, bpp)
+    out = flip_vertical(linear, width, height, bpp) if flip_v else linear
+    memory_writer(dst_pa, out)
+    return True, 'ppf-tiled-to-linear'
+
+
+class SugiliteMmioModel:
+    """Clean-room MMIO & IRQ state machine for DMP SMAPH-S30 (``BAR 0xF1000000``).
+
+    Models the P3D kick (``+0x1800``/``+0x1804``), PPF transfer (``+0xC00..0xC18``),
+    PSC memory fill (``+0x010..0x01C``), and level-high IRQ status/ack contract
+    (``+0x034`` bits 31/30/26) documented in ``Oein/a5000-emulator``
+    (``docs/RE_DISPLAY_GPU.md`` §2.2-2.4, CC BY 4.0).
+    """
+
+    def __init__(
+        self,
+        memory_reader: Optional[Callable[[int, int], Optional[bytes]]] = None,
+        memory_writer: Optional[Callable[[int, bytes], None]] = None,
+    ) -> None:
+        self._memory_reader = memory_reader
+        self._memory_writer = memory_writer
+        self.regs: Dict[int, int] = {}
+        self.irq_status: int = 0
+        self.p3d_results: List[P3dDecodeResult] = []
+        self.ppf_events: List[Tuple[bool, str]] = []
+        self.psc_fills: int = 0
+
+    @property
+    def irq_asserted(self) -> bool:
+        """True while any completion bit is pending in ``+0x034``."""
+        return self.irq_status != 0
+
+    def read_reg(self, offset: int) -> int:
+        if offset == SUGI_REG_IRQ_STATUS:
+            return self.irq_status
+        return self.regs.get(offset, 0)
+
+    def write_reg(self, offset: int, value: int) -> None:
+        val = value & 0xFFFFFFFF
+        self.regs[offset] = val
+
+        # ISR acks clear the corresponding status bit and drop IRQ when 0.
+        if offset == SUGI_REG_P3D_ACK and val == 0:
+            self.irq_status &= ~SUGI_IRQ_P3D_DONE
+            return
+        if offset == SUGI_REG_PPF_TRIGGER:
+            if val == 0:
+                self.irq_status &= ~SUGI_IRQ_PPF_DONE
+            else:
+                self._run_ppf()
+                self.irq_status |= SUGI_IRQ_PPF_DONE
+            return
+        if offset == SUGI_REG_PSC_CTRL:
+            if val == 0:
+                self.irq_status &= ~SUGI_IRQ_PSC0_DONE
+            elif val & 1:
+                self._run_psc()
+                self.irq_status |= SUGI_IRQ_PSC0_DONE
+            return
+        if offset == SUGI_REG_P3D_KICK and val > 0:
+            list_pa = self.regs.get(SUGI_REG_P3D_LIST_PA, 0)
+            decoder = P3dCommandListDecoder(memory_reader=self._memory_reader)
+            self.p3d_results.append(decoder.decode_from_memory(list_pa, val))
+            self.irq_status |= SUGI_IRQ_P3D_DONE
+
+    def _run_ppf(self) -> None:
+        if self._memory_reader is None or self._memory_writer is None:
+            self.ppf_events.append((False, 'no-memory-hooks'))
+            return
+        src_pa = (self.regs.get(SUGI_REG_PPF_SRC, 0) << 2) & 0xFFFFFFFF
+        dst_pa = (self.regs.get(SUGI_REG_PPF_DST, 0) << 2) & 0xFFFFFFFF
+        dim0 = self.regs.get(SUGI_REG_PPF_DIM0, 0)
+        width = dim0 & 0xFFFF
+        height = (dim0 >> 16) & 0xFFFF
+        flags = self.regs.get(SUGI_REG_PPF_FLAGS, 0)
+        copy_size = self.regs.get(SUGI_REG_PPF_COPY_SIZE, 0)
+        self.ppf_events.append(
+            execute_ppf_transfer(
+                self._memory_reader,
+                self._memory_writer,
+                src_pa,
+                dst_pa,
+                width,
+                height,
+                flags,
+                copy_size=copy_size,
+            )
+        )
+
+    def _run_psc(self) -> None:
+        if self._memory_writer is None:
+            return
+        start_pa = (self.regs.get(SUGI_REG_PSC_START, 0) << 3) & 0xFFFFFFFF
+        end_pa = (self.regs.get(SUGI_REG_PSC_END, 0) << 3) & 0xFFFFFFFF
+        fill_val = self.regs.get(SUGI_REG_PSC_VALUE, 0)
+        if end_pa > start_pa and (end_pa - start_pa) <= 0x02000000:
+            length = end_pa - start_pa
+            word = struct.pack('<I', fill_val)
+            payload = (word * ((length + 3) // 4))[:length]
+            self._memory_writer(start_pa, payload)
+            self.psc_fills += 1
+

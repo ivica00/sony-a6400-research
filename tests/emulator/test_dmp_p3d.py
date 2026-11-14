@@ -22,8 +22,26 @@ from src.a6400.execution.dmp_p3d import (
     P3D_REG_FINALIZE,
     P3D_REG_TEX_USE,
     P3dCommandListDecoder,
+    SUGI_IRQ_P3D_DONE,
+    SUGI_IRQ_PPF_DONE,
+    SUGI_IRQ_PSC0_DONE,
+    SUGI_REG_IRQ_STATUS,
+    SUGI_REG_P3D_ACK,
+    SUGI_REG_P3D_KICK,
+    SUGI_REG_P3D_LIST_PA,
+    SUGI_REG_PPF_DIM0,
+    SUGI_REG_PPF_DST,
+    SUGI_REG_PPF_FLAGS,
+    SUGI_REG_PPF_SRC,
+    SUGI_REG_PPF_TRIGGER,
+    SUGI_REG_PSC_CTRL,
+    SUGI_REG_PSC_END,
+    SUGI_REG_PSC_START,
+    SUGI_REG_PSC_VALUE,
+    SugiliteMmioModel,
     detile_morton_8x8,
     morton_index_8x8,
+    tile_morton_8x8,
 )
 
 
@@ -138,6 +156,101 @@ class TestMortonDetiler(unittest.TestCase):
         linear = detile_morton_8x8(bytes(tiled), width, height, bpp)
         self.assertEqual(len(linear), width * height)
         self.assertEqual(linear[8 * width + 9], 0xA5)
+
+    def test_tile_and_detile_round_trip_rgba8(self) -> None:
+        width, height, bpp = 8, 8, 4
+        linear = bytes((i & 0xFF) for i in range(width * height * bpp))
+        tiled = tile_morton_8x8(linear, width, height, bpp)
+        self.assertEqual(detile_morton_8x8(tiled, width, height, bpp), linear)
+
+
+class TestSugiliteMmioModel(unittest.TestCase):
+    def test_ppf_tiled_to_linear_with_vertical_flip_and_irq_ack(self) -> None:
+        # 8x8 RGBA4444 buffer where row 0 has 0x000F and row 7 has 0xF00F.
+        width, height, bpp = 8, 8, 2
+        gl_linear = bytearray(width * height * bpp)
+        for x in range(width):
+            struct.pack_into('<H', gl_linear, x * 2, 0x000F)
+            struct.pack_into('<H', gl_linear, (7 * width + x) * 2, 0xF00F)
+        tiled = tile_morton_8x8(bytes(gl_linear), width, height, bpp)
+
+        src_pa = 0x202E0000
+        dst_pa = 0x23A80000
+        ram = bytearray(0x04000000)
+        base = 0x20000000
+        ram[src_pa - base : src_pa - base + len(tiled)] = tiled
+
+        def reader(addr: int, size: int) -> bytes | None:
+            off = addr - base
+            if 0 <= off and off + size <= len(ram):
+                return bytes(ram[off : off + size])
+            return None
+
+        def writer(addr: int, data: bytes) -> None:
+            off = addr - base
+            ram[off : off + len(data)] = data
+
+        gpu = SugiliteMmioModel(memory_reader=reader, memory_writer=writer)
+        gpu.write_reg(SUGI_REG_PPF_SRC, src_pa >> 2)
+        gpu.write_reg(SUGI_REG_PPF_DST, dst_pa >> 2)
+        gpu.write_reg(SUGI_REG_PPF_DIM0, width | (height << 16))
+        gpu.write_reg(SUGI_REG_PPF_FLAGS, 0x4401)  # RGBA4 -> RGBA4 + flip-V
+        gpu.write_reg(SUGI_REG_PPF_TRIGGER, 1)
+
+        self.assertTrue(gpu.irq_asserted)
+        self.assertEqual(gpu.read_reg(SUGI_REG_IRQ_STATUS), SUGI_IRQ_PPF_DONE)
+        self.assertEqual(gpu.ppf_events[-1], (True, 'ppf-tiled-to-linear'))
+
+        # After vertical flip, row 0 of dst_pa must be 0xF00F and row 7 must be 0x000F.
+        out_row0 = struct.unpack_from('<H', ram, dst_pa - base)[0]
+        out_row7 = struct.unpack_from('<H', ram, dst_pa - base + 7 * width * 2)[0]
+        self.assertEqual(out_row0, 0xF00F)
+        self.assertEqual(out_row7, 0x000F)
+
+        # ISR ack clears bit 30 and drops IRQ.
+        gpu.write_reg(SUGI_REG_PPF_TRIGGER, 0)
+        self.assertFalse(gpu.irq_asserted)
+        self.assertEqual(gpu.read_reg(SUGI_REG_IRQ_STATUS), 0)
+
+    def test_p3d_and_psc_kicks_and_acks(self) -> None:
+        base = 0x20000000
+        ram = bytearray(0x10000)
+        list_pa = base + 0x1000
+        cmd_list = b''.join([
+            _entry(P3D_REG_CULLING, 2),
+            _entry(P3D_REG_FINALIZE, P3D_FINALIZE_MAGIC),
+        ])
+        ram[0x1000 : 0x1000 + len(cmd_list)] = cmd_list
+
+        def reader(addr: int, size: int) -> bytes | None:
+            off = addr - base
+            return bytes(ram[off : off + size]) if 0 <= off and off + size <= len(ram) else None
+
+        def writer(addr: int, data: bytes) -> None:
+            off = addr - base
+            ram[off : off + len(data)] = data
+
+        gpu = SugiliteMmioModel(memory_reader=reader, memory_writer=writer)
+        gpu.write_reg(SUGI_REG_P3D_LIST_PA, list_pa)
+        gpu.write_reg(SUGI_REG_P3D_KICK, 2)
+        self.assertEqual(gpu.read_reg(SUGI_REG_IRQ_STATUS), SUGI_IRQ_P3D_DONE)
+        self.assertTrue(gpu.p3d_results[-1].finalized)
+
+        gpu.write_reg(SUGI_REG_P3D_ACK, 0)
+        self.assertFalse(gpu.irq_asserted)
+
+        # PSC fill
+        fill_start = base + 0x2000
+        fill_end = base + 0x2040
+        gpu.write_reg(SUGI_REG_PSC_START, fill_start >> 3)
+        gpu.write_reg(SUGI_REG_PSC_END, fill_end >> 3)
+        gpu.write_reg(SUGI_REG_PSC_VALUE, 0xCAFECAFE)
+        gpu.write_reg(SUGI_REG_PSC_CTRL, 0x0F010201)
+        self.assertEqual(gpu.read_reg(SUGI_REG_IRQ_STATUS), SUGI_IRQ_PSC0_DONE)
+        self.assertEqual(struct.unpack_from('<I', ram, 0x2000)[0], 0xCAFECAFE)
+
+        gpu.write_reg(SUGI_REG_PSC_CTRL, 0)
+        self.assertFalse(gpu.irq_asserted)
 
 
 class TestGicItargetsrPreRoute(unittest.TestCase):
