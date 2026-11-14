@@ -116,7 +116,15 @@ class StreamTests(unittest.TestCase):
     def test_existing_guest_pages_are_not_replaced(self):
         self.mapper.register_range(0x1000, 4096)
         with self.assertRaises(UnsupportedStream):
-            self.map(addr=0x1000)
+            self.stream.mmap2(0x1000, 4096, 3, 0x11, 4, 0x2000)  # MAP_FIXED
+
+    def test_non_fixed_stream_mmap_skips_cursor_pages_already_mapped(self):
+        self.mapper.next_address = 0x50000000
+        self.mapper.register_range(0x50000000, 8192)
+        virtual = self.stream.mmap2(0, 4096, 3, 1, 4, 0x2000)['returned']
+        self.assertGreaterEqual(virtual, 0)
+        self.assertLess(virtual, 0x80000000)
+        self.assertTrue(virtual + 4096 <= 0x50000000 or virtual >= 0x50002000)
 
     def test_failed_store_does_not_make_readonly_physical_bytes_known(self):
         virtual = self.stream.mmap2(0, 4096, 1, 1, 4, 0x2000)['returned']
@@ -187,3 +195,15 @@ class StreamProbeTests(unittest.TestCase):
         self.assertEqual(report['status'], 'unverified_device_read')
         self.assertEqual(report['syscall_responses_supplied'], 0)
         self.assertEqual(report['stdio']['stdout_chunks'], 0)
+
+
+class OverlapIndexTest(unittest.TestCase):
+    def test_bisect_index_matches_linear_scan(self):
+        import random
+        rng = random.Random(7)
+        stream = GuestStream.__new__(GuestStream)
+        for _ in range(2000):
+            stream.unknown = [(b, b + rng.randint(1, 50)) for b in rng.sample(range(0, 5000, 60), 20)]
+            address, size = rng.randint(0, 5100), rng.randint(1, 8)
+            expected = any(address < last and begin < address + size for begin, last in stream.unknown)
+            self.assertEqual(stream._overlaps_unknown(address, size), expected)

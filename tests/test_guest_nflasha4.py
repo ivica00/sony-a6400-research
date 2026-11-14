@@ -61,3 +61,65 @@ class Nflasha4DumpReadTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Nflasha4WriteTests(unittest.TestCase):
+    def writable(self):
+        dump = make_dump()
+        dump.writable = True
+        return dump
+
+    def test_read_only_policy_refuses_writes(self):
+        with self.assertRaises(Nflasha4DumpError):
+            make_dump().write(0, b'x')
+
+    def test_write_then_read_back_and_source_bytes_untouched(self):
+        source = bytes((i * 7) & 0xff for i in range(PATTERN_SIZE))
+        dump = self.writable()
+        self.assertEqual(dump.write(4, b'abcd'), 4)
+        self.assertEqual(dump.read(2, 8), source[2:4] + b'abcd' + source[8:10])
+        self.assertIsInstance(dump.read(0, 4), bytes)
+        self.assertTrue(dump.modified)
+        self.assertEqual(dump.flush_result(True), 0)
+
+    def test_write_past_end(self):
+        dump = self.writable()
+        self.assertEqual(dump.write(PATTERN_SIZE - 2, b'wxyz'), 2)  # short write
+        self.assertEqual(dump.read(PATTERN_SIZE - 2, 8), b'wx')
+        self.assertEqual(dump.write(PATTERN_SIZE, b'q'), -28)  # -ENOSPC
+        self.assertEqual(len(dump.image), PATTERN_SIZE)
+
+    def test_checkpoint_pickle_round_trip(self):
+        import pickle
+        dump = self.writable()
+        dump.write(10, b'keep')
+        copy = pickle.loads(pickle.dumps(dump))
+        self.assertEqual(copy.read(10, 4), b'keep')
+        self.assertTrue(copy.writable and copy.modified)
+        copy.write(0, b'z')  # still a bytearray after restore
+
+
+class Nflasha4SyntheticTests(unittest.TestCase):
+    def test_default_fill_is_0xff_writable_and_ioctl_byte_stays_observed(self):
+        dump = Nflasha4Dump.synthetic()
+        self.assertEqual(dump.size, 12582912)
+        self.assertEqual(dump.read(0, 4), b'\xff' * 4)
+        self.assertEqual(dump.read(dump.size - 2, 8), b'\xff\xff')
+        self.assertEqual(dump.ioctl_erased_state(ERASED_STATE_IOCTL), 0x00)
+        self.assertEqual(dump.write(0, b'CMMe'), 4)
+        self.assertEqual(dump.read(0, 5), b'CMMe\xff')
+
+    def test_file_image_is_loaded_and_host_file_never_written(self):
+        import tempfile
+        from pathlib import Path
+        image = b'CMMe' + b'\xff' * (12582912 - 4)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'n4.bin'
+            path.write_bytes(image)
+            dump = Nflasha4Dump.synthetic(image_path=path)
+            self.assertEqual(dump.read(0, 6), b'CMMe\xff\xff')
+            dump.write(0, b'XXXX')
+            self.assertEqual(path.read_bytes(), image)
+            path.write_bytes(b'short')
+            with self.assertRaises(ValueError):
+                Nflasha4Dump.synthetic(image_path=path)

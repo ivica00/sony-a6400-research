@@ -136,7 +136,7 @@ class BackupServiceTests(unittest.TestCase):
         self.assertEqual(ret, 0)
         # Reply code written to msg_ptr + 4
         reply_code = struct.unpack_from('<i', mem, 104)[0]
-        self.assertEqual(reply_code, 0)
+        self.assertEqual(reply_code, 1)  # success returns the unit size (callers test > 0)
         self.assertEqual(state.read_unit(0x003e000b), b'\x55')
         self.assertEqual(len(service.events), 1)
         self.assertEqual(service.events[0]['type'], 'Backup_write')
@@ -259,6 +259,64 @@ class BackupServiceTests(unittest.TestCase):
                                                 lambda a, d: mem.__setitem__(slice(a, a+len(d)), d), 100)
                 self.assertEqual(struct.unpack_from('<i', mem, 104)[0], expected)
                 self.assertEqual(mem[300:308], b'\xa5' * 8)
+
+    def test_setting_attr_write_element_checks_and_stores_bytes(self):
+        state = BK4PresetState(self.preset_raw)
+        service = PresetBackedBackupService(state)
+        unit = 0x1070394
+        before = state.read_unit(unit)
+        mem = bytearray(b'\xa5' * 512)
+        mem[300] = 0x5A
+
+        def run(index, subsystem):
+            struct.pack_into('<10I', mem, 100, 28, 0, 4, BACKUP_SERVICE_QUEUE, 0, 0,
+                             index, subsystem, unit, 300)
+            service.handle_uipc_sync_message(lambda a, s: bytes(mem[a:a+s]),
+                                            lambda a, d: mem.__setitem__(slice(a, a+len(d)), d), 100)
+            return struct.unpack_from('<i', mem, 104)[0]
+
+        # a) index 0 in range, subsystem matches unit: byte 0 replaced, tail kept
+        self.assertEqual(run(0, 263), 1)
+        after = state.read_unit(unit)
+        self.assertEqual(after[0], 0x5A)
+        self.assertEqual(after[1:4], before[1:4])
+
+        # b) index == count (4) is rejected without a write
+        snapshot = bytes(state.raw)
+        self.assertEqual(run(4, 263), -7)
+        self.assertEqual(bytes(state.raw), snapshot)
+
+        # c) subsystem mismatch is rejected without a write
+        self.assertEqual(run(0, 262), -4)
+        self.assertEqual(bytes(state.raw), snapshot)
+
+    def test_setting_attr_read_ops_26_34(self):
+        state = BK4PresetState(self.preset_raw)
+        service = PresetBackedBackupService(state)
+        unit = 0x1070394
+        state.write_unit(unit, bytes.fromhex('11223344'))
+        mem = bytearray(bytes([0xa5]) * 512)
+        snapshot = bytes(state.raw)
+
+        def run(op, index, unit=unit, cap=4):
+            words = (op, 0, 4 if op == 34 else 3, BACKUP_SERVICE_QUEUE, 0, 0, index, unit, 300) + ((cap,) if op == 34 else ())
+            struct.pack_into('<%dI' % len(words), mem, 100, *words)
+            service.handle_uipc_sync_message(lambda a, s: bytes(mem[a:a+s]),
+                                            lambda a, d: mem.__setitem__(slice(a, a+len(d)), d), 100)
+            return struct.unpack_from('<i', mem, 104)[0]
+
+        for op in (26, 34):
+            mem[300:304] = b'\xa5' * 4
+            self.assertEqual(run(op, 2), 1)
+            self.assertEqual(mem[300:303], b'3\xa5\xa5')
+            mem[300] = 0xa5
+            self.assertEqual(run(op, 4), -7)
+            self.assertEqual(mem[300], 0xa5)
+            self.assertEqual(run(op, 0, unit=0x1071AC0), -3)  # attribute 0: bit7 clear
+        self.assertEqual(run(34, 1, cap=5), 1)  # capacity >= unit size
+        with self.assertRaises(UnsupportedUipc):  # capacity < unit size: rejected
+            run(34, 1, cap=3)
+        self.assertEqual(bytes(state.raw), snapshot)
 
     def test_guest_uipc_preset_backed_integration(self):
         uipc = GuestUipc(backup_service_policy='preset-backed')
@@ -400,3 +458,107 @@ class BackupServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileNotFoundError):
                 BK4PresetState.load_default(Path(tmp))
+
+    def _uipc(self, state, mem, op, *args):
+        service = PresetBackedBackupService(state)
+        words = (op, 0, len(args) + 2, BACKUP_SERVICE_QUEUE, 0, 0) + args
+        struct.pack_into('<%dI' % len(words), mem, 100, *words)
+        service.handle_uipc_sync_message(lambda a, s: bytes(mem[a:a+s]),
+                                        lambda a, d: mem.__setitem__(slice(a, a+len(d)), d), 100)
+        return struct.unpack_from('<i', mem, 104)[0]
+
+    def test_reset_op_18_live_unit_and_errors(self):
+        state = BK4PresetState(self.preset_raw)
+        mem = bytearray(512)
+        live = 0x1071B94  # attr 0x7c, size 1, reset copy 00 (a typical call)
+        self.assertEqual(state.read_unit(live), b'\x00')
+        state.write_unit(live, b'\x01')
+        self.assertEqual(self._uipc(state, mem, 18, 0x107, live), 0)
+        self.assertEqual(state.read_unit(live), b'\x00')
+        snapshot = bytes(state.raw)
+        self.assertEqual(self._uipc(state, mem, 18, 0x106, live), -4)       # subsystem != unit >> 16
+        self.assertEqual(self._uipc(state, mem, 18, 0x107, 0x107fff0), -1)  # unit not found
+        self.assertEqual(self._uipc(state, mem, 18, 0x107, 0x1071AC0), -1)   # attribute 0: no reset bits
+        self.assertEqual(bytes(state.raw), snapshot)
+
+    def test_reset_op_18_setting_attr_unit_resets_every_element_from_first_reset_bytes(self):
+        state = BK4PresetState(self.preset_raw)
+        mem = bytearray(512)
+        unit = 0x1070394  # attr 0xc0, size 4, reset copy 00010101, 4 elements (unit 0x3E000C = 3)
+        state.write_unit(unit, bytes.fromhex('11223344'))
+        self.assertEqual(self._uipc(state, mem, 18, 0x107, unit), 0)
+        self.assertEqual(state.read_unit(unit), bytes(4))  # loop re-reads the first reset element each pass
+
+    def test_reset_subsystem_and_reset_all_ops_19_20(self):
+        state = BK4PresetState(self.preset_raw)
+        mem = bytearray(512)
+        live = 0x1071B94
+        state.write_unit(live, b'\x01')
+        self.assertEqual(self._uipc(state, mem, 19, 0x107, 1), 0)
+        self.assertEqual(state.read_unit(live), b'\x00')
+        self.assertEqual(self._uipc(state, mem, 19, 5000, 1), -7)  # subsystem >= header count
+        self.assertEqual(self._uipc(state, mem, 19, 0x107, 5), -7)  # mode outside 1..4
+        state.write_unit(live, b'\x01')
+        self.assertEqual(self._uipc(state, mem, 20, 1), 0)
+        self.assertEqual(state.read_unit(live), b'\x00')
+        self.assertEqual(self._uipc(state, mem, 20, 9), -7)
+
+    def test_write_vsize_op_9(self):
+        state = BK4PresetState(self.preset_raw)
+        mem = bytearray(512)
+        var, fixed = 0x3e0014, 0x3e000b  # var: size 1, vmax 4; fixed: size 1
+        mem[300:304] = b'\xaa\xbb\xcc\xdd'
+        self.assertEqual(self._uipc(state, mem, 9, 0x3e, var, 300, 3), 3)
+        desc = state.search_id(var)
+        self.assertEqual(desc.size, 3)
+        self.assertEqual(state.read_unit(var), b'\xaa\xbb\xcc')
+        self.assertEqual(self._uipc(state, mem, 9, 0x3e, var, 300, 5), -5)   # > vmax
+        self.assertEqual(self._uipc(state, mem, 9, 0x3e, var, 300, 0), -1)   # size 0 on a variable unit
+        self.assertEqual(self._uipc(state, mem, 9, 0x3e, fixed, 300, 2), -5)  # fixed unit, wrong size
+        self.assertEqual(self._uipc(state, mem, 9, 0x3e, fixed, 300, 1), 1)
+        self.assertEqual(state.read_unit(fixed), b'\xaa')
+        self.assertEqual(self._uipc(state, mem, 9, 0x3d, fixed, 300, 1), -4)
+        self.assertEqual(self._uipc(state, mem, 9, 0x3e, 0x3effff, 300, 1), -1)
+
+    def test_write_op_8_returns_unit_size_and_errors(self):
+        state = BK4PresetState(self.preset_raw)
+        mem = bytearray(512)
+        var, fixed = 0x3e0014, 0x3e000b
+        mem[300:304] = b'\xaa\xbb\xcc\xdd'
+        self.assertEqual(self._uipc(state, mem, 8, 0x3e, fixed, 300), 1)
+        self.assertEqual(state.read_unit(fixed), b'\xaa')
+        self.assertEqual(self._uipc(state, mem, 8, 0x3e, var, 300), -1)  # variable unit needs op 9
+        self.assertEqual(self._uipc(state, mem, 8, 0x3d, fixed, 300), -4)
+        self.assertEqual(self._uipc(state, mem, 8, 0x3e, 0x3effff, 300), -1)  # missing unit: -1, not an error
+
+    def test_write_core_sharedcb_unit_writes_and_notes_unmodeled_notification(self):
+        state = BK4PresetState(self.preset_raw)
+        svc = PresetBackedBackupService(state)
+        mem = bytearray(512)
+        mem[300] = 0x5a
+        cands = [0x3e0000 | i for i in range(0x40)]
+        unit = next(u for u in cands if (d := state.search_id(u)) and d.attribute & 8
+                    and d.size == 1 and not d.vmax and not d.attribute & 1)
+        struct.pack_into('<9I', mem, 100, 8, 0, 5, BACKUP_SERVICE_QUEUE, 0, 0, 0x3e, unit, 300)
+        svc.handle_uipc_sync_message(lambda a, s: bytes(mem[a:a+s]),
+                                     lambda a, d: mem.__setitem__(slice(a, a+len(d)), d), 100)
+        self.assertEqual(struct.unpack_from('<i', mem, 104)[0], 1)
+        self.assertEqual(state.read_unit(unit), b'\x5a')
+        self.assertIn('Backup_sharedcb_not_modeled', [e['type'] for e in svc.events])
+
+    def test_read_rst_attr_op_37_and_pdt_stat_op_36(self):
+        state = BK4PresetState(self.preset_raw)
+        mem = bytearray(512)
+        self.assertEqual(self._uipc(state, mem, 37, 0x1070394, 300), 4)
+        self.assertEqual(bytes(mem[300:304]), bytes.fromhex('00010101'))
+        self.assertEqual(self._uipc(state, mem, 37, 0x107ffff0, 300), -1)
+        self.assertEqual(self._uipc(state, mem, 36, 300), 0)
+        self.assertEqual(struct.unpack_from('<I', mem, 300)[0], 0x40)  # '4' << 4 + '0'
+        self.assertEqual(struct.unpack_from('<I', mem, 304)[0], struct.unpack_from('<I', state.raw, 0x30)[0])
+        self.assertEqual(bytes(mem[308:340]), bytes(state.raw[0xc0:0xe0]))
+
+    def test_file_backed_ops_22_to_25_raise(self):
+        state = BK4PresetState(self.preset_raw)
+        for op in (22, 23, 24, 25):
+            with self.assertRaises(UnsupportedUipc):
+                self._uipc(state, bytearray(512), op, 1, 2, 3, 4)

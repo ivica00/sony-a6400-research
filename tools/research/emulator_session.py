@@ -346,6 +346,11 @@ def build_boot_session(args, parser=None) -> BootSession:
     probe.uipc.pool_options_policy = getattr(args, 'uipc_pool_options', 'legacy-empty')
     probe.uipc.sync_callback_delivery_policy = getattr(
         args, 'uipc_sync_callback_delivery', 'unmodelled')
+    probe.uipc.model_info_reply = getattr(args, 'model_info_reply', None)
+    probe.uipc.capid_table_reply = getattr(args, 'capid_table_reply', None)
+    probe.uipc.upm_boot_key = getattr(args, 'upm_boot_key', None)
+    if probe.uipc.upm_boot_key is not None:
+        probe.report['upm_boot_key'] = probe.uipc.upm_boot_key
     if args.load_checkpoint and not args.load_checkpoint.exists():
         # A missing checkpoint previously fell through silently and cold-booted,
         # which produced misleading "continuation" experiments.
@@ -367,6 +372,10 @@ def build_boot_session(args, parser=None) -> BootSession:
         # sync-callback delivery policy after checkpoint restoration.
         probe.uipc.sync_callback_delivery_policy = getattr(
             args, 'uipc_sync_callback_delivery', 'unmodelled')
+        probe.uipc.upm_boot_key = getattr(args, 'upm_boot_key', None)  # restore replaced UIPC
+        probe.uipc.model_info_reply = getattr(args, 'model_info_reply', None)
+        probe.uipc.capid_table_reply = getattr(args, 'capid_table_reply', None)
+        probe.uipc.deliver_model_info_reply(lambda a_, d_: probe.mu.mem_write(a_, bytes(d_)))  # callback registered before the checkpoint
         active_tid = probe.threads.current_tid if hasattr(probe, 'threads') else 1000
         print(f'[*] Checkpoint restored! Resuming at instruction {probe.instructions:,} (active TID {active_tid}).')
         if hasattr(probe, 'threads') and 1004 in probe.threads.threads:
@@ -439,16 +448,27 @@ def build_boot_session(args, parser=None) -> BootSession:
     uipc_local_post_libmwf_base = getattr(args, 'uipc_local_post_libmwf_base', None)
 
     probe.stream2_device_policy = getattr(args, 'stream2_device', 'stop')
+    probe.ldec_device_policy = getattr(args, 'ldec_device', 'stop')
     probe.nflasha4_device_policy = getattr(args, 'nflasha4_device', 'stop')
+    nflasha4_file = dict(getattr(args, 'nflasha_image', None) or []).get(4)
+    if nflasha4_file and probe.nflasha4_device_policy in ('stop', 'open-only'):
+        probe.nflasha4_device_policy = 'synthetic-erased'  # a supplied image implies the writable in-memory policy
     probe.nflasha4_dump = None
+    probe.nflash_dumps = {}
+    if dict(getattr(args, 'nflasha_image', None) or []).get(23):  # writable in-memory 2 MB partition, host file read-only
+        from src.a6400.execution.guest_nflasha4 import Nflasha4Dump
+        probe.nflash_dumps[23] = Nflasha4Dump.synthetic(0xff, dict(args.nflasha_image)[23], expected_size=2097152)
     if probe.nflasha4_device_policy == 'synthetic-erased':
-        # Not observed content: an empty MPR partition (eMMC erased value 0x00, E0305 B=00).
+        # Not observed content unless --nflasha-image 4=<dump> is given: else an erased MPR partition
+        # (0xFF fill like the live one; ioctl byte 0x00, E0305 B=00).
         # Served through the observed-dump paths so reads/ioctl/flush keep the same contracts.
         from src.a6400.execution.guest_nflasha4 import PARTITION_SIZE, Nflasha4Dump
         probe.nflasha4_device_policy = 'observed-dump'
-        probe.nflasha4_dump = Nflasha4Dump(bytes(PARTITION_SIZE), 0, evidence={'synthetic': 'erased-zero'})
+        probe.nflasha4_dump = Nflasha4Dump.synthetic(0xff, nflasha4_file)
         probe.report['nflasha4_dump_policy'] = {'policy': 'synthetic-erased', 'size': PARTITION_SIZE,
-                                                'erased_state_byte': 0}
+                                                'erased_state_byte': 0,
+                                                'initial_image': nflasha4_file or 'fill 0xFF',
+                                                'initial_sha256': probe.nflasha4_dump.image_sha256}
     elif probe.nflasha4_device_policy == 'observed-dump':
         from src.a6400.execution.guest_nflasha4 import Nflasha4Dump
         probe.nflasha4_dump = Nflasha4Dump.from_evidence(PROJECT_ROOT)

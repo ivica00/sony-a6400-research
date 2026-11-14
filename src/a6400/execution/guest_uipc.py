@@ -4,6 +4,7 @@ import struct
 from typing import Dict, List, Optional, Tuple
 from src.a6400.execution.capped_log import CappedLog
 from src.a6400.execution.guest_uipc_ids import KernelDynamicIds, UnsupportedDynamicId
+from src.a6400.execution.uipc_kernel_queues import KERNEL_QUEUE_CENSUS
 
 # Linux ARM ioctl commands recognized by osal_uipc.ko
 UIPC_CMD_STAT_SEM = 0x80000000
@@ -36,6 +37,22 @@ BACKUP_SERVICE_QUEUE = 0x003e014d
 GRM_MA_SERVICE_QUEUE = 0x014c0424
 DMM_SERVICE_QUEUE = 0x0061003c
 MEDIA_COMMON_DRIVER_QUEUE = 0x00d9016e
+# Queues whose consumer is a kernel module callback (not a user thread). In the real kernel snd_msg
+# runs the callback in the sender's context and the callback frees the message.
+KERNEL_CONSUMED_QUEUES = {0x008f013a: 'osal_ulogio.ko', 0x008f0139: 'osal_ulogio.ko'}
+# Two listener threads serve 0x8f013a and one serves 0x8f0139. Op 0x8001 ("userspace started") sets
+# the flag read back by sync op 0x8012 and then ends that listener.
+ULOGIO_LISTENERS = {0x008f013a: 2, 0x008f0139: 1}
+ULOGIO_SYNC_QUEUE = 0x008f013a
+ULOGIO_OP_USERSPACE_STARTED = 0x8001
+ULOGIO_OP_GET_STATE = 0x8012   # sync: reply +0x40 = started flag, +0x44 = status 0
+# op 0x111 on the sync framework queue returns the 7-word boot-factor
+# struct in the message: word0 = request code, word1 = boot key (KEY_* index; the kernel default is 2 = KEY_POWER).
+UPM_FRAMEWORK_QUEUE = 0x00924127
+UPM_OP_GET_BOOT_FACTOR = 0x111
+# Kernel UIPC: sync send to a queue with no callback / pool exhaustion (user wrapper returns -errno).
+UIPC_ERR_NO_CALLBACK = -1020
+UIPC_ERR_POOL_EXHAUSTED = -1023
 # Scheduler-only wait key; never exposed as a guest queue identifier.
 CALLBACK_WAIT_KEY = -1
 
@@ -63,9 +80,13 @@ class GuestUipc:
     does not establish recipient execution or a valid service reply.
     """
     # Class defaults so checkpoints pickled before these attributes existed still load.
+    upm_boot_key = None   # opt-in: int boot key returned for the upm boot-factor request (None = reply left unmodelled)
+    model_info_reply = None   # opt-in: entry count for the 0x1004 reply to the model-info sync callback on queue 0x870136 (None = no reply; G stays 0)
+    capid_table_reply = None   # opt-in: physical address in the 0x1000 reply of the capture-ID-table service (queue 0x4015e); None = requests stay unanswered
     sync_direct_mode = 'return'   # 'yield': ask the interpreter to switch threads after snd_sync_direct
     yield_requested = False
     timer_service = 'off'         # 'emulated': queue 0x910042 counter reply, 0x910041 timed wait (interpreter blocks)
+    timer_dirty = False           # an osal timer object was armed/stopped/freed: the interpreter re-syncs deadlines
     timer_wait = None             # absolute deadline (us) the interpreter must block the caller until
     now_us = 0                    # guest time (us), set by the interpreter before each ioctl
 
@@ -180,6 +201,63 @@ class GuestUipc:
                                   'base': self.pool_base, 'proxy_threads': 4,
                                   'kernel_allocator_initialized': False})
 
+    def _holes(self):
+        holes = self.__dict__.get('free_blocks')
+        if holes is None:  # old checkpoints: rebuild holes from the live set
+            holes, pos = [], 0x20
+            for a in sorted(self.allocated_msgs):
+                raw = a - 12 - self.pool_base
+                if raw > pos:
+                    holes.append((pos, raw - pos))
+                pos = raw + self.allocated_msgs[a] + 12
+            if self.next_offset > pos:
+                holes.append((pos, self.next_offset - pos))
+            self.free_blocks = holes
+        return holes
+
+    def _pool_alloc(self, alloc_size: int) -> Optional[int]:
+        """First-fit from freed holes, else bump; returns pool offset or None (ENOMEM)."""
+        holes = self._holes()
+        for i, (off, size) in enumerate(holes):
+            if size >= alloc_size:
+                if size == alloc_size:
+                    del holes[i]
+                else:
+                    holes[i] = (off + alloc_size, size - alloc_size)
+                return off
+        if self.next_offset + alloc_size > self.total_pool_size:
+            return None
+        off = self.next_offset
+        self.next_offset += alloc_size
+        return off
+
+    def _pool_free(self, msg_addr: int) -> None:
+        holes = self._holes()  # before the pop: old checkpoints rebuild holes from the live set
+        size = self.allocated_msgs.pop(msg_addr) + 12
+        holes.append((msg_addr - 12 - self.pool_base, size))
+        holes.sort()
+        merged = [holes[0]]
+        for off, sz in holes[1:]:
+            if merged[-1][0] + merged[-1][1] == off:
+                merged[-1] = (merged[-1][0], merged[-1][1] + sz)
+            else:
+                merged.append((off, sz))
+        self.free_blocks = merged
+
+    def _kernel_policy(self) -> bool:
+        return getattr(self, 'pool_options_policy', '') in ('kernel-e0301', KERNEL_E0303)
+
+    def _msg_op(self, memory_reader, msg_ptr: int) -> Optional[int]:
+        try:
+            return struct.unpack('<H', memory_reader(msg_ptr, 2))[0]
+        except Exception:
+            return None
+
+    def _count(self, queue: int, what: str, op: Optional[int] = None) -> None:
+        stats = self.__dict__.setdefault('queue_stats', {})  # checkpoints from before this field load fine
+        key = '%#x/%s' % (queue, what) if op is None else '%#x/%s/op%#x' % (queue, what, op)
+        stats[key] = stats.get(key, 0) + 1
+
     def handle_valloc_msg_wait(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x8000000a (__k_4u_valloc_msg_wait).
         
@@ -205,11 +283,10 @@ class GuestUipc:
             alloc_size = (req_size + 43) & ~31
             num_blocks = alloc_size >> 5
 
-        if self.next_offset + alloc_size > self.total_pool_size:
-            return -12 # ENOMEM
-
-        raw_addr = self.pool_base + self.next_offset
-        self.next_offset += alloc_size
+        off = self._pool_alloc(alloc_size)
+        if off is None:
+            return UIPC_ERR_POOL_EXHAUSTED if self._kernel_policy() else -12 # legacy: ENOMEM
+        raw_addr = self.pool_base + off
 
         # Write authentic OSAL raw header (12 bytes):
         #   offset 0 (uint32): link/pool descriptor (0)
@@ -280,6 +357,32 @@ class GuestUipc:
                                           'user_data': cb['user_data'], 'tid': tid, 'handle': handle})
                 return 0
 
+        op = self._msg_op(memory_reader, msg_ptr)
+        self._count(target_queue, 'snd_sync_msg', op)
+        if self._kernel_policy() and memory_writer is not None:
+            if target_queue == ULOGIO_SYNC_QUEUE and op == ULOGIO_OP_GET_STATE                     and self.allocated_msgs.get(msg_ptr, 0) >= 0x48:
+                started = int(bool(getattr(self, 'ulogio_started', False)))
+                memory_writer(msg_ptr + 0x40, struct.pack('<II', started, 0))
+                self.transactions.append({'type': 'snd_sync_msg', 'target_queue': target_queue,
+                                          'msg_ptr': msg_ptr, 'op': op, 'ulogio_started': started,
+                                          'classification': 'kernel sync handler: state flag + status 0 (other state bytes not modeled)'})
+                return 0
+            if (target_queue == UPM_FRAMEWORK_QUEUE and op == UPM_OP_GET_BOOT_FACTOR
+                    and self.upm_boot_key is not None and self.allocated_msgs.get(msg_ptr, 0) >= 0x1c):
+                memory_writer(msg_ptr + 4, struct.pack('<I', self.upm_boot_key))
+                self.transactions.append({'type': 'snd_sync_msg', 'target_queue': target_queue, 'msg_ptr': msg_ptr,
+                                          'op': op, 'upm_boot_key': self.upm_boot_key,
+                                          'classification': 'boot-factor reply: only word1 (boot key) supplied, other words 0'})
+                return 0
+            if (target_queue not in KERNEL_QUEUE_CENSUS and target_queue not in KERNEL_CONSUMED_QUEUES
+                    and target_queue not in (BACKUP_SERVICE_QUEUE, GRM_MA_SERVICE_QUEUE, DMM_SERVICE_QUEUE,
+                                             MEDIA_COMMON_DRIVER_QUEUE)
+                    and not any(cb['queue'] == target_queue for cb in self.callbacks.values())):
+                self._count(target_queue, 'no_callback')
+                self.transactions.append({'type': 'snd_sync_msg', 'target_queue': target_queue,
+                                          'msg_ptr': msg_ptr, 'op': op, 'status': UIPC_ERR_NO_CALLBACK})
+                return UIPC_ERR_NO_CALLBACK
+
         # Read message header/body preview
         msg_preview = memory_reader(msg_ptr, min(64, self.allocated_msgs.get(msg_ptr, 32)))
         if target_queue == BACKUP_SERVICE_QUEUE:
@@ -346,7 +449,7 @@ class GuestUipc:
         raw_arg = memory_reader(arg_ptr, 8)
         pool_id, msg_ptr = struct.unpack('<II', raw_arg)
         if msg_ptr in self.allocated_msgs:
-            del self.allocated_msgs[msg_ptr]
+            self._pool_free(msg_ptr)
         self.transactions.append({
             'type': 'free_msg',
             'pool_id': pool_id,
@@ -382,7 +485,30 @@ class GuestUipc:
             'user_data': user_data,
             'flags': flags
         })
+        self.deliver_model_info_reply(memory_writer)
         return 0
+
+    MODEL_INFO_REPLY_QUEUE = 0x870136
+
+    def deliver_model_info_reply(self, memory_writer) -> bool:
+        """Opt-in: queue the 0x1004 message (entry count at +0x14) that the model-info
+        sync callback (registered on queue 0x870136) expects; the sender is an
+        unmodelled service. count 0 makes the callback set G=2, else G=1."""
+        if self.model_info_reply is None or self.pool_base is None:
+            return False
+        q = self.MODEL_INFO_REPLY_QUEUE
+        if not any(cb['queue'] == q and cb['flags'] == 1 for cb in self.callbacks.values()):
+            return False
+        if getattr(self, '_model_info_reply_sent', False):
+            return False
+        msg = self.allocate_message(0x20, memory_writer)
+        memory_writer(msg, struct.pack('<I', 0x1004) + bytes(0x1c))
+        memory_writer(msg + 0x14, struct.pack('<I', self.model_info_reply))
+        self.enqueue_message(q, msg)
+        self._model_info_reply_sent = True
+        self.transactions.append({'type': 'model_info_reply', 'queue': q, 'msg_ptr': msg,
+                                  'count': self.model_info_reply})
+        return True
 
     def handle_unreg_msg_queue_cb(self, memory_reader, arg_ptr: int) -> int:
         """Handles ioctl 0x80000009 (__k_4u_unreg_msg_queue_cb).
@@ -451,8 +577,8 @@ class GuestUipc:
 
     def _timer_object_op(self, buf_ptr: int, payload: bytes, memory_writer) -> None:
         """Message +0x10 op, +0x14 reply status, +0x18 key, +0x20.. op args/replies."""
-        # shortcut: bookkeeping only; armed timers never fire (the real server posts a 0x18-byte
-        # body {fn, arg, msg handle, key, period lo, hi} to the object's queue). Add firing when a run stalls on one.
+        # Arming records an absolute guest-time deadline; fire_timer() then posts the 0x18-byte body
+        # {fn, arg, msg handle, key, period lo, hi} to the object's queue, where its registered callback runs.
         op, _status, key, _pad, a, b, c = struct.unpack('<7I', payload[:28])
         objs = self.__dict__.setdefault('timer_objects', {})
         status = 0
@@ -466,17 +592,40 @@ class GuestUipc:
         elif op == 1:
             objs[key].update(fn=a, arg=b, handle=c)
         elif op == 2:
-            objs[key]['armed'] = (a | (b << 32), c)
+            # shortcut: (a,b) is taken as a one-shot relative delay in us and c is ignored; periodic
+            # use is unverified, upgrade when a trace shows c or a repeat.
+            objs[key]['armed'] = (self.now_us + (a | (b << 32)), c)
+            self.timer_dirty = True
+            self.timer_armed_total = getattr(self, 'timer_armed_total', 0) + 1
         elif op == 3:
             objs[key]['armed'] = None
+            self.timer_dirty = True
         elif op == 4:
             memory_writer(buf_ptr + 0x20, struct.pack('<II', objs[key]['queue'], objs[key]['handle']))
         elif op == 5:
             del objs[key]
+            self.timer_dirty = True
         else:
             status = 0xFFFFFC00
         memory_writer(buf_ptr + 0x14, struct.pack('<I', status))
         self.transactions[-1].update(timer_object_op=op, key=key, status=status)
+
+    def timer_deadlines(self) -> Dict[int, int]:
+        """Armed osal timer objects as {key: absolute guest-time deadline (us)}."""
+        return {key: obj['armed'][0] for key, obj in getattr(self, 'timer_objects', {}).items() if obj['armed']}
+
+    def fire_timer(self, key: int, memory_writer) -> bool:
+        """Expires one armed timer object: queues its 0x18-byte event body for the registered callback."""
+        obj = getattr(self, 'timer_objects', {}).get(key)
+        if obj is None or not obj['armed'] or self.pool_base is None:
+            return False
+        obj['armed'] = None  # one-shot
+        msg = self.allocate_message(0x28, memory_writer=memory_writer)
+        memory_writer(msg, struct.pack('<4I6I', 0x28, 0, 0, 0, obj['fn'], obj['arg'], obj['handle'], key, 0, 0))
+        self.enqueue_message(obj['queue'], msg)
+        self.timer_fired = getattr(self, 'timer_fired', 0) + 1
+        self.transactions.append({'type': 'timer_fire', 'queue': obj['queue'], 'key': key, 'msg_ptr': msg})
+        return True
 
     def handle_wai_sem_tmo(self, memory_reader, memory_writer, arg_ptr: int) -> int:
         """Handles ioctl 0x80000001 (__k_4u_wai_sem_tmo).
@@ -567,6 +716,23 @@ class GuestUipc:
         """
         raw_arg = memory_reader(arg_ptr, 8)
         queue, msg_ptr = struct.unpack('<II', raw_arg)
+        op = self._msg_op(memory_reader, msg_ptr)
+        self._count(queue, 'snd_msg', op)
+        if queue in KERNEL_CONSUMED_QUEUES:
+            live = self.__dict__.setdefault('ulogio_listeners', dict(ULOGIO_LISTENERS))
+            if live.get(queue, 1) > 0:
+                if op == ULOGIO_OP_USERSPACE_STARTED:
+                    self.ulogio_started = True
+                    live[queue] = live.get(queue, 1) - 1  # the handler exits its listener thread
+                if msg_ptr in self.allocated_msgs:
+                    self._pool_free(msg_ptr)
+                self.transactions.append({'type': 'snd_msg', 'queue': queue, 'msg_ptr': msg_ptr, 'op': op,
+                                          'consumed_by': KERNEL_CONSUMED_QUEUES[queue]})
+                return 0
+            self._count(queue, 'queued_no_listener')  # every listener has exited: the message stays queued
+        if queue == self.CAPID_QUEUE and self.capid_table_reply is not None and memory_writer is not None:
+            if self._reply_capid(memory_reader, memory_writer, msg_ptr):
+                return 0
         if queue not in self.message_queues:
             self.message_queues[queue] = []
         self.message_queues[queue].append(msg_ptr)
@@ -604,6 +770,26 @@ class GuestUipc:
                     self.transactions[-1]['classification'] = 'authentic-grm verified DMM allocation completion'
         return 0
 
+    CAPID_QUEUE = 0x4015e
+    CAPID_CMDS = (0x1000, 0x1001)   # 0x1000 returns the table address; 0x1001 follows from the same thread (reply shape assumed identical, unverified)
+
+    def _reply_capid(self, memory_reader, memory_writer, msg_ptr: int) -> bool:
+        """Opt-in: the capture-ID-table client sends {0, cmd} (0x18 bytes) to queue 0x4015e with its private reply
+        queue id in the OSAL header word at msg-4, then blocks forever on that queue. Answer cmd 0x1000/0x1001 with
+        {1, 0x1000, 0, phys}; the object mmaps /dev/mem at phys (the table stays zero-filled). Other commands stay queued."""
+        reply_queue, = struct.unpack('<I', memory_reader(msg_ptr - 4, 4))
+        cmd, = struct.unpack('<I', memory_reader(msg_ptr + 4, 4))
+        self.__dict__.setdefault('capid_seen', []).append((reply_queue, memory_reader(msg_ptr, 0x18).hex()))
+        if cmd not in self.CAPID_CMDS or not reply_queue or reply_queue == 0xa5a5a5a5:
+            return False
+        reply = self.allocate_message(0x18, memory_writer)
+        memory_writer(reply, struct.pack('<IIII', 1, 0x1000, 0, self.capid_table_reply) + bytes(8))
+        self.enqueue_message(reply_queue, reply)
+        if msg_ptr in self.allocated_msgs:
+            self._pool_free(msg_ptr)
+        self.transactions.append({'type': 'capid_reply', 'queue': reply_queue, 'msg_ptr': reply, 'phys': self.capid_table_reply})
+        return True
+
     def allocate_message(self, size: int = 64, memory_writer=None) -> int:
         """Allocates a message buffer with authentic OSAL header from the UIPC shared pool."""
         if self.pool_base is None:
@@ -614,10 +800,10 @@ class GuestUipc:
         else:
             alloc_size = (size + 43) & ~31
             num_blocks = alloc_size >> 5
-        if self.next_offset + alloc_size > self.total_pool_size:
+        off = self._pool_alloc(alloc_size)
+        if off is None:
             raise MemoryError("UIPC shared pool exhausted")
-        raw_addr = self.pool_base + self.next_offset
-        self.next_offset += alloc_size
+        raw_addr = self.pool_base + off
         hdr = struct.pack('<IBBHI', 0, num_blocks, 1, 1, 0xa5a5a5a5)
         if memory_writer is not None:
             memory_writer(raw_addr, hdr)

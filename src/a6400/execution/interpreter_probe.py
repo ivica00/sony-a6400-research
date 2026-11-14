@@ -9,6 +9,7 @@ from unicorn import arm_const as arm
 from src.a6400.images.process_elf import map_image
 from src.a6400.execution.process_entry import build_stack
 from src.a6400.execution.guest_brk import GuestBrk, initial_break
+from src.a6400.execution.guest_procmaps import render_proc_maps
 from src.a6400.execution.guest_uname import GuestUname, UnverifiedIdentityData
 from src.a6400.execution.guest_memory import cstring_preview, accessible
 from src.a6400.execution.guest_stat64 import GuestStat64
@@ -18,11 +19,13 @@ from src.a6400.execution.guest_mmap import (GuestMmap, UnsupportedMmap, PROT_REA
 from src.a6400.execution.guest_kuser import GuestKuser
 from src.a6400.execution.guest_uipc import GuestUipc, UnsupportedUipc
 from src.a6400.execution.capped_log import CappedLog
+from src.a6400.execution.run_summary import RunSummary
 from src.a6400.execution.guarded_bytes import UnverifiedGuestData
 from src.a6400.execution.guest_stdio import GuestStdio
 from src.a6400.execution.guest_threads import GuestThreads, REGISTER_LIST, EXPECTED_PTHREAD_CLONE_FLAGS
 from src.a6400.execution.guest_fb import GuestFramebuffer
 from src.a6400.execution.guest_stream import GuestStream, UnsupportedStream
+from src.a6400.execution.lz77 import inflate_block
 from src.a6400.execution.guest_gles import GuestGles, UnsupportedGles, GLES_LOCK_SEMAPHORE
 from src.a6400.execution.guest_gpio import GuestGpio, UnsupportedGpio
 from src.a6400.execution.guest_kikilog import UnsupportedKikilog
@@ -389,7 +392,7 @@ class InterpreterProbe:
             self.mu.hook_add(unicorn.UC_HOOK_BLOCK, self._block)
             for it_addr in (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a, 0x4000a6f4,
                             0x5026ebc4, 0x5026ec26, 0x54194e4e,
-                            0x50259bf2, 0x50259bfc, 0x50259c00, 0x54194e56,
+                            0x50259bf2, 0x50259bfc, 0x50259c00, 0x50259822, 0x54194e56,
                             0x5026ed06, 0x5026ecfc):
                 self.mu.hook_add(unicorn.UC_HOOK_CODE, self._it_workaround, begin=it_addr, end=it_addr)
             self.mu.hook_add(unicorn.UC_HOOK_CODE, self._ld_fixup_workaround,
@@ -429,6 +432,7 @@ class InterpreterProbe:
                                               tmp_overlay=filesystem.get('tmp_overlay', 'stop'),
                                               proc_overlay=filesystem.get('proc_overlay', 'stop'),
                                               setting_overlay=filesystem.get('setting_overlay', 'stop'),
+                                              maps_provider=self._proc_maps_snapshot,
                                               **({'unknown_roots': filesystem['unknown_roots']}
                                                  if 'unknown_roots' in filesystem else {}))
         if filesystem and filesystem.get('urandom_open'):
@@ -490,6 +494,45 @@ class InterpreterProbe:
             self.report['thread_context_contract'] = 'clone copies general-register syscall-return context; guest libc owns thread dispatch/exit; hardware/software TLS restored; VFP state not yet isolated'
             self.report['assumptions'].append('Linux ARM NPTL multithreading: sys_clone, sys_futex (WAIT/WAKE), sys_gettid, sys_prctl (PR_SET_NAME), sched_setscheduler, sched_setaffinity, and cooperative thread scheduling.')
 
+    def _image_node_fstat(self, fd, buf, pc, size, thumb):
+        """fstat64 of a device fd from its rootfs inode (mode/ino/st_dev/rdev as on the camera).
+
+        Returns False (caller falls back to the fixed structure) when no image metadata exists.
+        """
+        path = self.filesystem.fds[fd]['path']
+        node = self.filesystem.nodes.get(path) or {}
+        if self.filesystem.stat_contract is None or 'stat_metadata' not in node:
+            return False
+        result = self.filesystem._stat(node, buf)
+        self.report['serviced_syscalls'].append({'syscall': 'fstat64', 'r7': 197, 'fd': fd, 'buf': buf, 'path': path,
+                                                 'returned': result['returned'], 'pc': pc,
+                                                 'instruction_address': pc - size, 'thumb': thumb})
+        self.report['syscall_responses_supplied'] += 1
+        self.mu.reg_write(arm.UC_ARM_REG_R0, result['returned'])
+        return True
+
+    def _proc_maps_snapshot(self):
+        """Own /proc/<pid>/maps from live Unicorn regions + mmap records + ELF/stack/heap ranges."""
+        mmap = getattr(self, 'mmap', None)
+        images = getattr(self, 'proc_maps_images', [])
+        initial = [{'address': m['address'], 'length': m['size'], 'path': path, 'offset': m['file_offset'], 'flags': 2}
+                   for path, mappings in images for m in mappings]
+        named = []
+        stack = self.report.get('stack') or {}
+        if 'bottom' in stack:
+            named.append((stack['bottom'], stack['bottom'] + stack['size'], '[stack]'))
+        heap = getattr(self, 'heap', None)
+        if heap is not None:
+            named.append((heap.start, (heap.current + 0xfff) & ~0xfff, '[heap]'))
+        named.append((0xffff0000, 0xffff1000, '[vectors]'))
+
+        def file_ids(path):
+            meta = (self.filesystem.nodes.get(path) or {}).get('stat_metadata') or {}
+            return ((meta['st_dev'] >> 8, meta['st_dev'] & 0xff, meta['inode'])
+                    if 'st_dev' in meta and 'inode' in meta else None)
+        regions = [(begin, end + 1, perms) for begin, end, perms in self.mu.mem_regions()]
+        return render_proc_maps(regions, initial + list(getattr(mmap, 'mappings', [])), named, file_ids)
+
     def prepare(self, application, interpreter, argv, interpreter_bias=0x40000000,
                 stack_bottom=0x7fe00000, stack_size=0x100000, environment=None):
         if self.prepare_attempted:
@@ -522,6 +565,7 @@ class InterpreterProbe:
         if self.syscall_policy in ('brk', 'brk-uname', 'files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads'):
             self.heap = GuestBrk(self.mu, initial_break(application))
             self.report['heap'] = {'initial': self.heap.start, 'ceiling': self.heap.ceiling}
+        self.proc_maps_images = [(argv[0], app['mappings']), (application.get('interpreter'), linker['mappings'])]
         if hasattr(self, 'mmap'):
             for mapping in app['mappings']:
                 self.mmap.register_range(mapping['address'], mapping['size'])
@@ -556,6 +600,7 @@ class InterpreterProbe:
             (0x54194E4E, 0x54194E4C, b'\x03\x4b\x04\x4a'),
             (0x54194E56, 0x54194E4C, b'\x03\x4b\x04\x4a'),
             (0x50259BFC, 0x50259BFC, b'\xdf\xf8\x94\x24'),
+            (0x50259822, 0x50259820, b'\x38\x33\x0c\x93'),
             (0x5026ED06, 0x5026ED06, b'\x70\xbd'),
             (0x5026ECFC, 0x5026ECF6, b'\x84\xbf\x1c\x60\x22\x46'),
         )
@@ -572,6 +617,14 @@ class InterpreterProbe:
             cpsr = uc.reg_read(arm.UC_ARM_REG_CPSR)
             if cpsr & ((3 << 25) | (0x3f << 10)):
                 uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr & ~((3 << 25) | (0x3f << 10)))
+        if address == 0x50259822:
+            # Repair: a stale IT latch makes Unicorn skip one add (and its code hook), so the
+            # large-bin index is nb>>6 instead of +56 and the bin scan starts too low.
+            # Re-apply the add when r3 still equals nb>>6 (the add can never leave it equal).
+            nb = uc.reg_read(arm.UC_ARM_REG_R11)
+            if uc.reg_read(arm.UC_ARM_REG_R3) == nb >> 6:
+                uc.reg_write(arm.UC_ARM_REG_R3, (nb >> 6) + 0x38)
+                self.report['libc_largebin_idx_repair_hits'] = self.report.get('libc_largebin_idx_repair_hits', 0) + 1
         if address == 0x50259BFC:
             # Live libc 8.2.6.0 top-split (`ldr.w r2,[pc,#0x494]`): Unicorn can
             # skip this 4-byte literal load after an IT latch, leaving the stale
@@ -754,6 +807,24 @@ class InterpreterProbe:
         """
         if self.syscall_policy in ('mmap', 'kuser', 'uipc', 'threads'):
             uc.reg_write(arm.UC_ARM_REG_R4, uc.reg_read(arm.UC_ARM_REG_R0))
+
+    def _sync_timer_objects(self):
+        """Mirrors armed osal timer objects into the scheduler as pseudo-waiters (tid = -key) so the idle clock jumps to them."""
+        uipc, threads = self.uipc, getattr(self, 'threads', None)
+        if threads is None:
+            return
+        threads.timer_fire = self._fire_timer_object
+        if not uipc.timer_dirty:
+            return
+        uipc.timer_dirty = False
+        for tid in [t for t in threads.timer_waiters if t < 0]:
+            del threads.timer_waiters[tid]
+        threads.timer_waiters.update({-key: due for key, due in uipc.timer_deadlines().items()})
+
+    def _fire_timer_object(self, key):
+        """Scheduler hook: expire one timer object and wake the callback waiters when its event is deliverable."""
+        if self.uipc.fire_timer(key, self._uipc_write) and self.uipc.kernel_pool_options and self.uipc.callback_ready():
+            self.threads.handle_uipc_wake(-1)
 
     def _block_on_timer(self, uc):
         """Parks the caller until guest time reaches uipc.timer_wait; time jumps ahead when all are idle."""
@@ -1743,7 +1814,9 @@ class InterpreterProbe:
             return False
         self._since_progress = 0  # a resumed run gets a fresh stall window
         self.report.update(status=reason, stall_syscalls=stall_limit)
-        uc.reg_write(arm.UC_ARM_REG_PC, svc_address)
+        # an even PC write would drop the Thumb state, so a checkpoint would resume the svc as ARM code
+        thumb = uc.reg_read(arm.UC_ARM_REG_CPSR) & 0x20
+        uc.reg_write(arm.UC_ARM_REG_PC, svc_address | (1 if thumb else 0))
         uc.emu_stop()
         return True
 
@@ -1790,13 +1863,33 @@ class InterpreterProbe:
             uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
             return
         if svc and immediate == 0 and self.syscall_policy in ('uipc', 'threads'):
-            if number in (3, 4, 19, 118, 146, 148, 180, 181, 197):
+            if number in (3, 4, 19, 118, 140, 146, 148, 180, 181, 197):
                 stream_fd = uc.reg_read(arm.UC_ARM_REG_R0)
                 if self.filesystem.fds.get(stream_fd, {}).get('device') == 'nflasha4':
-                    policy = getattr(self, 'nflasha4_device_policy', 'stop')
-                    dump = getattr(self, 'nflasha4_dump', None)
+                    _entry = self.filesystem.fds[stream_fd]
+                    policy = 'observed-dump' if 'dump_id' in _entry else getattr(self, 'nflasha4_device_policy', 'stop')
+                    dump = self.nflash_dumps[_entry['dump_id']] if 'dump_id' in _entry else getattr(self, 'nflasha4_dump', None)
                     if policy == 'observed-dump' and isinstance(dump, Nflasha4Dump):
                         entry = self.filesystem.fds[stream_fd]
+                        if number == 140 and 'dump_id' in entry:  # _llseek(fd, hi, lo, &result, whence), supplied images only
+                            off = (uc.reg_read(arm.UC_ARM_REG_R1) << 32) | uc.reg_read(arm.UC_ARM_REG_R2)
+                            off = off - (1 << 64) if off >> 63 else off
+                            whence = uc.reg_read(arm.UC_ARM_REG_R4)
+                            base = (0, entry.get('offset', 0), dump.size)[whence] if whence in (0, 1, 2) else None
+                            new_offset = None if base is None else base + off
+                            ret = -22 if new_offset is None or new_offset < 0 else 0
+                            if ret == 0:
+                                try:
+                                    uc.mem_write(uc.reg_read(arm.UC_ARM_REG_R3), new_offset.to_bytes(8, 'little'))
+                                    entry['offset'] = new_offset
+                                except unicorn.UcError:
+                                    ret = -14
+                            self.report['serviced_syscalls'].append({
+                                'syscall': '_llseek', 'fd': stream_fd, 'offset': off, 'whence': whence,
+                                'returned': ret, 'path': entry['path'], 'policy': 'observed-dump'})
+                            self.report['syscall_responses_supplied'] += 1
+                            uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff)
+                            return
                         if number == 19:
                             raw_offset = uc.reg_read(arm.UC_ARM_REG_R1)
                             offset = raw_offset - 0x100000000 if raw_offset & 0x80000000 else raw_offset
@@ -1812,7 +1905,7 @@ class InterpreterProbe:
                                 self.report['serviced_syscalls'].append({
                                     'syscall': 'lseek', 'fd': stream_fd, 'offset': offset,
                                     'whence': whence, 'returned': -22,
-                                    'path': '/dev/nflasha4', 'policy': 'observed-dump'})
+                                    'path': self.filesystem.fds[stream_fd]['path'], 'policy': 'observed-dump'})
                                 uc.reg_write(arm.UC_ARM_REG_R0, 0xffffffea)
                                 return
                             if new_offset < 0 or new_offset > 0x7fffffff:
@@ -1822,7 +1915,7 @@ class InterpreterProbe:
                             self.report['serviced_syscalls'].append({
                                 'syscall': 'lseek', 'fd': stream_fd, 'offset': offset,
                                 'whence': whence, 'returned': new_offset,
-                                'path': '/dev/nflasha4', 'policy': 'observed-dump'})
+                                'path': self.filesystem.fds[stream_fd]['path'], 'policy': 'observed-dump'})
                             self.report['syscall_responses_supplied'] += 1
                             uc.reg_write(arm.UC_ARM_REG_R0, new_offset)
                             return
@@ -1835,7 +1928,7 @@ class InterpreterProbe:
                             except Nflasha4DumpError as error:
                                 self.report.update(status='unsupported_nflasha4_contract', boundary={
                                     'reason': str(error), 'fd': stream_fd,
-                                    'path': '/dev/nflasha4', 'offset': offset, 'count': count,
+                                    'path': self.filesystem.fds[stream_fd]['path'], 'offset': offset, 'count': count,
                                     'pc': pc, 'r7': number, 'instruction_address': pc - size})
                                 uc.emu_stop()
                                 return
@@ -1850,7 +1943,7 @@ class InterpreterProbe:
                             self.report['serviced_syscalls'].append({
                                 'syscall': 'read', 'fd': stream_fd, 'offset': offset,
                                 'count': count, 'returned': ret,
-                                'path': '/dev/nflasha4', 'policy': 'observed-dump'})
+                                'path': self.filesystem.fds[stream_fd]['path'], 'policy': 'observed-dump'})
                             self.report['syscall_responses_supplied'] += 1
                             uc.reg_write(arm.UC_ARM_REG_R0, ret)
                             return
@@ -1860,28 +1953,46 @@ class InterpreterProbe:
                             except Nflasha4DumpError as error:
                                 self.report.update(status='unsupported_nflasha4_contract', boundary={
                                     'reason': str(error), 'number': number,
-                                    'fd': stream_fd, 'path': '/dev/nflasha4',
+                                    'fd': stream_fd, 'path': self.filesystem.fds[stream_fd]['path'],
                                     'pc': pc, 'r7': number, 'instruction_address': pc - size})
                                 uc.emu_stop()
                                 return
                             self.report['serviced_syscalls'].append({
                                 'syscall': 'fdatasync' if number == 148 else 'fsync',
                                 'fd': stream_fd, 'returned': ret,
-                                'path': '/dev/nflasha4', 'policy': 'observed-dump',
+                                'path': self.filesystem.fds[stream_fd]['path'], 'policy': 'observed-dump',
                                 'dirty': bool(entry.get('dirty'))})
                             self.report['syscall_responses_supplied'] += 1
                             uc.reg_write(arm.UC_ARM_REG_R0, ret)
                             return
+                        if number == 4 and dump.writable:
+                            buf = uc.reg_read(arm.UC_ARM_REG_R1)
+                            count = uc.reg_read(arm.UC_ARM_REG_R2)
+                            offset = entry.get('offset', 0)
+                            try:
+                                ret = dump.write(offset, bytes(uc.mem_read(buf, count)))
+                            except unicorn.UcError:
+                                ret = -14  # -EFAULT: guest buffer unreadable, nothing stored.
+                            if ret > 0:
+                                entry['offset'] = offset + ret
+                                entry['dirty'] = True
+                            self.report['serviced_syscalls'].append({
+                                'syscall': 'write', 'fd': stream_fd, 'offset': offset,
+                                'count': count, 'returned': ret, 'path': self.filesystem.fds[stream_fd]['path'],
+                                'policy': 'synthetic-erased in-memory'})
+                            self.report['syscall_responses_supplied'] += 1
+                            uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff)
+                            return
                         if number in (4, 146, 180, 181):
                             self.report.update(status='unsupported_nflasha4_contract', boundary={
                                 'reason': 'nflasha4_write_not_supplied', 'number': number,
-                                'fd': stream_fd, 'path': '/dev/nflasha4',
+                                'fd': stream_fd, 'path': self.filesystem.fds[stream_fd]['path'],
                                 'pc': pc, 'r7': number, 'instruction_address': pc - size})
                             uc.emu_stop()
                             return
                         self.report.update(status='unsupported_nflasha4_contract', boundary={
                             'reason': 'nflasha4_file_operation_not_supplied',
-                            'number': number, 'fd': stream_fd, 'path': '/dev/nflasha4',
+                            'number': number, 'fd': stream_fd, 'path': self.filesystem.fds[stream_fd]['path'],
                             'pc': pc, 'r7': number, 'instruction_address': pc - size})
                         uc.emu_stop()
                         return
@@ -1899,7 +2010,7 @@ class InterpreterProbe:
                             self.report['serviced_syscalls'].append({
                                 'syscall': 'lseek', 'fd': stream_fd, 'offset': offset,
                                 'whence': whence, 'returned': -22,
-                                'path': '/dev/nflasha4', 'policy': 'position-only observation'})
+                                'path': self.filesystem.fds[stream_fd]['path'], 'policy': 'position-only observation'})
                             uc.reg_write(arm.UC_ARM_REG_R0, 0xffffffea)
                             return
                         if new_offset < 0 or new_offset > 0x7fffffff:
@@ -1909,13 +2020,13 @@ class InterpreterProbe:
                         self.report['serviced_syscalls'].append({
                             'syscall': 'lseek', 'fd': stream_fd, 'offset': offset,
                             'whence': whence, 'returned': new_offset,
-                            'path': '/dev/nflasha4', 'policy': 'position-only observation'})
+                            'path': self.filesystem.fds[stream_fd]['path'], 'policy': 'position-only observation'})
                         self.report['syscall_responses_supplied'] += 1
                         uc.reg_write(arm.UC_ARM_REG_R0, new_offset)
                         return
                     self.report.update(status='unsupported_nflasha4_contract', boundary={
                         'reason': 'nflasha4_file_operation_not_supplied',
-                        'number': number, 'fd': stream_fd, 'path': '/dev/nflasha4',
+                        'number': number, 'fd': stream_fd, 'path': self.filesystem.fds[stream_fd]['path'],
                         'pc': pc, 'r7': number, 'instruction_address': pc - size})
                     uc.emu_stop()
                     return
@@ -1985,6 +2096,15 @@ class InterpreterProbe:
                         self.report.update(status='unsupported_pipe_contract', boundary={
                             **error.details, 'fd': fd, 'pc': pc, 'r7': number, 'instruction_address': pc - size})
                         uc.emu_stop()
+                        return
+                    if data is None and entry.get('status_flags', 0) & 0x800:
+                        # shortcut: O_NONBLOCK honoured for pipe reads only; other fds (devices, poll) ignore it — extend when a boundary needs it
+                        ret = 0xfffffff5  # -EAGAIN
+                        event = {'syscall': 'read', 'r7': 3, 'fd': fd, 'count': count, 'returned': ret,
+                                 'path': entry.get('path'), 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb}
+                        self.report['serviced_syscalls'].append(event)
+                        self.report['syscall_responses_supplied'] += 1
+                        uc.reg_write(arm.UC_ARM_REG_R0, ret)
                         return
                     if data is None:
                         if self.syscall_policy == 'threads':
@@ -2197,6 +2317,9 @@ class InterpreterProbe:
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
 
+                elif (self.filesystem.fds.get(fd, {}).get('device') in ('fb0', 'mem')
+                      and self._image_node_fstat(fd, buf, pc, size, thumb)):
+                    return
                 elif fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'fb0':
                     ret = self.fb.handle_fstat64(lambda a, d: uc.mem_write(a, d), buf)
                     event = {'syscall': 'fstat64', 'r7': 197, 'fd': fd, 'buf': buf, 'returned': ret,
@@ -2747,6 +2870,60 @@ class InterpreterProbe:
                     self.report['syscall_responses_supplied'] += 1
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
+                if (preview.get('value') == '/dev/ldec'
+                        and getattr(self, 'ldec_device_policy', 'stop') in ('open-only', 'lz77')):
+                    try:
+                        self.filesystem._path(path_ptr)  # Bounds and provenance.
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    if flags != 0x2:  # O_RDWR, the only observed open
+                        self._stream_boundary(UnsupportedStream(
+                            'ldec_open_flags_not_supported', flags=flags,
+                            device='/dev/ldec'), pc, number)
+                        return
+                    fd = next((candidate for candidate in range(3, 259)
+                               if candidate not in self.filesystem.fds), None)
+                    if fd is None:
+                        ret = 0xffffffe8  # -EMFILE
+                    else:
+                        ret = fd
+                        # shortcut: major 251 from the live a6400 /proc/devices; minor unobserved (0), replace when a /dev listing is captured
+                        self.filesystem.fds[fd] = {
+                            'path': '/dev/ldec', 'device': 'ldec', 'flags': flags,
+                            'device_number': [251, 0], 'offset': 0}
+                    event = {'syscall': 'open', 'r7': 5, 'path': '/dev/ldec', 'fd': fd,
+                             'returned': ret, 'flags': flags, 'device_number': [251, 0],
+                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb,
+                             'policy': 'open-only; ioctl/mmap remains a boundary'}
+                    self.report['serviced_syscalls'].append(event)
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
+                _extra = (getattr(self, 'nflash_dumps', None) or {}).get(23) if preview.get('value') == '/dev/nflasha23' else None
+                if _extra is not None:  # --nflasha-image 23=<dump>: raw 2 MB partition, O_RDWR|O_DIRECT|O_LARGEFILE|O_CLOEXEC
+                    try:
+                        self.filesystem._path(path_ptr)  # Bounds and provenance.
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    if flags & ~(0x80000 | 0x20000 | 0x10000) != 2:
+                        self.report.update(status='unsupported_nflasha4_contract', boundary={
+                            'reason': 'nflasha23_open_flags_not_supported', 'path': '/dev/nflasha23', 'flags': flags,
+                            'pc': pc, 'r7': number, 'instruction_address': pc - size})
+                        uc.emu_stop()
+                        return
+                    fd = next((candidate for candidate in range(3, 259) if candidate not in self.filesystem.fds), None)
+                    ret = 0xffffffe8 if fd is None else fd  # -EMFILE
+                    if fd is not None:
+                        self.filesystem.fds[fd] = {'path': '/dev/nflasha23', 'device': 'nflasha4', 'flags': flags,
+                                                   'dump_id': 23, 'offset': 0, 'dirty': False}
+                    self.report['serviced_syscalls'].append({
+                        'syscall': 'open', 'r7': 5, 'path': '/dev/nflasha23', 'fd': fd, 'returned': ret, 'flags': flags,
+                        'pc': pc, 'instruction_address': pc - size, 'thumb': thumb, 'policy': 'observed-dump (image supplied)'})
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                    return
                 if (preview.get('value') == '/dev/nflasha4'
                         and getattr(self, 'nflasha4_device_policy', 'stop') in ('open-only', 'observed-dump')):
                     try:
@@ -3063,15 +3240,30 @@ class InterpreterProbe:
                     uc.reg_write(arm.UC_ARM_REG_R0, ret)
                     return
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'nflasha4':
-                    policy = getattr(self, 'nflasha4_device_policy', 'stop')
-                    dump = getattr(self, 'nflasha4_dump', None)
+                    _entry = self.filesystem.fds[fd]
+                    policy = 'observed-dump' if 'dump_id' in _entry else getattr(self, 'nflasha4_device_policy', 'stop')
+                    dump = self.nflash_dumps[_entry['dump_id']] if 'dump_id' in _entry else getattr(self, 'nflasha4_dump', None)
                     if policy == 'observed-dump' and isinstance(dump, Nflasha4Dump):
+                        _blk = dump.block_ioctl(cmd) if 'dump_id' in _entry else None  # extra images only; nflasha4 unchanged
+                        if _blk is not None:
+                            try:
+                                uc.mem_write(arg, _blk)
+                                ret = 0
+                            except unicorn.UcError:
+                                ret = -14
+                            self.report['serviced_syscalls'].append({
+                                'syscall': 'ioctl', 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
+                                'device': 'nflasha4', 'path': _entry['path'], 'policy': 'block-layer query',
+                                'pc': pc, 'instruction_address': pc - size, 'thumb': thumb})
+                            self.report['syscall_responses_supplied'] += 1
+                            uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                            return
                         try:
                             erased = dump.ioctl_erased_state(cmd)
                         except Nflasha4DumpError as error:
                             self.report.update(status='unsupported_nflasha4_contract', boundary={
                                 'reason': str(error), 'cmd': cmd, 'arg': arg,
-                                'fd': fd, 'path': '/dev/nflasha4', 'pc': pc, 'r7': number,
+                                'fd': fd, 'path': self.filesystem.fds[fd]['path'], 'pc': pc, 'r7': number,
                                 'instruction_address': pc - size})
                             uc.emu_stop()
                             return
@@ -3083,7 +3275,7 @@ class InterpreterProbe:
                         self.report['serviced_syscalls'].append({
                             'syscall': 'ioctl', 'fd': fd, 'cmd': cmd, 'arg': arg,
                             'returned': ret, 'device': 'nflasha4',
-                            'path': '/dev/nflasha4', 'policy': 'observed-dump',
+                            'path': self.filesystem.fds[fd]['path'], 'policy': 'observed-dump',
                             'erased_state_byte': erased if ret == 0 else None,
                             'pc': pc, 'instruction_address': pc - size, 'thumb': thumb})
                         self.report['syscall_responses_supplied'] += 1
@@ -3095,7 +3287,7 @@ class InterpreterProbe:
                         observation = None
                     self.report.update(status='unsupported_nflasha4_contract', boundary={
                         'reason': 'nflasha4_ioctl_not_supplied', 'cmd': cmd, 'arg': arg,
-                        'fd': fd, 'path': '/dev/nflasha4', 'pc': pc, 'r7': number,
+                        'fd': fd, 'path': self.filesystem.fds[fd]['path'], 'pc': pc, 'r7': number,
                         'instruction_address': pc - size,
                         'buffer_hex': observation,
                         'lr': uc.reg_read(arm.UC_ARM_REG_LR),
@@ -3107,6 +3299,27 @@ class InterpreterProbe:
                     self._stream_boundary(UnsupportedStream(
                         'stream2_ioctl_not_supplied', cmd=cmd, arg=arg,
                         device='/dev/stream2'), pc, number)
+                    return
+                if (fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'ldec'
+                        and getattr(self, 'ldec_device_policy', 'stop') == 'lz77'):
+                    try:
+                        job = self._ldec_decompress(uc, cmd, arg)
+                    except UnsupportedStream as error:
+                        self._stream_boundary(error, pc, number)
+                        return
+                    except UnverifiedGuestData as error:
+                        self._identity_boundary(error.details)
+                        return
+                    uc.mem_write(job['dst'], job['out'])
+                    self.report['ldec_jobs'] = self.report.get('ldec_jobs', 0) + 1
+                    self.report['serviced_syscalls'].append({
+                        'syscall': 'ioctl', 'r7': 54, 'fd': fd, 'cmd': cmd, 'returned': 0,
+                        'pc': pc, 'instruction_address': pc - size, 'thumb': thumb,
+                        'device': 'ldec', 'src': job['src'], 'src_len': job['src_len'],
+                        'dst': job['dst'], 'dst_len': job['dst_len'], 'channel': job['channel'],
+                        'decoded_sha256': hashlib.sha256(job['out']).hexdigest()})
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, 0)
                     return
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'stream':
                     try:
@@ -3206,6 +3419,7 @@ class InterpreterProbe:
                         self.report['serviced_syscalls'].append(event)
                         self.report['syscall_responses_supplied'] += 1
                         uc.reg_write(arm.UC_ARM_REG_R0, ret)
+                        self._sync_timer_objects()
                         if self.uipc.timer_wait is not None:
                             self._block_on_timer(uc)
                             return
@@ -3250,6 +3464,16 @@ class InterpreterProbe:
                     ret = 0
                 elif cmd == 1:  # F_GETFD
                     ret = self.filesystem.fds.get(fd, {}).get('descriptor_flags', 0)
+                elif cmd == 3 and fd in self.filesystem.fds:  # F_GETFL
+                    entry = self.filesystem.fds[fd]
+                    ret = entry.get('status_flags', entry.get('flags', 0))
+                elif cmd == 4 and fd in self.filesystem.fds:  # F_SETFL: only O_NONBLOCK is kept
+                    entry = self.filesystem.fds[fd]
+                    old = entry.get('status_flags', entry.get('flags', 0))
+                    entry['status_flags'] = (old & 0x3) | (arg & 0x800)
+                    ret = 0
+                elif cmd in (3, 4):
+                    ret = 0xfffffff7  # -EBADF
                 else:
                     ret = 0xffffffea  # -EINVAL
                 event = {'syscall': 'fcntl64', 'r7': 221, 'fd': fd, 'cmd': cmd, 'arg': arg, 'returned': ret,
@@ -3263,7 +3487,7 @@ class InterpreterProbe:
                 if fd in self.filesystem.fds and self.filesystem.fds[fd].get('device') == 'nflasha4':
                     self.report.update(status='unsupported_nflasha4_contract', boundary={
                         'reason': 'nflasha4_mmap_not_supplied', 'fd': fd,
-                        'path': '/dev/nflasha4', 'pc': pc, 'r7': number,
+                        'path': self.filesystem.fds[fd]['path'], 'pc': pc, 'r7': number,
                         'instruction_address': pc - size,
                         'arguments': [uc.reg_read(r) for r in (
                             arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2,
@@ -3443,8 +3667,8 @@ class InterpreterProbe:
                 self.report['syscall_responses_supplied'] += 1
                 uc.reg_write(arm.UC_ARM_REG_R0, event['returned'])
                 return
-        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 12, 19, 33, 39, 195, 197, 217) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 12, 19, 33, 39, 195, 217)):
-            args = [uc.reg_read(r) for r in (arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2)]
+        if svc and immediate == 0 and self.syscall_policy in ('files', 'metadata', 'mmap', 'kuser', 'uipc', 'threads') and number in ((3, 5, 6, 12, 19, 33, 39, 140, 195, 197, 217) if self.syscall_policy in ('metadata', 'mmap', 'kuser', 'uipc', 'threads') else (3, 5, 6, 12, 19, 33, 39, 140, 195, 217)):
+            args = [uc.reg_read(r) for r in (arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2, arm.UC_ARM_REG_R3, arm.UC_ARM_REG_R4)]
             try:
                 event = self.filesystem.request(number, args)
             except UnverifiedIdentityData as error:
@@ -3527,7 +3751,8 @@ class InterpreterProbe:
                 resource = uc.reg_read(arm.UC_ARM_REG_R0)
                 rlim_addr = uc.reg_read(arm.UC_ARM_REG_R1)
                 if resource == 3:  # RLIMIT_STACK
-                    stack_limit = 8 * 1024 * 1024
+                    # thread stacks of the live camera are 2 MiB, so report a 2 MiB soft limit; 8 MiB exhausted the guest user space
+                    stack_limit = 0x200000
                     uc.mem_write(rlim_addr, struct.pack('<II', stack_limit, 0xffffffff))
                     ret = 0
                 else:
@@ -3867,7 +4092,11 @@ class InterpreterProbe:
                         ready_count += 1
                 if nfds > 0:
                     self._uipc_write(fds_ptr, bytes(out_pollfds))
-                if ready_count > 0 or timeout == 0:
+                th = self.threads.threads.get(self.threads.current_tid) if hasattr(self, 'threads') else None
+                expired = bool(th is not None and getattr(th, 'poll_expired', False))
+                if expired:
+                    th.poll_expired = False
+                if ready_count > 0 or timeout == 0 or expired:
                     ret = ready_count
                     event = {'syscall': 'poll', 'r7': 168, 'nfds': nfds, 'fds': valid_fds,
                              'timeout': timeout, 'returned': ret,
@@ -3879,7 +4108,8 @@ class InterpreterProbe:
                 if self.syscall_policy == 'threads' and valid_fds:
                     self.threads.save_context(uc)
                     self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
-                    next_tid, event = self.threads.handle_fd_wait(valid_fds[0], 'poll', pc - size, extra_fds=valid_fds[1:])
+                    next_tid, event = self.threads.handle_fd_wait(valid_fds[0], 'poll', pc - size, extra_fds=valid_fds[1:],
+                                                                     deadline=self.instructions + timeout * 1000 if timeout > 0 else None)
                     event.update(pc=pc, instruction_address=pc - size, thumb=thumb, nfds=nfds, timeout=timeout)
                     self.report['serviced_syscalls'].append(event)
                     if next_tid is not None:
@@ -3891,6 +4121,54 @@ class InterpreterProbe:
                 self.report.update(status='blocked_poll', boundary={'fds': valid_fds, 'timeout': timeout, 'pc': pc, 'r7': 168})
                 uc.emu_stop()
                 return
+            if number == 142:  # sys__newselect
+                # shortcut: read-set only; a set is ready only for a pipe with data, so a daemon that selects
+                # on a tty/socket with no timeout blocks (as on a camera with no input); other sets are zeroed.
+                nfds, inp, outp, exc, tvp = (uc.reg_read(r) for r in (
+                    arm.UC_ARM_REG_R0, arm.UC_ARM_REG_R1, arm.UC_ARM_REG_R2, arm.UC_ARM_REG_R3, arm.UC_ARM_REG_R4))
+                nbytes = (min(nfds, 1024) + 7) // 8
+                rbits = self._uipc_read(inp, nbytes) if inp and nbytes else b''
+                rfds = [fd for fd in range(min(nfds, 1024)) if rbits[fd // 8] >> (fd % 8) & 1]
+                timeout_ms = None
+                if tvp:
+                    sec, usec = struct.unpack('<II', self._uipc_read(tvp, 8))
+                    timeout_ms = sec * 1000 + usec // 1000
+                th = self.threads.threads.get(self.threads.current_tid) if hasattr(self, 'threads') else None
+                expired = bool(th is not None and getattr(th, 'poll_expired', False))
+                if expired:
+                    th.poll_expired = False
+                ready = [fd for fd in rfds if fd in self.filesystem.fds
+                         and self.filesystem.fds[fd].get('device') == 'pipe' and getattr(self, 'pipes', None)
+                         and self.pipes.poll(self.filesystem.fds[fd].get('pipe_id'), self.filesystem.fds[fd].get('end')) & 1]
+                bad = [fd for fd in rfds if fd not in self.filesystem.fds and fd > 2]  # 0-2: std streams the model does not open
+                if bad or ready or expired or timeout_ms == 0:
+                    ret = -9 if bad else len(ready)
+                    for addr in (inp, outp, exc):
+                        if addr and nbytes:
+                            self._uipc_write(addr, bytes(nbytes))
+                    if ready and not bad:
+                        out = bytearray(nbytes)
+                        for fd in ready:
+                            out[fd // 8] |= 1 << (fd % 8)
+                        self._uipc_write(inp, bytes(out))
+                    self.report['serviced_syscalls'].append({'syscall': 'select', 'r7': 142, 'nfds': nfds, 'rfds': rfds,
+                                                             'returned': ret, 'pc': pc, 'instruction_address': pc - size, 'thumb': thumb})
+                    self.report['syscall_responses_supplied'] += 1
+                    uc.reg_write(arm.UC_ARM_REG_R0, ret & 0xffffffff)
+                    return
+                if self.syscall_policy == 'threads' and rfds:
+                    self.threads.save_context(uc)
+                    self.threads.threads[self.threads.current_tid].regs[arm.UC_ARM_REG_PC] = pc - size
+                    next_tid, event = self.threads.handle_fd_wait(rfds[0], 'poll', pc - size, extra_fds=rfds[1:],
+                                                                     deadline=self.instructions + timeout_ms * 1000 if timeout_ms else None)
+                    event.update(syscall='select', pc=pc, instruction_address=pc - size, thumb=thumb, nfds=nfds)
+                    self.report['serviced_syscalls'].append(event)
+                    if next_tid is not None:
+                        self.threads.restore_context(uc, next_tid, getattr(self, 'kuser', None))
+                    else:
+                        self.report.update(status='blocked_poll', boundary=event)
+                        uc.emu_stop()
+                    return
             if number == 298:  # sys_semop
                 semid = uc.reg_read(arm.UC_ARM_REG_R0)
                 tsops = uc.reg_read(arm.UC_ARM_REG_R1)
@@ -4244,6 +4522,34 @@ class InterpreterProbe:
         self._before_host_read(address, size)
         return bytes(self.mu.mem_read(address, size))
 
+    def _ldec_decompress(self, uc, cmd, arg):
+        # /dev/ldec cmd 1: 7-word job at arg; decoded in software with the bounded
+        # Sony LZ77 decoder. Length mismatch is unmodeled hardware behaviour: stop.
+        if cmd != 1:
+            raise UnsupportedStream('ldec_ioctl_cmd_not_supported', cmd=cmd, arg=arg, device='/dev/ldec')
+        if not accessible(uc, arg, 0x1c, unicorn.UC_PROT_READ):
+            raise UnsupportedStream('ldec_job_not_accessible', arg=arg, device='/dev/ldec')
+        src, src_len, dst, dst_len, _dst_pages, channel, _flags = struct.unpack(
+            '<7I', bytes(uc.mem_read(arg, 0x1c)))
+        if not accessible(uc, src, src_len, unicorn.UC_PROT_READ):
+            raise UnsupportedStream('ldec_source_not_accessible', src=src, src_len=src_len, device='/dev/ldec')
+        self._before_host_read(src, src_len)
+        data = bytes(uc.mem_read(src, src_len))
+        pos, out = 0, b''
+        try:
+            while pos < src_len:
+                block, pos = inflate_block(data, pos, 4096)
+                out += block
+        except ValueError:
+            out = None
+        if out is None or len(out) != dst_len:
+            raise UnsupportedStream('ldec_stream_not_modeled', src_len=src_len, dst_len=dst_len,
+                                    decoded_len=len(out) if out is not None else None, device='/dev/ldec')
+        if not accessible(uc, dst, dst_len, unicorn.UC_PROT_WRITE):
+            raise UnsupportedStream('ldec_destination_not_accessible', dst=dst, dst_len=dst_len, device='/dev/ldec')
+        return {'src': src, 'src_len': src_len, 'dst': dst, 'dst_len': dst_len,
+                'channel': channel, 'out': out}
+
     def _identity_boundary(self, details):
         self.report.update(status=('unverified_device_read' if details.get('domain') == 'stream' else
                                    'unverified_metadata_read' if details.get('domain') == 'stat64' else 'unverified_identity_read'),
@@ -4337,8 +4643,16 @@ class InterpreterProbe:
         log = CappedLog.wrap(old, limit, 'syscall')
         log.on_append = getattr(old, '_callback', None)  # BootLogger attaches before this runs; keep its live tail
         self.report['serviced_syscalls'] = log
-        if getattr(self, 'uipc', None) is not None:
-            self.uipc.transactions = CappedLog.wrap(self.uipc.transactions, limit, 'type')
+        self.run_summary = RunSummary(  # late-bound: restore may swap these objects
+            clock=lambda: self.instructions,
+            tid_fn=lambda: self.threads.current_tid if hasattr(self, 'threads') else None,
+            fd_path=lambda fd: (self.filesystem.fds.get(fd) or {}).get('path'),
+            queue_depth=lambda q: len(self.uipc.message_queues.get(q, ())))
+        uipc = getattr(self, 'uipc', None)
+        log.observer = self.run_summary.syscall
+        if uipc is not None:
+            uipc.transactions = CappedLog.wrap(uipc.transactions, limit, 'type')
+            uipc.transactions.observer = self.run_summary.uipc
 
     def finalize_record_logs(self, report):
         """Turn capped logs into plain lists for JSON and add exact totals and drop counts."""
@@ -4352,6 +4666,8 @@ class InterpreterProbe:
             report.update(uipc_transactions_total=uipc_log.total,
                           uipc_transactions_dropped=uipc_log.total - len(uipc_log),
                           uipc_op_counts=dict(uipc_log.counts))
+        if getattr(self, 'run_summary', None) is not None:
+            report['summary'] = self.run_summary.build(getattr(getattr(self, 'threads', None), 'threads', None))
         uipc = report.get('uipc') or {}
         if isinstance(uipc.get('transactions'), CappedLog):
             uipc['transactions'] = list(uipc['transactions'])
@@ -4400,7 +4716,13 @@ class InterpreterProbe:
                 'pool_base': self.uipc.pool_base,
                 'total_pool_size': self.uipc.total_pool_size,
                 'callbacks': self.uipc.callbacks,
-                'transactions': self.uipc.transactions
+                'transactions': self.uipc.transactions,
+                'timer_stats': {'objects': len(getattr(self.uipc, 'timer_objects', {})),
+                                'armed_total': getattr(self.uipc, 'timer_armed_total', 0),
+                                'fired': getattr(self.uipc, 'timer_fired', 0),
+                                'armed_now': len(self.uipc.timer_deadlines())},
+                'queue_stats': dict(getattr(self.uipc, 'queue_stats', {})),
+                'ulogio_started': getattr(self.uipc, 'ulogio_started', False),
             }
         if hasattr(self, 'stdio'):
             stderr_text = b''.join(self.stdio.stderr_log).decode('latin1', errors='replace')

@@ -104,6 +104,7 @@ def save_checkpoint(probe, filepath: Path) -> int:
         'loaded_modules': list(probe.report.get('loaded_modules', [])),
         'filesystem_fds': dict(probe.filesystem.fds),
         'filesystem_cache': dict(probe.filesystem.cache),
+        'filesystem_cwd': getattr(probe.filesystem, 'cwd', None),
         'threads': pickle.dumps(probe.threads) if hasattr(probe, 'threads') and probe.threads else None,
         'sem': pickle.dumps(probe.sem) if hasattr(probe, 'sem') and probe.sem else None,
         'uipc': uipc_bytes,
@@ -140,6 +141,12 @@ def save_checkpoint(probe, filepath: Path) -> int:
             val = getattr(probe, dev_attr)
             if val is not None:
                 devices[dev_attr] = pickle.dumps(val)
+    dump = getattr(probe, 'nflasha4_dump', None)
+    if getattr(dump, 'modified', False):  # only a written image differs from the policy's fresh one
+        devices['nflasha4_dump'] = pickle.dumps(dump)
+    extra = {n: d for n, d in (getattr(probe, 'nflash_dumps', None) or {}).items() if d.modified}
+    if extra:
+        devices['nflash_dumps_modified'] = pickle.dumps(extra)
     subsystems['devices'] = devices
 
     payload = {
@@ -183,7 +190,7 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
         size = reg['size']
         perms = reg['perms']
         data = zlib.decompress(reg['data'])
-        # shortcut: stream alias VAs (mem_map_ptr on one buffer) restore as independent copies, upgrade when a checkpoint is taken after an alias mmap
+        # stream alias VAs restore as copies here; GuestStream.from_state re-links them to one buffer
         probe.mu.mem_map(begin, size, perms)
         probe.mu.mem_write(begin, data)
 
@@ -230,9 +237,19 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
 
     probe.filesystem.fds = sub['filesystem_fds']
     probe.filesystem.cache = sub['filesystem_cache']
+    # cwd is absent from pre-cwd checkpoints; leave it unset so relative paths fail as before
+    if sub.get('filesystem_cwd') is not None:
+        probe.filesystem.cwd = sub['filesystem_cwd']
+    else:
+        probe.filesystem.__dict__.pop('cwd', None)
 
     if sub.get('threads') and hasattr(probe, 'threads'):
         probe.threads = pickle.loads(sub['threads'])
+        for tid, th in probe.threads.threads.items():  # pre-fix checkpoints: re-arm blocked poll from saved R2 (timeout ms)
+            r2 = th.regs.get(arm.UC_ARM_REG_R2, 0)
+            r2 = r2 - (1 << 32) if r2 >= 1 << 31 else r2
+            if th.state == 'blocked_poll' and r2 > 0 and tid not in probe.threads.timer_waiters:
+                probe.threads.timer_waiters[tid] = sub['instructions'] + r2 * 1000
     if sub.get('uipc') and hasattr(probe, 'uipc'):
         probe.uipc = pickle.loads(sub['uipc'])
     if sub.get('sem') and hasattr(probe, 'sem'):
@@ -293,6 +310,9 @@ def restore_checkpoint(probe, filepath: Path, *, exact=False) -> None:
         probe.uname.read_fields = sub['uname']['read_fields']
 
     for dev_attr, dev_bytes in sub.get('devices', {}).items():
+        if dev_attr == 'nflash_dumps_modified':  # written images replace the freshly loaded ones
+            getattr(probe, 'nflash_dumps', {}).update(pickle.loads(dev_bytes))
+            continue
         setattr(probe, dev_attr, pickle.loads(dev_bytes))
 
     if getattr(probe, 'null_page_policy', None) == 'read-zero':

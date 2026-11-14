@@ -307,7 +307,7 @@ class InterpreterProbeTests(unittest.TestCase):
         # 1. sys_arm_set_tls(0x503204c0) (svc 0x009f0005)
         # 2. set_tid_address(sp) (syscall 256) -> returns pid=1000 in r0
         # 3. set_robust_list(sp, 12) (syscall 338) -> returns 0 in r0
-        # 4. ugetrlimit(3, sp) (syscall 191) -> writes 8MB stack limit, returns 0
+        # 4. ugetrlimit(3, sp) (syscall 191) -> writes 2MB stack limit, returns 0
         # 5. stop at syscall exit (syscall 1)
         code = struct.pack('<16I',
                            # 1. sys_arm_set_tls(0x503204c0)
@@ -351,8 +351,8 @@ class InterpreterProbeTests(unittest.TestCase):
         self.assertEqual(slot_val, 0x503204c0)
         # Check pid returned from set_tid_address
         self.assertEqual(probe.mu.reg_read(arm.UC_ARM_REG_R8), 1000)
-        # Check rlim_cur returned from ugetrlimit (8 MiB)
-        self.assertEqual(probe.mu.reg_read(arm.UC_ARM_REG_R6), 8 * 1024 * 1024)
+        # Check rlim_cur returned from ugetrlimit (2 MiB soft, as the live a6400 thread stacks show)
+        self.assertEqual(probe.mu.reg_read(arm.UC_ARM_REG_R6), 0x200000)
         # Check serviced syscalls count
         serviced_names = [s['syscall'] for s in report['serviced_syscalls']]
         self.assertIn('set_tls', serviced_names)
@@ -430,6 +430,116 @@ class InterpreterProbeTests(unittest.TestCase):
         self.assertIn('fcntl64', serviced_names)
         self.assertIn('ioctl', serviced_names)
         self.assertIn('mmap2', serviced_names)
+
+    def _ldec_probe(self, ldec_device=None):
+        # open("/dev/ldec", O_RDWR); close(fd); exit. Runs under the uipc policy, which
+        # dispatches open/close; the ldec open is serviced only when ldec_device='open-only'.
+        filesystem = {'nodes': {}, 'content_loader': lambda p, n: b''}
+        raw = b''.join(s.ljust(65, b'\0') for s in
+                       (b'Linux', b'(none)', b'3.0.27', b'#1', b'arm', b'(none)'))
+        kernel_path = PROJECT_ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin'
+        if not kernel_path.exists():
+            self.skipTest('Kernel image not available')
+        code = struct.pack('<8I',
+                           0xe28f0018,          # add r0, pc, #24 ("/dev/ldec" at byte 32)
+                           0xe3a01002,          # mov r1, #2 (O_RDWR)
+                           0xe3a07005,          # mov r7, #5 (open)
+                           0xef000000,          # svc 0 -> fd in r0
+                           0xe3a07006,          # mov r7, #6 (close, fd still in r0)
+                           0xef000000,          # svc 0
+                           0xe3a07001,          # mov r7, #1 (exit)
+                           0xef000000,          # svc 0
+                           ) + b'/dev/ldec\x00'
+        probe = self.probe(code, thumb=False, syscall_policy='uipc',
+                           uname_profile={'raw_hex': raw.hex()},
+                           filesystem=filesystem, kuser_template=extract_kuser_template(kernel_path))
+        if ldec_device is not None:
+            probe.ldec_device_policy = ldec_device
+        return probe
+
+    def test_ldec_open_only_opens_and_closes_then_stops_on_exit(self):
+        probe = self._ldec_probe('open-only')
+        report = probe.run()
+        opened = [s for s in report['serviced_syscalls'] if s['syscall'] == 'open']
+        self.assertEqual(len(opened), 1)
+        fd = opened[0]['fd']
+        self.assertGreaterEqual(fd, 3)
+        self.assertEqual(opened[0]['returned'], fd)
+        self.assertEqual(opened[0]['device_number'], [251, 0])
+        self.assertIn('close', [s['syscall'] for s in report['serviced_syscalls']])
+        self.assertNotIn(fd, probe.filesystem.fds)
+        self.assertEqual(report['status'], 'syscall_boundary')
+        self.assertEqual(report['boundary']['r7'], 1)
+
+    def test_ldec_default_stop_does_not_service_open(self):
+        probe = self._ldec_probe()
+        report = probe.run()
+        self.assertEqual(report['status'], 'unsupported_filesystem')
+        self.assertIn('/dev/ldec', str(report.get('boundary')))
+        self.assertNotIn('open', [s['syscall'] for s in report['serviced_syscalls']])
+
+    def _ldec_ioctl_probe(self, stream, dst_len):
+        # open("/dev/ldec"); ioctl(fd, 1, sp-0x400) where the 7-word job, source and
+        # destination live in the mapped stack (job at sp-0x400, src +0x40, dst +0x100).
+        filesystem = {'nodes': {}, 'content_loader': lambda p, n: b''}
+        raw = b''.join(s.ljust(65, b'\0') for s in
+                       (b'Linux', b'(none)', b'3.0.27', b'#1', b'arm', b'(none)'))
+        kernel_path = PROJECT_ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin'
+        if not kernel_path.exists():
+            self.skipTest('Kernel image not available')
+        code = struct.pack('<10I',
+                           0xe28f0020,          # add r0, pc, #32 ("/dev/ldec" at byte 40)
+                           0xe3a01002,          # mov r1, #2 (O_RDWR)
+                           0xe3a07005,          # mov r7, #5 (open)
+                           0xef000000,          # svc 0 -> fd in r0
+                           0xe3a01001,          # mov r1, #1 (ldec cmd 1)
+                           0xe24d2b01,          # sub r2, sp, #0x400 (job)
+                           0xe3a07036,          # mov r7, #54 (ioctl)
+                           0xef000000,          # svc 0
+                           0xe3a07001,          # mov r7, #1 (exit)
+                           0xef000000,          # svc 0
+                           ) + b'/dev/ldec\x00'
+        probe = self.probe(code, thumb=False, syscall_policy='uipc',
+                           uname_profile={'raw_hex': raw.hex()},
+                           filesystem=filesystem, kuser_template=extract_kuser_template(kernel_path))
+        probe.ldec_device_policy = 'lz77'
+        sp = probe.mu.reg_read(arm.UC_ARM_REG_SP)
+        job, src, dst = sp - 0x400, sp - 0x400 + 0x40, sp - 0x400 + 0x100
+        probe.mu.mem_write(src, stream)
+        probe.mu.mem_write(job, struct.pack('<7I', src, len(stream), dst, dst_len, 2, 3, 0))
+        return probe, dst
+
+    def test_ldec_lz77_ioctl_decodes_stored_and_match_blocks_into_guest_memory(self):
+        from src.a6400.execution.lz77 import inflate_block
+        stream = (bytes([0x0f, 0, 3, 0]) + b'abc'            # stored block: 'abc'
+                  + bytes([0xf0, 0x06]) + b'x' + bytes([0x00, 0x01]) + bytes([0x00, 0x00]))
+        expected, pos, out = b'', 0, b''
+        while pos < len(stream):
+            block, pos = inflate_block(stream, pos, 4096)
+            out += block
+        expected = out
+        self.assertEqual(expected, b'abcxxxx')
+        probe, dst = self._ldec_ioctl_probe(stream, len(expected))
+        report = probe.run()
+        ioctls = [s for s in report['serviced_syscalls'] if s['syscall'] == 'ioctl']
+        self.assertEqual(len(ioctls), 1)
+        self.assertEqual(ioctls[0]['device'], 'ldec')
+        self.assertEqual(ioctls[0]['returned'], 0)
+        self.assertEqual(ioctls[0]['dst_len'], len(expected))
+        self.assertEqual(bytes(probe.mu.mem_read(dst, len(expected))), expected)
+        self.assertEqual(report.get('ldec_jobs'), 1)
+        self.assertEqual(report['status'], 'syscall_boundary')
+        self.assertEqual(report['boundary']['r7'], 1)
+
+    def test_ldec_lz77_length_mismatch_stops_as_not_modeled(self):
+        stream = bytes([0x0f, 0, 3, 0]) + b'abc'
+        probe, _dst = self._ldec_ioctl_probe(stream, 4)
+        report = probe.run()
+        self.assertEqual(report['status'], 'unsupported_stream_contract')
+        self.assertEqual(report['boundary']['reason'], 'ldec_stream_not_modeled')
+        self.assertEqual(report['boundary']['dst_len'], 4)
+        self.assertEqual(report['boundary']['decoded_len'], 3)
+        self.assertNotIn('ioctl', [s['syscall'] for s in report['serviced_syscalls']])
 
     def test_uipc_policy_services_stdio_operations(self):
         filesystem = {
@@ -1132,7 +1242,7 @@ class LoaderWorkaroundTests(unittest.TestCase):
 
     IT_ADDRESSES = (0x40004e4c, 0x50259c24, 0x50034e32, 0x50034e6a,
                     0x4000a6f4, 0x5026ebc4, 0x5026ec26, 0x54194e4e,
-                    0x50259bf2, 0x50259bfc, 0x50259c00, 0x54194e56,
+                    0x50259bf2, 0x50259bfc, 0x50259c00, 0x50259822, 0x54194e56,
                     0x5026ed06, 0x5026ecfc)
     KNOWN_IT_MASK = (3 << 25) | (0x3f << 10)
 
@@ -1200,6 +1310,18 @@ class LoaderWorkaroundTests(unittest.TestCase):
         self.assertEqual(uc.registers[arm.UC_ARM_REG_CPSR],
                          initial & ~self.KNOWN_IT_MASK)
         self.assertEqual(len(uc.writes), 1)
+
+    def test_it_workaround_reapplies_skipped_largebin_index_add(self):
+        probe = InterpreterProbe()
+        probe.syscall_policy = 'threads'
+        good = b'\x38\x33\x0c\x93'
+        for sig, r3, want in ((good, 11, 67), (good, 67, 67), (b'\0\0\0\0', 11, 11)):
+            with self.subTest(sig=sig, r3=r3):
+                uc = self._RegisterUc({arm.UC_ARM_REG_CPSR: 0x30 | self.KNOWN_IT_MASK,
+                                       arm.UC_ARM_REG_R3: r3, arm.UC_ARM_REG_R11: 744})
+                uc.mem_read = lambda addr, n, sig=sig: sig
+                probe._it_workaround(uc, 0x50259822, 2, None)
+                self.assertEqual(uc.registers[arm.UC_ARM_REG_R3], want)
 
     def test_it_workaround_is_unchanged_without_it_bits(self):
         probe = InterpreterProbe()
@@ -1605,6 +1727,96 @@ class UsbControlDispatchCliTests(unittest.TestCase):
              '--uipc-inject-objmsg-packet-hex', 'deadbeef'])
         self.assertTrue(explicit.trace_usbcontrol_dispatch)
         self.assertEqual(explicit.uipc_inject_objmsg_packet_hex, 'deadbeef')
+
+
+class PipeNonblockFcntlTests(unittest.TestCase):
+    """fcntl64 F_GETFL/F_SETFL keep O_NONBLOCK; an empty non-blocking pipe read returns -EAGAIN."""
+    EAGAIN = 0xfffffff5
+
+    def setUp(self):
+        self.folder = PROJECT_ROOT / 'artifacts/tests/process-probe'
+        self.folder.mkdir(parents=True, exist_ok=True)
+
+    def _run(self, *ops):
+        # pipe(sp); then each op is a list of ARM words; exit(0) appended. sp+16 is the data buffer.
+        kernel_path = PROJECT_ROOT / 'firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/vmlinux.bin'
+        if not kernel_path.exists():
+            self.skipTest('Kernel image not available')
+        raw = b''.join(s.ljust(65, b'\0') for s in
+                       (b'Linux', b'(none)', b'3.0.27', b'#1', b'arm', b'(none)'))
+        filesystem = {'nodes': {}, 'content_loader': lambda p, n: b''}
+        words = [0xe24dd040,                 # sub sp, sp, #64
+                 0xe1a0000d, 0xe3a0702a, 0xef000000,  # pipe(sp)
+                 0xe59d4000, 0xe59d5004]     # r4 = read fd, r5 = write fd
+        for op in ops:
+            words += op
+        words += [0xe3a07001, 0xef000000]    # exit(0)
+        # fcntl64(r4, cmd, arg): F_SETFL = 4, F_GETFL = 3; arg is 0x800 (O_NONBLOCK) when set
+        code = struct.pack('<%dI' % len(words), *words)
+        app = make_elf(self.folder / 'app.elf', b'\xfe\xe7', dynamic=False)
+        interpreter = make_elf(self.folder / 'linker.elf', code, thumb=False)
+        template = extract_kuser_template(kernel_path)
+        probe = InterpreterProbe(syscall_policy='threads', uname_profile={'raw_hex': raw.hex()},
+                                 filesystem=filesystem, kuser_template=template)
+        probe.prepare(app, interpreter, ['/usr/bin/test'])
+        return probe.run()
+
+    @staticmethod
+    def _fcntl(cmd, arg=0, fd_reg=4):
+        return [0xe1a00000 | fd_reg,                     # mov r0, fd_reg
+                0xe3a01000 | cmd,                        # mov r1, #cmd
+                0xe3a02000 if arg == 0 else 0xe3a02d20,  # mov r2, #arg (0x800 = 0x20 ror 26)
+                0xe3a070dd,                              # mov r7, #221 (fcntl64)
+                0xef000000]                              # svc 0
+
+    @staticmethod
+    def _read(count=4):
+        return [0xe1a00004,                              # mov r0, r4
+                0xe28d1010,                              # add r1, sp, #16
+                0xe3a02000 | count,                      # mov r2, #count
+                0xe3a07003,                              # mov r7, #3 (read)
+                0xef000000]                              # svc 0
+
+    @staticmethod
+    def _write(count=1):
+        return [0xe1a00005,                              # mov r0, r5
+                0xe28d1010,                              # add r1, sp, #16
+                0xe3a02000 | count,                      # mov r2, #count
+                0xe3a07004,                              # mov r7, #4 (write)
+                0xef000000]                              # svc 0
+
+    def _events(self, report, name):
+        return [s for s in report['serviced_syscalls'] if s['syscall'] == name]
+
+    def test_setfl_nonblock_then_getfl_returns_it(self):
+        report = self._run(self._fcntl(4, 0x800), self._fcntl(3))
+        self.assertEqual(report['status'], 'syscall_boundary')
+        self.assertEqual(report['boundary']['r7'], 1)
+        getfl = self._events(report, 'fcntl64')
+        self.assertEqual([e['returned'] for e in getfl], [0, 0x800])
+
+    def test_getfl_defaults_to_access_mode_and_setfl_keeps_it(self):
+        # write end is O_WRONLY (1) by default; F_SETFL keeps that access mode and adds O_NONBLOCK
+        report = self._run(self._fcntl(3, fd_reg=5), self._fcntl(4, 0x800, fd_reg=5), self._fcntl(3, fd_reg=5))
+        self.assertEqual(report['status'], 'syscall_boundary')
+        self.assertEqual([e['returned'] for e in self._events(report, 'fcntl64')], [1, 0, 0x801])
+
+    def test_empty_nonblocking_pipe_read_returns_eagain(self):
+        report = self._run(self._fcntl(4, 0x800), self._read())
+        self.assertEqual(report['status'], 'syscall_boundary')
+        self.assertEqual(report['boundary']['r7'], 1)  # reached exit, thread did not block
+        self.assertEqual(self._events(report, 'read')[-1]['returned'], self.EAGAIN)
+
+    def test_empty_blocking_pipe_read_still_blocks(self):
+        report = self._run(self._read())
+        self.assertEqual(report['status'], 'blocked_read')
+        self.assertEqual(report['boundary']['fd'], 3)
+
+    def test_data_present_read_returns_it_in_both_modes(self):
+        for ops in ([self._fcntl(4, 0x800)], []):
+            report = self._run(self._write(1), *ops, self._read())
+            self.assertEqual(report['status'], 'syscall_boundary')
+            self.assertEqual(self._events(report, 'read')[-1]['returned'], 1)
 
 
 if __name__ == '__main__':

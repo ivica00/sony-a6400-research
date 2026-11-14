@@ -2,6 +2,7 @@
 import hashlib
 from pathlib import Path
 import stat
+import struct
 import unittest
 
 import unicorn
@@ -89,6 +90,19 @@ class FilesystemTests(unittest.TestCase):
         self.assertEqual(self.fs.request(19, [fd, 0xffffffff, 2])['returned'], 5)
         self.assertEqual(self.fs.request(3, [fd, 0x5000, 1])['returned'], 1)
         self.assertEqual(bytes(self.mu.mem_read(0x5000, 1)), b'F')
+
+    def test_llseek_sets_offset_and_writes_64bit_result(self):
+        fd = self.open()['returned']
+        result = 0x5000
+        event = self.fs.request(140, [fd, 0, 5, result, 0])
+        self.assertEqual((event['returned'], event['offset']), (0, 5))
+        self.assertEqual(struct.unpack('<q', bytes(self.mu.mem_read(result, 8)))[0], 5)
+        self.assertEqual(self.fs.request(3, [fd, 0x5000, 1])['returned'], 1)
+        self.assertEqual(bytes(self.mu.mem_read(0x5000, 1)), b'F')
+        self.assertEqual(self.fs.request(140, [fd, 0, 0, result, 2])['returned'], 0)
+        self.assertEqual(struct.unpack('<q', bytes(self.mu.mem_read(result, 8)))[0], 6)
+        self.assertEqual(self.fs.request(140, [fd, 0, 0, result, 7])['returned'], (-22) & 0xffffffff)
+        self.assertEqual(self.fs.fds[fd]['offset'], 6)
 
     def test_bad_read_buffer_does_not_advance(self):
         fd = self.open()['returned']
@@ -287,6 +301,29 @@ class FilesystemTests(unittest.TestCase):
 
         ev_close = fs.request(6, [fd, 0, 0])
         self.assertEqual(ev_close['returned'], 0)
+
+    def test_proc_overlay_own_maps(self):
+        class MockStatContract:
+            def request(self, metadata, address):
+                return {'returned': 0, 'metadata': metadata}
+
+        body = b'00008000-0000d000 r-xp 00000000 fc:0f 16268      /usr/bin/im.elf\n'
+        fs = GuestFilesystem(self.mu, self.nodes, lambda p, n: b'', stat_contract=MockStatContract(),
+                             proc_overlay='experimental-empty', maps_provider=lambda: body)
+        ev_open = fs.request(5, [self.path('/proc/1000/maps'), 0, 0])
+        self.assertEqual(ev_open['reason'], 'opened_emulator_proc_maps')
+        fd = ev_open['returned']
+        self.assertEqual(fs.request(197, [fd, 0x5000, 0])['metadata']['size'], 0)  # procfs reports size 0
+        self.assertEqual(fs.request(33, [self.path('/proc/self/maps'), 0, 0])['returned'], 0)
+        ev_read = fs.request(3, [fd, 0x5000, 4096])
+        self.assertEqual(ev_read['returned'], len(body))
+        self.assertEqual(bytes(self.mu.mem_read(0x5000, len(body))), body)
+        self.assertEqual(fs.request(3, [fd, 0x5000, 4096])['returned'], 0)  # EOF
+        self.assertEqual(fs.request(6, [fd, 0, 0])['returned'], 0)
+        # another pid stays ENOENT; without a provider /proc/<pid>/maps is ENOENT too
+        self.assertEqual(fs.request(5, [self.path('/proc/1001/maps'), 0, 0])['returned'], 0xfffffffe)
+        bare = GuestFilesystem(self.mu, self.nodes, lambda p, n: b'', proc_overlay='experimental-empty')
+        self.assertEqual(bare.request(5, [self.path('/proc/1000/maps'), 0, 0])['returned'], 0xfffffffe)
 
     def test_setting_overlay_stop_policy_blocks_setting(self):
         fs = GuestFilesystem(self.mu, self.nodes, lambda p, n: b'', setting_overlay='stop')

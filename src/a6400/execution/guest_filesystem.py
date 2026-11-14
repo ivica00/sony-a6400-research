@@ -5,6 +5,7 @@ import struct
 import unicorn
 from src.a6400.images.guest_paths import resolve_guest
 from src.a6400.execution.guest_memory import accessible
+from src.a6400.execution.guest_procmaps import PROC_MAPS_RE
 from src.a6400.images.verified_content import ContentUnavailable
 
 UNKNOWN_ROOTS = ('/dev', '/proc', '/sys', '/tmp', '/setting', '/log', '/cert', '/lens',
@@ -78,13 +79,16 @@ class GuestFilesystem:
     EXPERIMENTAL_PROC_MODULES_METADATA = {'mode': 0o100444, 'uid': 0, 'gid': 0, 'nlink': 1, 'inode': 2,
                                           'size': len(AUTHENTIC_PROC_MODULES), 'block_size': 1024,
                                           'blocks_512': (len(AUTHENTIC_PROC_MODULES) + 511) // 512}
+    EXPERIMENTAL_PROC_MAPS_METADATA = {'mode': 0o100444, 'uid': 0, 'gid': 0, 'nlink': 1, 'inode': 3,
+                                       'size': 0, 'block_size': 1024, 'blocks_512': 0}
     EXPERIMENTAL_SETTING_METADATA = {'mode': 0o040755, 'uid': 0, 'gid': 0, 'nlink': 2, 'inode': 1,
                                      'size': 4096, 'block_size': 4096, 'blocks_512': 8}
 
     def __init__(self, mu, nodes, content_loader, before_read=None, after_write=None,
                  uid=0, gid=0, stat_contract=None, unknown_roots=UNKNOWN_ROOTS,
                  urandom_open=False, urandom_entropy_policy='stop', urandom_seed=b'\x12\x34\x56\x78',
-                 tmp_overlay='stop', proc_overlay='stop', setting_overlay='stop'):
+                 tmp_overlay='stop', proc_overlay='stop', setting_overlay='stop',
+                 maps_provider=None, maps_pid=1000):
         if urandom_entropy_policy not in ('stop', 'deterministic'):
             raise ValueError(f'Unknown urandom entropy policy: {urandom_entropy_policy}')
         if tmp_overlay not in ('stop', 'experimental-empty'):
@@ -94,6 +98,7 @@ class GuestFilesystem:
         if setting_overlay not in ('stop', 'experimental-empty', 'observed-gps', 'observed-e0301'):
             raise ValueError(f'Unknown setting overlay policy: {setting_overlay}')
         self.setting_overlay = setting_overlay
+        self.maps_provider, self.maps_pid = maps_provider, maps_pid  # /proc/<pid>/maps snapshot source
         self.tmp_overlay = tmp_overlay
         self.proc_overlay = proc_overlay
         self.mu, self.nodes, self.content_loader = mu, nodes, content_loader
@@ -145,7 +150,22 @@ class GuestFilesystem:
                 self.fds[fd] = {'path': '/proc/modules', 'device': 'proc_modules', 'data': AUTHENTIC_PROC_MODULES, 'offset': 0, 'flags': args[1]}
                 return {**event, **note, 'returned': fd, 'reason': 'opened_authentic_proc_modules',
                         'size': len(AUTHENTIC_PROC_MODULES), 'sha256': hashlib.sha256(AUTHENTIC_PROC_MODULES).hexdigest()}
+            if self._is_own_maps(path):
+                fd = next((candidate for candidate in range(3, 259) if candidate not in self.fds), None)
+                if fd is None:
+                    raise UnsupportedFilesystem('experimental_descriptor_limit')
+                data = self.maps_provider()
+                self.fds[fd] = {'path': path, 'device': 'proc_modules', 'data': data, 'offset': 0, 'flags': args[1],
+                                'metadata': self.EXPERIMENTAL_PROC_MAPS_METADATA}  # size 0 like procfs
+                return {**event, **note, 'returned': fd, 'reason': 'opened_emulator_proc_maps', 'size': len(data)}
             return {**event, **note, 'returned': (-2) & 0xffffffff, 'reason': 'ENOENT_experimental_empty_proc'}
+        if self._is_own_maps(path):
+            if number == 33:
+                return {**event, **note, 'returned': 0, 'reason': 'emulator_proc_maps_access'}
+            if self.stat_contract is None:
+                raise UnsupportedFilesystem('stat64_success_structure_not_implemented', path=path)
+            meta = dict(self.EXPERIMENTAL_PROC_MAPS_METADATA)
+            return {**event, **note, **self.stat_contract.request(meta, args[1]), 'experimental_values': meta}
         if path == '/proc/modules':
             if number == 33:
                 return {**event, **note, 'returned': 0, 'reason': 'authentic_proc_modules_access'}
@@ -162,6 +182,10 @@ class GuestFilesystem:
             raise UnsupportedFilesystem('stat64_success_structure_not_implemented', path=path)
         result = self.stat_contract.request(dict(self.EXPERIMENTAL_PROC_METADATA), args[1])
         return {**event, **note, **result, 'experimental_values': dict(self.EXPERIMENTAL_PROC_METADATA)}
+
+    def _is_own_maps(self, path):
+        match = PROC_MAPS_RE.match(path)
+        return bool(match and self.maps_provider and match.group(1) in ('self', str(self.maps_pid)))
 
     def _setting_overlay_request(self, number, event, path, args):
         """Experimental /setting mount contract. Returns an event or None."""
@@ -279,7 +303,10 @@ class GuestFilesystem:
                 except UnicodeDecodeError:
                     raise UnsupportedFilesystem('non_ascii_guest_path')
                 if not path.startswith('/'):
-                    raise UnsupportedFilesystem('relative_path_requires_cwd', path=path)
+                    cwd = getattr(self, 'cwd', None)  # set by chdir; older checkpoints lack it
+                    if cwd is None:
+                        raise UnsupportedFilesystem('relative_path_requires_cwd', path=path)
+                    path = cwd.rstrip('/') + '/' + path
                 return path
             raw.extend(byte)
         raise PathError(36, 'ENAMETOOLONG')
@@ -355,7 +382,7 @@ class GuestFilesystem:
 
     def request(self, number, args):
         names = {3: 'read', 5: 'open', 6: 'close', 12: 'chdir', 19: 'lseek', 33: 'access', 39: 'mkdir',
-                 195: 'stat64', 197: 'fstat64', 217: 'getdents64'}
+                 140: '_llseek', 195: 'stat64', 197: 'fstat64', 217: 'getdents64'}
         if number not in names:
             raise UnsupportedFilesystem('unimplemented_file_syscall', number=number)
         event = {'syscall': names[number], 'arguments': list(args[:3])}
@@ -384,7 +411,6 @@ class GuestFilesystem:
                 if node['kind'] != 'directory':
                     raise PathError(20, 'ENOTDIR_chdir')
                 self._permission(node, 1)
-                # relative paths still stop in _path (relative_path_requires_cwd); only stored for now
                 self.cwd = resolved
                 return {**event, 'returned': 0, 'reason': 'chdir_image_directory', 'resolved_path': resolved}
             if number in (5, 33, 195):
@@ -485,7 +511,7 @@ class GuestFilesystem:
                 if number == 197:
                     if self.stat_contract is None:
                         raise UnsupportedFilesystem('stat64_success_structure_not_implemented', path=descriptor['path'])
-                    meta = dict(self.EXPERIMENTAL_PROC_MODULES_METADATA)
+                    meta = dict(descriptor.get('metadata') or self.EXPERIMENTAL_PROC_MODULES_METADATA)
                     result = self.stat_contract.request(meta, args[1])
                     return {**event, 'experimental': 'procfs overlay; virtual /proc namespace', **result,
                             'experimental_values': meta}
@@ -501,6 +527,8 @@ class GuestFilesystem:
                         raise UnsupportedFilesystem('large_file_seek_requires_llseek')
                     descriptor['offset'] = offset
                     return {**event, 'returned': offset, 'reason': 'guest_offset_updated'}
+                if number == 140:
+                    return {**event, **self._llseek(descriptor, args)}
                 pointer, count = args[1:3]
                 if count > 1024 * 1024:
                     raise UnsupportedFilesystem('experimental_read_limit', count=count)
@@ -557,6 +585,8 @@ class GuestFilesystem:
                     raise UnsupportedFilesystem('large_file_seek_requires_llseek')
                 descriptor['offset'] = offset
                 return {**event, 'returned': offset, 'reason': 'guest_offset_updated'}
+            if number == 140:
+                return {**event, **self._llseek(descriptor, args)}
             pointer, count = args[1:3]
             if count > 1024 * 1024:
                 raise UnsupportedFilesystem('experimental_read_limit', count=count)
@@ -572,6 +602,28 @@ class GuestFilesystem:
             return {**event, 'returned': amount, 'reason': 'read_snapshot', 'offset_before': offset}
         except PathError as error:
             return {**event, 'returned': (-error.errno) & 0xffffffff, 'reason': error.reason}
+
+    def _llseek(self, descriptor, args):
+        # _llseek(fd, offset_high, offset_low, loff_t *result, whence): 64-bit offset, result written to guest
+        offset = ((args[1] << 32) | args[2]) & 0xffffffffffffffff
+        if offset >= 1 << 63:
+            offset -= 1 << 64
+        whence = args[4]
+        if whence not in (0, 1, 2):
+            raise PathError(22, 'EINVAL_whence')
+        base = (0, descriptor['offset'], len(descriptor['data']))[whence]
+        new = base + offset
+        if new < 0:
+            raise PathError(22, 'EINVAL_negative_offset')
+        if new >= 1 << 63:
+            raise PathError(22, 'EINVAL_offset_overflow')
+        if not accessible(self.mu, args[3], 8, unicorn.UC_PROT_WRITE):
+            raise PathError(14, 'EFAULT_llseek_result')
+        self.mu.mem_write(args[3], struct.pack('<q', new))
+        if self.after_write:
+            self.after_write(args[3], 8)
+        descriptor['offset'] = new
+        return {'returned': 0, 'reason': 'guest_offset_updated', 'offset': new}
 
     def _stat(self, node, address):
         if self.stat_contract is None:

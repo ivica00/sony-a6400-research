@@ -73,6 +73,12 @@ class GuestThread:
 class GuestThreads:
     """Manages thread lifecycle, cooperative scheduling, and synchronization primitives."""
 
+    def __getstate__(self):
+        # timer_fire is a bound probe method (holds Unicorn ctypes); _sync_timer_objects re-sets it every step.
+        state = self.__dict__.copy()
+        state.pop('timer_fire', None)
+        return state
+
     def __init__(self, initial_tid: int = 1000):
         self.process_id = initial_tid  # All supported clones include CLONE_THREAD.
         self.current_tid = initial_tid
@@ -196,12 +202,21 @@ class GuestThreads:
         """Makes timer waiters whose deadline has passed runnable (--uipc-timer-service)."""
         due = [tid for tid, deadline in getattr(self, 'timer_waiters', {}).items() if deadline <= now]
         for tid in due:
-            del self.timer_waiters[tid]
+            self.timer_waiters.pop(tid, None)
+            if tid < 0 and getattr(self, 'timer_fire', None):  # pseudo-waiter -key: an armed osal timer object expired
+                self.timer_fire(-tid)
             if tid in self.threads and self.threads[tid].state == 'blocked_uipc':  # rcv_msg_tmo expiry
                 queue = self.threads[tid].blocked_uaddr
                 if tid in self.uipc_waiters.get(queue, []):
                     self.uipc_waiters[queue].remove(tid)
                 self.threads[tid].blocked_uaddr = None
+                self.threads[tid].state = 'runnable'
+            if tid in self.threads and self.threads[tid].state == 'blocked_poll':  # finite poll timeout expiry
+                for waiting in self.fd_waiters.values():
+                    if tid in waiting:
+                        waiting.remove(tid)
+                self.threads[tid].blocked_uaddr = None
+                self.threads[tid].poll_expired = True  # the re-executed svc returns 0 instead of blocking again
                 self.threads[tid].state = 'runnable'
             if tid in self.threads and self.threads[tid].state == 'blocked_timer':
                 self.threads[tid].state = 'runnable'
@@ -397,9 +412,11 @@ class GuestThreads:
         }
         return next_tid, event
 
-    def handle_fd_wait(self, fd: int, op: str, resume_pc: int, extra_fds: Optional[List[int]] = None) -> Tuple[Optional[int], Dict[str, object]]:
-        """Handles blocking wait on one or more file descriptors (e.g. read or poll)."""
+    def handle_fd_wait(self, fd: int, op: str, resume_pc: int, extra_fds: Optional[List[int]] = None, deadline: Optional[int] = None) -> Tuple[Optional[int], Dict[str, object]]:
+        """Handles blocking wait on one or more file descriptors (e.g. read or poll); a deadline arms a timeout wake."""
         curr_thread = self.threads[self.current_tid]
+        if deadline is not None:
+            self.__dict__.setdefault('timer_waiters', {})[self.current_tid] = deadline
         curr_thread.state = f'blocked_{op}'
         curr_thread.blocked_uaddr = fd
         all_fds = [fd] + [f for f in (extra_fds or []) if f != fd]
@@ -425,6 +442,11 @@ class GuestThreads:
         woken = []
         for tid in waiters:
             if tid in self.threads and self.threads[tid].state.startswith('blocked_'):
+                if self.threads[tid].state == 'blocked_poll':  # data beat the poll deadline
+                    self.__dict__.setdefault('timer_waiters', {}).pop(tid, None)
+                    for waiting in self.fd_waiters.values():
+                        if tid in waiting:
+                            waiting.remove(tid)
                 self.threads[tid].state = 'runnable'
                 self.threads[tid].blocked_uaddr = None
                 woken.append(tid)

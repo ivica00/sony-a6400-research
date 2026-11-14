@@ -13,6 +13,7 @@ class CappedLog(deque):
         self.counts: Dict[str, int] = {} if counts is None else dict(counts)
         self.total = len(items) if total is None else total
         self.on_append = None  # live-tail callback (BootLogger); not pickled
+        self.observer = None  # uncapped aggregator (RunSummary); not pickled, rewired by set_record_limit
         if counts is None:
             for item in items:
                 self._count(item)
@@ -26,6 +27,8 @@ class CappedLog(deque):
         self.total += 1
         self._count(item)
         super().append(item)
+        if self.observer is not None:
+            self.observer(item)
         if self.on_append is not None:
             self.on_append(item)
 

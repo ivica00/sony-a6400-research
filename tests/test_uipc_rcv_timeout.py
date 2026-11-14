@@ -104,6 +104,17 @@ class ThreadsTimerWakeTests(unittest.TestCase):
         self.assertNotIn(1000, threads.timer_waiters)
         self.assertEqual(threads.wake_due(self.DEADLINE), [])
 
+    def test_timer_object_pseudo_waiter_fires_hook_at_deadline(self):
+        threads = self.make_threads()
+        fired = []
+        threads.timer_fire = fired.append
+        threads.timer_waiters[-7] = self.DEADLINE
+        threads.wake_due(self.DEADLINE - 1)
+        self.assertEqual(fired, [])
+        threads.wake_due(self.DEADLINE)
+        self.assertEqual(fired, [7])
+        self.assertNotIn(-7, threads.timer_waiters)
+
 
 if __name__ == '__main__':
     unittest.main()

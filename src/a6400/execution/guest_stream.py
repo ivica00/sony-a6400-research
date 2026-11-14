@@ -2,6 +2,7 @@
 
 No physical memory, DMA engine or display processor is emulated here.
 """
+import bisect
 import ctypes
 import struct
 
@@ -74,9 +75,9 @@ class GuestStream:
             raise UnsupportedStream('stream_multiple_mapping_requires_physical_alias_contract')
         if addr and addr % PAGE_SIZE:
             raise UnsupportedStream('stream_unaligned_address_hint', address=addr)
-        chosen = addr or self.mapper.next_address
-        if any(p in self.mapper.mapped_pages for p in range(chosen, chosen + rounded, PAGE_SIZE)):
-            raise UnsupportedStream('stream_mapping_would_replace_existing_pages', address=chosen, length=rounded)
+        # Only MAP_FIXED replaces pages; non-fixed placement is request_mmap2's free-hole search.
+        if flags & 0x10 and any(p in self.mapper.mapped_pages for p in range(addr, addr + rounded, PAGE_SIZE)):
+            raise UnsupportedStream('stream_mapping_would_replace_existing_pages', address=addr, length=rounded)
         # Anonymous storage is an implementation detail, not supplied physical
         # zeroes. Every byte is guarded before execution resumes.
         event = self.mapper.request_mmap2(addr, length, prot, flags | 0x20, -1, 0)
@@ -112,9 +113,9 @@ class GuestStream:
         self.transactions.append({'operation': 'mmap', **self.mapping, 'offset': self.offset})
         return event
 
-    def _alias(self, root, new, event):
-        """Back both VAs with one host buffer so writes through either are visible through the other."""
-        size, a, b = root['length'], root['virtual_start'], new['virtual_start']
+    def _buffer(self, root):
+        """Host buffer backing a root VA; created from the root's current bytes, root remapped onto it."""
+        a, size = root['virtual_start'], root['length']
         buf = self._alias_buffers.get(a)
         if buf is None:
             perms = [(max(begin, a), min(end + 1, a + size), p) for begin, end, p in self.mu.mem_regions()
@@ -125,15 +126,39 @@ class GuestStream:
             for begin, end, p in perms:
                 self.mu.mem_protect(begin, end - begin, p)
             self._alias_buffers[a] = buf
-        self.mu.mem_unmap(b, size)
-        self.mu.mem_map_ptr(b, size, unicorn.UC_PROT_ALL, ctypes.addressof(buf))
-        self.mu.mem_protect(b, size, root['prot'])
+        return buf
+
+    def _link(self, root, b, prot):
+        buf = self._buffer(root)
+        self.mu.mem_unmap(b, root['length'])
+        self.mu.mem_map_ptr(b, root['length'], unicorn.UC_PROT_ALL, ctypes.addressof(buf))
+        self.mu.mem_protect(b, root['length'], prot)
+
+    def _alias(self, root, new, event):
+        """Back both VAs with one host buffer so writes through either are visible through the other."""
+        size, a, b = root['length'], root['virtual_start'], new['virtual_start']
+        self._link(root, b, root['prot'])
         new['alias_of'] = a
         event['alias_of'] = a
         # Unknown-byte state is shared: copy the root's, hook the alias; forget_range clears both.
         self.unknown += [(begin - a + b, end - a + b) for begin, end in self.unknown if a <= begin < a + size]
         self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read, begin=b, end=b + size - 1)
         self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write, begin=b, end=b + size - 1)
+
+    def relink_aliases(self):
+        """After a checkpoint restore: re-share aliases (restored as copies) and re-register guard hooks."""
+        by_va = {m['virtual_start']: m for m in self.mappings}
+        for m in self.mappings:
+            root = by_va.get(m.get('alias_of'))
+            if root is None:
+                continue
+            prot = next(p for begin, end, p in self.mu.mem_regions() if begin <= m['virtual_start'] <= end)
+            self._link(root, m['virtual_start'], prot)  # root bytes win; copies were identical when saved
+        for m in self.mappings:  # guards are hooks on a fresh probe; roots hook only while bytes are unknown
+            lo, hi = m['virtual_start'], m['virtual_start'] + m['length']
+            if 'alias_of' in m or any(lo < end and begin < hi for begin, end in self.unknown):
+                self.mu.hook_add(unicorn.UC_HOOK_MEM_READ, self._read, begin=lo, end=hi - 1)
+                self.mu.hook_add(unicorn.UC_HOOK_MEM_WRITE, self._write, begin=lo, end=hi - 1)
 
     def details(self, address, size):
         if any(address < end and begin < address + size for begin, end in self.unknown):
@@ -151,8 +176,22 @@ class GuestStream:
         if details:
             self.stop(details)
 
+    def _overlaps_unknown(self, address, size):
+        """Fast path for the per-write hook: bisect over unknown ranges (rebuilt only when the list changes)."""
+        if getattr(self, '_index_src', None) is not self.unknown:
+            ranges = sorted(self.unknown)
+            self._index_starts = [begin for begin, _ in ranges]
+            self._index_maxlast, top = [], -1
+            for _, last in ranges:
+                top = max(top, last)
+                self._index_maxlast.append(top)
+            self._index_src = self.unknown
+        i = bisect.bisect_left(self._index_starts, address + size)
+        return i > 0 and self._index_maxlast[i - 1] > address
+
     def _write(self, uc, access, address, size, value, data):
-        if accessible(uc, address, size, unicorn.UC_PROT_WRITE):
+        # Profiled at ~97% of wall time when every write rescanned mem_regions; only writes into unknown bytes matter.
+        if self._overlaps_unknown(address, size) and accessible(uc, address, size, unicorn.UC_PROT_WRITE):
             self.forget_range(address, size)
 
     def forget_range(self, address, size):
@@ -198,6 +237,8 @@ class GuestStream:
         self.mappings = list(state.get('mappings') or [])
         self.offset = int(state.get('offset', 0))
         self.unknown = [tuple(item) for item in (state.get('unknown') or [])]
+        self._alias_buffers = {}
+        self.relink_aliases()
         for begin, end in self.unknown:
             if (begin, end) in existing:
                 continue

@@ -114,6 +114,40 @@ class TestGuestUipc(unittest.TestCase):
         self.assertEqual(ret, 0)
         self.assertNotIn(msg_addr, uipc.allocated_msgs)
 
+    def _valloc(self, uipc, size):
+        self._writer(0x1000, struct.pack('<II', 0, 0x2000))
+        self._writer(0x2000, struct.pack('<III', 0x3000, size, 1))
+        ret = uipc.handle_ioctl(self._reader, self._writer, UIPC_CMD_VALLOC_MSG_WAIT, 0x1000)
+        return ret, struct.unpack('<I', self._reader(0x3000, 4))[0]
+
+    def _free(self, uipc, msg):
+        self._writer(0x1200, struct.pack('<II', 0, msg))
+        uipc.handle_ioctl(self._reader, self._writer, UIPC_CMD_FREE_MSG, 0x1200)
+
+    def test_freed_messages_are_reused_not_leaked(self):
+        uipc = GuestUipc(total_pool_size=0x1000)
+        uipc.pool_base = 0x50330000
+        keep = self._valloc(uipc, 52)[1]
+        for _ in range(200):  # 200 * 64 B >> 4 KiB pool: only reuse can succeed
+            ret, m = self._valloc(uipc, 52)
+            self.assertEqual(ret, 0)
+            self._free(uipc, m)
+        self.assertEqual(uipc.next_offset, 0x20 + 2 * 64)
+        # live messages still exhaust the pool
+        got = [self._valloc(uipc, 52)[0] for _ in range(70)]
+        self.assertIn(-12, got)
+        self.assertIn(keep, uipc.allocated_msgs)
+
+    def test_old_checkpoint_holes_rebuilt(self):
+        uipc = GuestUipc(total_pool_size=0x1000)
+        uipc.pool_base = 0x50330000
+        a = self._valloc(uipc, 52)[1]
+        b = self._valloc(uipc, 52)[1]
+        uipc.__dict__.pop('free_blocks', None)  # as unpickled from a pre-fix checkpoint
+        self._free(uipc, a)
+        self.assertEqual(self._valloc(uipc, 52)[1], a)
+        self.assertIn(b, uipc.allocated_msgs)
+
     def test_reg_msg_queue_cb(self):
         uipc = GuestUipc()
         from src.a6400.execution.guest_uipc import UIPC_CMD_REG_MSG_QUEUE_CB
