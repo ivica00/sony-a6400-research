@@ -151,9 +151,12 @@ class DataAbortDeliveryTests(unittest.TestCase):
     def test_user_copy_helpers_are_demand_page_whitelisted(self):
         machine = self.make_machine(symbols={
             'strncpy_from_user': 0x60A00000, 'copy_to_user': 0x60B00000,
+            '__strncpy_from_user': 0x60B80000, '__strnlen_user': 0x60B90000,
             'kmalloc': 0x60C00000})
         self.assertTrue(machine._in_demand_page_helper(0x60A00010))
         self.assertTrue(machine._in_demand_page_helper(0x60B00020))
+        self.assertTrue(machine._in_demand_page_helper(0x60B80008))
+        self.assertTrue(machine._in_demand_page_helper(0x60B90008))
         self.assertFalse(machine._in_demand_page_helper(0x60C00030))
 
     def test_svc_data_abort_counts_delivery(self):

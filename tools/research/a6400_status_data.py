@@ -218,34 +218,34 @@ class StatusSnapshot:
 
 STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
-    as_of="2026-11-13",
+    as_of="2026-11-14",
     latest=EvidenceRef(
-        evidence_id="E0503",
-        path="docs/evidence/0503-cxd90045-ret-fast-syscall-0x6010def8-and-ash.md",
-        date="2026-11-13",
-        title="enforced USR|Thumb return at 0x6010DEF8 (ret_fast_syscall): second syscall now executes; 0x0402F666 repeat persists",
+        evidence_id="E0504",
+        path="docs/evidence/0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md",
+        date="2026-11-14",
+        title="0x0402F666 Thumb USR (T=1) PC-relative ldr.w decode, fast-syscall r0 preserve, ARM VFP (__sigsetjmp), uaccess/high-vector PT walk, and BusyBox _start (0x0000C439) + libc.so.6 execution (svc_hits = 71)",
         demonstrated=(
-            "Offline (no camera). Enforced user return added for the fast syscall path: 0x6010DEC0 snapshots the "
-            "kernel-built pt_regs (base=SP+8, backing the E0500 dump values ARM_sp=0x5E864C04, ARM_lr=0x0403E98D, "
-            "ARM_pc=0x0403EB16, ARM_cpsr=0x600000F0) and 0x6010DEF8 (movs pc, lr) performs the same enforced restore as "
-            "0x6010DF64: CPSR=USR|Thumb, r0-r12/SP_usr/LR_usr from the frame and PC=thumb_pc(frame.pc) so Unicorn's "
-            "Thumb LSB binding is applied instead of decoding the even return PC as ARM. Effect: the second syscall now "
-            "executes - svc_trace shows two brk entries ({pc 0x0403EB16, r7 45} twice, svc_hits=2) instead of one, "
-            "proving the fast-syscall return reaches user code and can issue another SVC. However the 0x0402F666 repeat "
-            "persists: stop instruction_limit PC 0x6010DE20, pt_frame_gen=30, classification still ends with repeating "
-            "0x0402F666 prefetch entries, serial 0 B, no shell. The even-PC/T-bit theory is therefore only partially "
-            "supported; next trace must log CPSR.T/CPSR.M at that fetch (candidate: 0x0402F666 is genuinely entered in "
-            "ARM state via blx to an ARM-only routine and the recovery path treats it as Thumb). New test "
-            "test_fast_syscall_return_enforces_usr_thumb_odd_pc; suite 1728 OK."
+            "Offline (no camera). Added cpsr to fault_classification_trace and e0504_trace hook at 0x0402F660..0x0402F670: "
+            "every fetch at 0x0402F666 enters in Thumb USR mode (cpsr=0x60000030, T=1, M=0x10, sp=0x5E864B50, lr=0x0403D7D1). "
+            "Fixed four root causes: (1) _decode_fault_address now handles base_name=='pc' (Thumb/ARM alignment) and Capstone "
+            "register aliases (sb/sl/fp/ip), decoding 0x0402F666 (ldr.w r4,[pc,#0xbec]) as data-decoded on 0x04030254 so "
+            "0x0402F666 executes once after demand-paging 0x04030000; (2) _capture_fast_syscall_frame at 0x6010DEC0 preserves "
+            "live r0 in frame_words[0] so sys_brk(0) returns 0x00055000 instead of entry 0; (3) enabled UC_ARM_REG_FPEXC=0x40000000 "
+            "and preserved ARM mode on T=0 recovery so genuine ARM routines in ld-2.11.2.so (__sigsetjmp vstmia ip!,{d8-d15} at "
+            "0x0403F034) execute natively; (4) added __ex_table uaccess helpers (__strncpy_from_user, etc.) to demand_page_helpers "
+            "and consulted _walk_kernel_pt for vaddr>=0xFFFF0000 so timer IRQs at 0xFFFF0018 use the real vector page (PA 0x1FFFE000). "
+            "Result: ld-2.11.2.so maps /lib/libc.so.6 (0x040FC000..0x041F4000) and jumps to BusyBox _start (0x0000C438/0x0000C439); "
+            "BusyBox and libc.so.6 execute in USR mode reaching svc_hits=71, kuser_hits=35, pt_frame_gen=330, user_restores=214, "
+            "tlb_fills=530,636. Suite 1741 OK."
         ),
         boundary=(
-            "No shell: serial 0 B, two SVCs. Next: add cpsr to the fault classification entry and print CPSR.T/CPSR.M at "
-            "the 0x0402F666 fetch; if T=0 (ARM) fix the fault trigger/recovery instead of forcing Thumb; then re-run and "
-            "expect 0x0402F666 once, the loader's syscall chain, BusyBox _start 0x0000C439 and live ash."
+            "No shell yet (serial_bytes=0): at the end of the 800M run, libc.so.6 (LR_usr=0x0412EB07, SP_usr=0x5E864530) branches "
+            "to 0x041F2000 (libc.so.6 RW .got/.data page), triggering a fatal user prefetch abort into em_exception_monitor "
+            "(__delay+0x8). Next: inspect libc.so.6 around 0x0412EAE0..0x0412EB20 and the GOT/PLT slot holding 0x041F2000."
         ),
         tier="OFFLINE BOUNDED UNICORN BRING-UP",
     ),
-    headline="1720 tests recorded passing | No verified emulator GUI frame",
+    headline="1741 tests recorded passing | No verified emulator GUI frame",
     cards=(
         EvidenceRef(
             evidence_id="E0476",
@@ -450,9 +450,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1720,
-        recorded_at="2026-11-13",
-        evidence_id="E0490",
+        test_count=1741,
+        recorded_at="2026-11-14",
+        evidence_id="E0504",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(

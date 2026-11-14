@@ -20,7 +20,7 @@ of "full firmware compatibility."
 
 ## Latest progress
 
-- **Update chain measured ([E0503](docs/evidence/0503-cxd90045-ret-fast-syscall-0x6010def8-and-ash.md), and the IPC edge inventory in [E0483](docs/evidence/0483-ipc-edge-inventory-libobj.md), and the platform model in [E0490](docs/evidence/0490-platform-model-and-flash-boundary.md)):**
+- **Update chain measured ([E0504](docs/evidence/0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md), and the IPC edge inventory in [E0483](docs/evidence/0483-ipc-edge-inventory-libobj.md), and the platform model in [E0490](docs/evidence/0490-platform-model-and-flash-boundary.md)):**
   The image is **not** AES-encrypted. 484 files under the a6400 tree are ELF objects readable
   as-is; integrity is CRC32 (`uc_crc32sum.elf`, which imports no crypto at all) and MD5
   (`md5sum -c` in `loader_writer.sh`), and none of the updater tree's 18 scripts verifies a
@@ -38,13 +38,14 @@ of "full firmware compatibility."
   symbols now resolve for every body **without a camera**, and for the a6400 the offline
   decode matches the existing live `/proc/kallsyms` read on all seven symbols. The
   `ilce_6100`, `ilce_6600` and `ilce_7m3` profiles stop being stubs and carry sourced values.
-- **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0475](docs/evidence/0475-cxd90045-ldso-0403d6b2-and-live-ash.md)):**
+- **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0504](docs/evidence/0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md)):**
   Decoded the camera's first-stage bootloader and updater boot images, and emulated the
   interrupt controller, system timers, clock hardware, and serial console. The updater
   Linux kernel now boots through delay calibration, mounts its compressed root filesystem,
   captures **52,976 bytes** of live serial output, and accepts Sony's custom boot-argument
-  override. User-space memory faults are now routed cleanly into the kernel without stack
-  corruption, though the kernel's fault handler does not yet resume the first user program
+  override. User-space demand paging, fast-syscall return, and ARM VFP context save now
+  carry `ld-2.11.2.so` through `/lib/libc.so.6` linking into **BusyBox `_start` (`0x0000C439`)**
+  with 71 user syscalls and 35 kuser helper calls before a `libc.so.6` branch to `0x041F2000`
   (so an interactive shell is not open yet).
 - **Persistent USB Debugger ([E0400](docs/evidence/0400-usb-debugger-and-runtime-probe-infra.md)–[E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md)):**
   A v2 USB debugger runs in Mass Storage mode, letting us read kernel logs (including
@@ -65,10 +66,10 @@ of "full firmware compatibility."
 
 ## Status overview
 
-Recorded suite: 1720 tests. Each result is bounded by its own dated evidence record; no
+Recorded suite: 1741 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=d965e2ea77d0)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=412a6e19a43f)
 
 ### Subsystem status
 
@@ -83,7 +84,7 @@ UVC video frame, no flash write, and no full firmware boot is claimed.
 | **USB Debugger v2** | Persistent Mass Storage debugger for reading live/warm-reboot kernel logs and USB state | Deploying the always-on WinUSB vendor interface | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
 | **Test UVC video pattern** | Streams a synthetic 720p MJPEG pattern at ~30 FPS; ZV-E10 USB video stack cataloged as reference | Wiring the live camera sensor feed | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
 | **Multi-camera profiles** | Verified a6400 profile and ZV-E10 reference chain | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
-| **Automated checks** | 1720 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
+| **Automated checks** | 1741 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
 
 ## How to help (no camera needed)
 

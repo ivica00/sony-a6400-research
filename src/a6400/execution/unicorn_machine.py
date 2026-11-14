@@ -1158,7 +1158,7 @@ class UnicornMachine:
                              begin=ret_to_user, end=ret_to_user + 3)
         # E0431: emulate the usr_entry banked store `stmdb r0, {sp, lr}^` in the
         # __pabt_usr/__dabt_usr handlers (Unicorn has no banked R13/R14).
-        for handler_name in ('__pabt_usr', '__dabt_usr'):
+        for handler_name in ('__pabt_usr', '__dabt_usr', '__irq_usr'):
             handler_pc = self._symbol_address(handler_name)
             if handler_pc is not None:
                 banked_pc = handler_pc + 0x1C
@@ -1394,6 +1394,10 @@ class UnicornMachine:
         if cpsr & 0x80:  # CPSR.I: interrupts masked
             return False
         pc = self.uc.reg_read(UC_ARM_REG_PC)
+        if (cpsr & 0x1F) == 0x10:
+            self.user_sp = self.uc.reg_read(UC_ARM_REG_SP)
+            self.mode_sp['usr'] = self.user_sp
+            self.mode_lr['usr'] = self.uc.reg_read(UC_ARM_REG_LR)
         # Enter ARM IRQ mode first, then write the *banked* SPSR_irq/LR_irq; SPSR is
         # per-mode, so writing it before the CPSR switch would hit SPSR_svc instead.
         self.uc.reg_write(UC_ARM_REG_CPSR, 0x12 | 0xC0)
@@ -2739,6 +2743,9 @@ class UnicornMachine:
     def _translate_virtual(self, vaddr: int) -> int | None:
         """Map a VA to a PA for the UC_TLB_VIRTUAL fill hook (E0448)."""
         if vaddr >= 0xFFFF0000:
+            pa = self._walk_kernel_pt(vaddr)
+            if pa is not None:
+                return pa
             # high vectors and the identity-mapped MMIO/SRAM window
             return vaddr
         if vaddr >= 0x60000000:
