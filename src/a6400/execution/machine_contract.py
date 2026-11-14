@@ -134,14 +134,23 @@ def recover_machine_descriptor(image: bytes, *, virtual_base: int,
 
 
 class UpdaterBootContract:
-    """Reconstructed updater boot contract (machine ID, load addresses, ATAGS)."""
+    """Reconstructed updater/main boot contract (machine ID, load addresses, ATAGS)."""
 
-    def __init__(self, boot_set: NflashaBootSet, *, cmdline_extra: str = ''):
+    def __init__(
+        self,
+        boot_set: NflashaBootSet,
+        *,
+        cmdline_extra: str = '',
+        config_boot_set: NflashaBootSet | None = None,
+    ):
         self.boot_set = boot_set
+        self.config_boot_set = config_boot_set or boot_set
         self.cmdline_extra = cmdline_extra.strip()
-        load = boot_set.load_addresses()
+        load = self.config_boot_set.load_addresses()
         if load is None:
-            raise MachineContractError('nflasha1 boot set has no boot/loadaddr.txt')
+            raise MachineContractError(
+                f'{self.config_boot_set.label} boot set has no boot/loadaddr.txt'
+            )
         self.load_addresses = load
         raw = boot_set.raw_kernel_image()
         sha = boot_set.kernel_file().sha256
@@ -151,7 +160,7 @@ class UpdaterBootContract:
             raw, virtual_base=KERNEL_PAGE_OFFSET + load['kernel_load'],
             image_sha256=sha)
         self.raw_kernel = raw
-        cmdline = boot_set.read('boot/kemco.txt').decode('latin1')
+        cmdline = self.config_boot_set.read('boot/kemco.txt').decode('latin1')
         self.cmdline = ' '.join(line.strip() for line in cmdline.splitlines()
                                 if line.strip())
         # kemco.txt terminates its parameter list with '*'; drop that token so
@@ -191,7 +200,11 @@ class UpdaterBootContract:
         self.banks = [(record['start'], record['size']) for record in self.memory
                       if not record.get('reserved')]
         self.reservations = [record for record in self.memory if record.get('reserved')]
-        self.initrd = boot_set.read('boot/initrd.img')
+        self.initrd = (
+            boot_set.initrd_file().data
+            if hasattr(boot_set, 'initrd_file')
+            else boot_set.read('boot/initrd.img')
+        )
         self.atags = build_atags(self.cmdline, self.banks,
                                  boot_params=load['boot_params'])
         self.atags_receipt = atags_receipt(self.atags, base=load['boot_params'])

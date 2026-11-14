@@ -14,7 +14,9 @@ and unsupported requests fail closed with ``A5kuStatus.STALL``.
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass
 import socket
+import struct
 import threading
 
 from src.a6400.execution.a5ku_host_enum import A5kuVerifiedDescriptorHandler
@@ -40,6 +42,60 @@ UVC_VS_PROBE_CONTROL = 0x0100
 UVC_VS_COMMIT_CONTROL = 0x0200
 UVC_PROBE_COMMIT_LENGTH = 26
 UVC_VS_ENDPOINT_ADDR = int(EXPECTED_VIDEO_STREAMING_ENDPOINT, 16)  # 0x82
+UVC_PAYLOAD_HEADER_LENGTH = 12
+_UVC_PROBE_STRUCT = struct.Struct("<HBBIHHHHHII")
+
+
+@dataclass(frozen=True)
+class UvcVideoProbeControl:
+    """UVC 1.1 26-byte VS_PROBE_CONTROL / VS_COMMIT_CONTROL structure."""
+
+    bm_hint: int = 0x0001
+    b_format_index: int = 1
+    b_frame_index: int = 1
+    dw_frame_interval: int = 333333  # 30 fps in 100 ns units
+    w_key_frame_rate: int = 0
+    w_p_frame_rate: int = 0
+    w_comp_quality: int = 0
+    w_comp_window_size: int = 0
+    w_delay: int = 0
+    dw_max_video_frame_size: int = 1280 * 720 * 2
+    dw_max_payload_transfer_size: int = 131060
+
+    def encode(self) -> bytes:
+        """Pack into 26 little-endian bytes."""
+        return _UVC_PROBE_STRUCT.pack(
+            self.bm_hint,
+            self.b_format_index,
+            self.b_frame_index,
+            self.dw_frame_interval,
+            self.w_key_frame_rate,
+            self.w_p_frame_rate,
+            self.w_comp_quality,
+            self.w_comp_window_size,
+            self.w_delay,
+            self.dw_max_video_frame_size,
+            self.dw_max_payload_transfer_size,
+        )
+
+    @classmethod
+    def decode(cls, raw: bytes) -> "UvcVideoProbeControl":
+        """Unpack a 26-byte VS_PROBE_CONTROL / VS_COMMIT_CONTROL payload."""
+        if len(raw) != UVC_PROBE_COMMIT_LENGTH:
+            raise ValueError(f"Expected {UVC_PROBE_COMMIT_LENGTH} bytes, got {len(raw)}")
+        return cls(*_UVC_PROBE_STRUCT.unpack(raw))
+
+
+def build_uvc_payload_packet(
+    payload: bytes,
+    *,
+    frame_id: int = 0,
+    end_of_frame: bool = True,
+) -> bytes:
+    """Wrap a video frame slice in a standard 12-byte UVC 1.1 payload header."""
+    bm_header_info = 0x80 | (frame_id & 0x01) | (0x02 if end_of_frame else 0x00)
+    header = struct.pack("<BBIIH", UVC_PAYLOAD_HEADER_LENGTH, bm_header_info, 0, 0, 0)
+    return header + bytes(payload)
 
 
 class A5kuUvcTestHandler(A5kuVerifiedDescriptorHandler):

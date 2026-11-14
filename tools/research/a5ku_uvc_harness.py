@@ -25,9 +25,12 @@ from src.a6400.execution.a5ku_server import (
     UVC_PROBE_COMMIT_LENGTH,
     UVC_SET_CUR,
     UVC_VS_COMMIT_CONTROL,
+    UVC_VS_ENDPOINT_ADDR,
     UVC_VS_PROBE_CONTROL,
     A5kuTcpServer,
     A5kuUvcTestHandler,
+    UvcVideoProbeControl,
+    build_uvc_payload_packet,
 )
 from src.a6400.execution.usb_host_enum import EXPECTED_VIDEO_STREAMING_INTERFACE
 
@@ -41,9 +44,20 @@ def _build_uvc_ptp_device_descriptor(vid: int, pid: int) -> bytes:
     )
 
 
-def run_self_test(vid: int = 0x054C, pid: int = 0x0D9E) -> dict:
+def run_self_test(
+    vid: int = 0x054C, pid: int = 0x0D9E, use_dwc3: bool = False
+) -> dict:
     """Run an end-to-end TCP A5KU UVC+PTP enumeration + Probe/Commit self-test."""
-    handler = A5kuUvcTestHandler(_build_uvc_ptp_device_descriptor(vid, pid))
+    uvc_handler = A5kuUvcTestHandler(_build_uvc_ptp_device_descriptor(vid, pid))
+    if use_dwc3:
+        from src.a6400.execution.a5ku_dwc3_bridge import (
+            A5kuDwc3BridgeHandler,
+            summarize_dwc3_traces,
+        )
+
+        handler = A5kuDwc3BridgeHandler(uvc_handler, use_prearm=True)
+    else:
+        handler = uvc_handler
     session = A5kuDeviceSession(handler, attached=True, speed=A5kuSpeed.HIGH)
 
     with A5kuTcpServer(session, host="127.0.0.1", port=0) as server:
@@ -52,7 +66,8 @@ def run_self_test(vid: int = 0x054C, pid: int = 0x0D9E) -> dict:
             attached, generation, speed = client.hello()
             enum_res = client.enumerate_uvc_ptp(address=1)
 
-            probe_payload = bytes(UVC_PROBE_COMMIT_LENGTH)
+            probe_req = UvcVideoProbeControl()
+            probe_payload = probe_req.encode()
             client.control_out(
                 0x21, UVC_SET_CUR, UVC_VS_PROBE_CONTROL,
                 EXPECTED_VIDEO_STREAMING_INTERFACE, probe_payload,
@@ -61,13 +76,18 @@ def run_self_test(vid: int = 0x054C, pid: int = 0x0D9E) -> dict:
                 0xA1, UVC_GET_CUR, UVC_VS_PROBE_CONTROL,
                 EXPECTED_VIDEO_STREAMING_INTERFACE, UVC_PROBE_COMMIT_LENGTH,
             )
+            decoded_probe = UvcVideoProbeControl.decode(probe_readback)
             client.control_out(
                 0x21, UVC_SET_CUR, UVC_VS_COMMIT_CONTROL,
                 EXPECTED_VIDEO_STREAMING_INTERFACE, probe_readback,
             )
             client.set_interface(EXPECTED_VIDEO_STREAMING_INTERFACE, 1)
 
-    return {
+            sample_packet = build_uvc_payload_packet(b"\xFF\xD8\xFF\xD9", frame_id=1)
+            uvc_handler.queue_video_frame(sample_packet)
+            frame_readback = client.bulk_in(UVC_VS_ENDPOINT_ADDR, 512)
+
+    result = {
         "attached": attached,
         "generation": generation,
         "speed": speed.name,
@@ -77,9 +97,14 @@ def run_self_test(vid: int = 0x054C, pid: int = 0x0D9E) -> dict:
         "total_length": enum_res.configuration.total_length,
         "usbcontrol_setconfig_msgid": f"0x{enum_res.set_config_plan['event']['message_id']:06X}",
         "usbcontrol_fsm_event": f"0x{enum_res.set_config_plan['event']['fsm_event']:02X}",
-        "video_streaming_alt_setting": handler.video_streaming_alt_setting,
+        "video_streaming_alt_setting": uvc_handler.video_streaming_alt_setting,
         "probe_commit_verified": probe_readback == probe_payload,
+        "probe_format_frame": [decoded_probe.b_format_index, decoded_probe.b_frame_index],
+        "frame_in_verified": frame_readback == sample_packet,
     }
+    if use_dwc3:
+        result["dwc3_summary"] = summarize_dwc3_traces(handler.ep0_traces)
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,14 +116,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=A5KU_DEFAULT_PORT)
     parser.add_argument("--vid", type=lambda x: int(x, 0), default=0x054C)
     parser.add_argument("--pid", type=lambda x: int(x, 0), default=0x0D9E)
+    parser.add_argument("--dwc3", action="store_true", help="Route EP0 control transfers through Unicorn DWC3")
     args = parser.parse_args(argv)
 
     if args.self_test:
-        result = run_self_test(vid=args.vid, pid=args.pid)
+        result = run_self_test(vid=args.vid, pid=args.pid, use_dwc3=args.dwc3)
         print(json.dumps(result, indent=2))
         return 0
 
-    handler = A5kuUvcTestHandler(_build_uvc_ptp_device_descriptor(args.vid, args.pid))
+    uvc_handler = A5kuUvcTestHandler(_build_uvc_ptp_device_descriptor(args.vid, args.pid))
+    if args.dwc3:
+        from src.a6400.execution.a5ku_dwc3_bridge import A5kuDwc3BridgeHandler
+
+        handler = A5kuDwc3BridgeHandler(uvc_handler, use_prearm=True)
+    else:
+        handler = uvc_handler
     session = A5kuDeviceSession(handler, attached=True, speed=A5kuSpeed.HIGH)
     with A5kuTcpServer(session, host=args.host, port=args.port) as server:
         print(f"A5KU UVC test server listening on {args.host}:{server.bound_port}")

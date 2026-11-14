@@ -62,11 +62,23 @@ def main():
     parser.add_argument('--serial-output', type=Path, default=OUT / 'nflasha1-ttyAM0.log')
     parser.add_argument('--target', default='ilce_6400',
                         help='registered CXD90045 target_id from src/a6400/targets/')
+    parser.add_argument('--boot-set', choices=('nflasha1', 'nflasha3'),
+                        default='nflasha1',
+                        help='boot set to load (nflasha1 updater or nflasha3 main)')
     args = parser.parse_args()
     target_profile = get_profile(args.target)
 
-    boot_set = NflashaBootSet.from_evidence(ROOT, 'nflasha1')
-    contract = UpdaterBootContract(boot_set, cmdline_extra=args.cmdline_extra)
+    boot_set = NflashaBootSet.from_evidence(ROOT, args.boot_set)
+    config_boot_set = (
+        NflashaBootSet.from_evidence(ROOT, 'nflasha1')
+        if args.boot_set != 'nflasha1'
+        else None
+    )
+    contract = UpdaterBootContract(
+        boot_set,
+        cmdline_extra=args.cmdline_extra,
+        config_boot_set=config_boot_set,
+    )
     verification = contract.verify()
     print(json.dumps({key: verification[key] for key in
                       ('machine', 'load_addresses', 'kernel_raw_bytes', 'initrd_bytes',

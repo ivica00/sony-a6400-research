@@ -30,6 +30,8 @@ from src.a6400.execution.a5ku_server import (
     UVC_VS_PROBE_CONTROL,
     A5kuTcpServer,
     A5kuUvcTestHandler,
+    UvcVideoProbeControl,
+    build_uvc_payload_packet,
 )
 from src.a6400.execution.usb_host_enum import EXPECTED_VIDEO_STREAMING_INTERFACE
 from tests.emulator.test_a5ku_host_enum import _build_test_uvc_ptp_config_descriptor
@@ -115,6 +117,23 @@ class TestA5kuServerAndUvc(unittest.TestCase):
                 ev_detach = dec.feed(sock.recv(4096))[0]
                 self.assertEqual(ev_detach.msg_type, A5kuMessageType.EVENT)
                 self.assertEqual(ev_detach.arg, A5kuEvent.DETACHED)
+
+    def test_uvc_probe_struct_and_payload_header(self) -> None:
+        probe = UvcVideoProbeControl(
+            b_format_index=1,
+            b_frame_index=1,
+            dw_frame_interval=333333,
+            dw_max_video_frame_size=1843200,
+            dw_max_payload_transfer_size=131060,
+        )
+        raw = probe.encode()
+        self.assertEqual(len(raw), UVC_PROBE_COMMIT_LENGTH)
+        self.assertEqual(UvcVideoProbeControl.decode(raw), probe)
+
+        pkt = build_uvc_payload_packet(b"\xFF\xD8\xFF\xD9", frame_id=1, end_of_frame=True)
+        self.assertEqual(pkt[0], 12)
+        self.assertEqual(pkt[1], 0x83)
+        self.assertEqual(pkt[12:], b"\xFF\xD8\xFF\xD9")
 
 
 if __name__ == "__main__":
