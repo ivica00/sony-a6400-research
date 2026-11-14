@@ -104,6 +104,9 @@ class GuestGles:
         self.dev_a8 = 0
         self.event_waiters = []
         self.engine_state_events = 0
+        # Opt-in DMP SMAPH/P3D + PPF + PSC BAR model (Oein/a5000-emulator RE_DISPLAY_GPU.md).
+        self.p3d_model = False
+        self._p3d_mmio = None
 
     def __setstate__(self, state):
         """Restore old checkpoints that predate the BAR/engine-model fields."""
@@ -135,6 +138,10 @@ class GuestGles:
             self.engine_last_key = None
         if not hasattr(self, 'engine_bar_completed'):
             self.engine_bar_completed = False
+        if not hasattr(self, 'p3d_model'):
+            self.p3d_model = False
+        if not hasattr(self, '_p3d_mmio'):
+            self._p3d_mmio = None
 
     def open(self, flags, caller_pid, caller_tgid, user_ranges=()):
         if self.binding is None:
@@ -633,3 +640,90 @@ class GuestGles:
         self.transactions.append({'operation': 'engine-command', 'status': 0x40000000,
                                   'source': source})
         return 0x40000000
+
+    def poll_p3d_bar(self, mem_read, mem_write, phys_reader=None, phys_writer=None):
+        """Opt-in DMP P3D/PPF/PSC BAR poll using ``SugiliteMmioModel``.
+
+        Reads ``+0x1800`` (P3D kick), ``+0xC18`` (PPF trigger), and ``+0x1C``
+        (PSC ctrl) from ``bar_virtual``, runs the corresponding operation via
+        ``SugiliteMmioModel``, updates ``BAR+0x34`` / ``dev_a8``, and clears the
+        consumed trigger register so subsequent polls do not re-fire.
+        """
+        if not getattr(self, 'p3d_model', False) or self.bar_virtual is None:
+            return 0
+        from src.a6400.execution.dmp_p3d import (
+            SUGI_REG_IRQ_STATUS,
+            SUGI_REG_P3D_KICK,
+            SUGI_REG_P3D_LIST_PA,
+            SUGI_REG_PPF_COPY_SIZE,
+            SUGI_REG_PPF_DIM0,
+            SUGI_REG_PPF_DIM1,
+            SUGI_REG_PPF_DST,
+            SUGI_REG_PPF_FLAGS,
+            SUGI_REG_PPF_SRC,
+            SUGI_REG_PPF_TRIGGER,
+            SUGI_REG_PSC_CTRL,
+            SUGI_REG_PSC_END,
+            SUGI_REG_PSC_START,
+            SUGI_REG_PSC_VALUE,
+            SugiliteMmioModel,
+        )
+
+        if self._p3d_mmio is None:
+            self._p3d_mmio = SugiliteMmioModel(
+                memory_reader=phys_reader,
+                memory_writer=phys_writer,
+            )
+        else:
+            if phys_reader is not None:
+                self._p3d_mmio._memory_reader = phys_reader
+            if phys_writer is not None:
+                self._p3d_mmio._memory_writer = phys_writer
+
+        def _rd32(off):
+            raw = bytes(mem_read(self.bar_virtual + off, 4))
+            return struct.unpack('<I', raw)[0] if len(raw) == 4 else 0
+
+        status_added = 0
+        p3d_kick = _rd32(SUGI_REG_P3D_KICK)
+        if p3d_kick > 0:
+            self._p3d_mmio.write_reg(SUGI_REG_P3D_LIST_PA, _rd32(SUGI_REG_P3D_LIST_PA))
+            self._p3d_mmio.write_reg(SUGI_REG_P3D_KICK, p3d_kick)
+            mem_write(self.bar_virtual + SUGI_REG_P3D_KICK, b'\x00\x00\x00\x00')
+            status_added |= self._p3d_mmio.irq_status
+
+        ppf_trig = _rd32(SUGI_REG_PPF_TRIGGER)
+        if ppf_trig != 0:
+            for reg_off in (
+                SUGI_REG_PPF_SRC,
+                SUGI_REG_PPF_DST,
+                SUGI_REG_PPF_DIM0,
+                SUGI_REG_PPF_DIM1,
+                SUGI_REG_PPF_FLAGS,
+                SUGI_REG_PPF_COPY_SIZE,
+            ):
+                self._p3d_mmio.write_reg(reg_off, _rd32(reg_off))
+            self._p3d_mmio.write_reg(SUGI_REG_PPF_TRIGGER, ppf_trig)
+            mem_write(self.bar_virtual + SUGI_REG_PPF_TRIGGER, b'\x00\x00\x00\x00')
+            status_added |= self._p3d_mmio.irq_status
+
+        psc_ctrl = _rd32(SUGI_REG_PSC_CTRL)
+        if psc_ctrl & 1:
+            for reg_off in (SUGI_REG_PSC_START, SUGI_REG_PSC_END, SUGI_REG_PSC_VALUE):
+                self._p3d_mmio.write_reg(reg_off, _rd32(reg_off))
+            self._p3d_mmio.write_reg(SUGI_REG_PSC_CTRL, psc_ctrl)
+            mem_write(self.bar_virtual + SUGI_REG_PSC_CTRL, b'\x00\x00\x00\x00')
+            status_added |= self._p3d_mmio.irq_status
+
+        if status_added:
+            self.dev_a8 |= status_added
+            self.engine_event_status |= status_added
+            mem_write(
+                self.bar_virtual + SUGI_REG_IRQ_STATUS,
+                struct.pack('<I', self._p3d_mmio.irq_status),
+            )
+            self.transactions.append({
+                'operation': 'p3d-bar-poll',
+                'status': status_added,
+            })
+        return status_added

@@ -252,6 +252,56 @@ class TestSugiliteMmioModel(unittest.TestCase):
         gpu.write_reg(SUGI_REG_PSC_CTRL, 0)
         self.assertFalse(gpu.irq_asserted)
 
+    def test_guest_gles_poll_p3d_bar_opt_in(self) -> None:
+        from src.a6400.execution.guest_gles import GlesBinding, GuestGles
+        from src.a6400.execution.kernel_task_identity import KernelTaskObservation
+
+        obs = KernelTaskObservation(
+            thread_info=0x60000000,
+            task=0x60001000,
+            pid=100,
+            tgid=100,
+            address_limit=0x5F000000,
+            cpu=0,
+        )
+        gles = GuestGles(GlesBinding(obs))
+        gles.bar_virtual = 0x40000000
+
+        bar_mem = bytearray(0x4000)
+        base = 0x20000000
+        ram = bytearray(0x10000)
+        list_pa = base + 0x1000
+        cmd_list = _entry(P3D_REG_FINALIZE, P3D_FINALIZE_MAGIC)
+        ram[0x1000 : 0x1000 + len(cmd_list)] = cmd_list
+
+        def bar_read(addr: int, size: int) -> bytes:
+            off = addr - gles.bar_virtual
+            return bytes(bar_mem[off : off + size])
+
+        def bar_write(addr: int, data: bytes) -> None:
+            off = addr - gles.bar_virtual
+            bar_mem[off : off + len(data)] = data
+
+        def phys_read(addr: int, size: int) -> bytes | None:
+            off = addr - base
+            return bytes(ram[off : off + size]) if 0 <= off and off + size <= len(ram) else None
+
+        struct.pack_into('<I', bar_mem, SUGI_REG_P3D_LIST_PA, list_pa)
+        struct.pack_into('<I', bar_mem, SUGI_REG_P3D_KICK, 1)
+
+        # Default p3d_model=False leaves BAR untouched.
+        self.assertEqual(gles.poll_p3d_bar(bar_read, bar_write, phys_read), 0)
+        self.assertEqual(struct.unpack_from('<I', bar_mem, SUGI_REG_P3D_KICK)[0], 1)
+
+        # Opt-in p3d_model=True executes list, updates BAR+0x34 & dev_a8, clears kick.
+        gles.p3d_model = True
+        status = gles.poll_p3d_bar(bar_read, bar_write, phys_read)
+        self.assertEqual(status, SUGI_IRQ_P3D_DONE)
+        self.assertEqual(gles.dev_a8, SUGI_IRQ_P3D_DONE)
+        self.assertEqual(struct.unpack_from('<I', bar_mem, SUGI_REG_IRQ_STATUS)[0], SUGI_IRQ_P3D_DONE)
+        self.assertEqual(struct.unpack_from('<I', bar_mem, SUGI_REG_P3D_KICK)[0], 0)
+        self.assertTrue(gles._p3d_mmio.p3d_results[-1].finalized)
+
 
 class TestGicItargetsrPreRoute(unittest.TestCase):
     def test_spis_default_to_cpu0(self) -> None:
