@@ -220,33 +220,49 @@ STATUS_SNAPSHOT = StatusSnapshot(
     schema_version=1,
     as_of="2026-11-14",
     latest=EvidenceRef(
-        evidence_id="E0504",
-        path="docs/evidence/0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md",
+        evidence_id="E0505",
+        path="docs/evidence/0505-av-cam-cc-3dlut-and-ec-gamma-pipeline.md",
         date="2026-11-14",
-        title="0x0402F666 Thumb USR (T=1) PC-relative ldr.w decode, fast-syscall r0 preserve, ARM VFP (__sigsetjmp), uaccess/high-vector PT walk, and BusyBox _start (0x0000C439) + libc.so.6 execution (svc_hits = 71)",
+        title="av-cam.bin CC: 3D LUT (YCbCr 5x9x9) and EC_Gamma pre-8-bit pipeline analysis + sensor tables",
         demonstrated=(
-            "Offline (no camera). Added cpsr to fault_classification_trace and e0504_trace hook at 0x0402F660..0x0402F670: "
-            "every fetch at 0x0402F666 enters in Thumb USR mode (cpsr=0x60000030, T=1, M=0x10, sp=0x5E864B50, lr=0x0403D7D1). "
-            "Fixed four root causes: (1) _decode_fault_address now handles base_name=='pc' (Thumb/ARM alignment) and Capstone "
-            "register aliases (sb/sl/fp/ip), decoding 0x0402F666 (ldr.w r4,[pc,#0xbec]) as data-decoded on 0x04030254 so "
-            "0x0402F666 executes once after demand-paging 0x04030000; (2) _capture_fast_syscall_frame at 0x6010DEC0 preserves "
-            "live r0 in frame_words[0] so sys_brk(0) returns 0x00055000 instead of entry 0; (3) enabled UC_ARM_REG_FPEXC=0x40000000 "
-            "and preserved ARM mode on T=0 recovery so genuine ARM routines in ld-2.11.2.so (__sigsetjmp vstmia ip!,{d8-d15} at "
-            "0x0403F034) execute natively; (4) added __ex_table uaccess helpers (__strncpy_from_user, etc.) to demand_page_helpers "
-            "and consulted _walk_kernel_pt for vaddr>=0xFFFF0000 so timer IRQs at 0xFFFF0018 use the real vector page (PA 0x1FFFE000). "
-            "Result: ld-2.11.2.so maps /lib/libc.so.6 (0x040FC000..0x041F4000) and jumps to BusyBox _start (0x0000C438/0x0000C439); "
-            "BusyBox and libc.so.6 execute in USR mode reaching svc_hits=71, kuser_hits=35, pt_frame_gen=330, user_restores=214, "
-            "tlb_fills=530,636. Suite 1741 OK."
+            "Offline static analysis (Ghidra/REA + Capstone, no camera). Decoded the CC: 3D LUT controller "
+            "(FUN_63ad0fc8 / FUN_63ad0930) as a YCbCr-domain 5x9x9 LUT with Q14 BT.601/BT.709 conversion, "
+            "the EC_Gamma pre-8-bit gamma/knee pipeline (FUN_63ba8158 / FUN_63b1f614), and added typed sensor/LUT "
+            "table models in src/a6400/sensor/ with 7 new tests in tests/test_sensor_tables.py. Full suite: 1748 OK."
         ),
         boundary=(
-            "No shell yet (serial_bytes=0): at the end of the 800M run, libc.so.6 (LR_usr=0x0412EB07, SP_usr=0x5E864530) branches "
-            "to 0x041F2000 (libc.so.6 RW .got/.data page), triggering a fatal user prefetch abort into em_exception_monitor "
-            "(__delay+0x8). Next: inspect libc.so.6 around 0x0412EAE0..0x0412EB20 and the GOT/PLT slot holding 0x041F2000."
+            "Static firmware/table decoding only; no live ISP register capture or runtime frame rendering claimed."
         ),
-        tier="OFFLINE BOUNDED UNICORN BRING-UP",
+        tier="OFFLINE STATIC IMAGE",
     ),
-    headline="1741 tests recorded passing | No verified emulator GUI frame",
+    headline="1748 tests recorded passing | No verified emulator GUI frame",
     cards=(
+        EvidenceRef(
+            evidence_id="E0504",
+            path="docs/evidence/0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md",
+            date="2026-11-14",
+            title="0x0402F666 Thumb USR (T=1) PC-relative ldr.w decode, fast-syscall r0 preserve, ARM VFP (__sigsetjmp), uaccess/high-vector PT walk, and BusyBox _start (0x0000C439) + libc.so.6 execution (svc_hits = 71)",
+            demonstrated=(
+                "Offline (no camera). Added cpsr to fault_classification_trace and e0504_trace hook at 0x0402F660..0x0402F670: "
+                "every fetch at 0x0402F666 enters in Thumb USR mode (cpsr=0x60000030, T=1, M=0x10, sp=0x5E864B50, lr=0x0403D7D1). "
+                "Fixed four root causes: (1) _decode_fault_address now handles base_name=='pc' (Thumb/ARM alignment) and Capstone "
+                "register aliases (sb/sl/fp/ip), decoding 0x0402F666 (ldr.w r4,[pc,#0xbec]) as data-decoded on 0x04030254 so "
+                "0x0402F666 executes once after demand-paging 0x04030000; (2) _capture_fast_syscall_frame at 0x6010DEC0 preserves "
+                "live r0 in frame_words[0] so sys_brk(0) returns 0x00055000 instead of entry 0; (3) enabled UC_ARM_REG_FPEXC=0x40000000 "
+                "and preserved ARM mode on T=0 recovery so genuine ARM routines in ld-2.11.2.so (__sigsetjmp vstmia ip!,{d8-d15} at "
+                "0x0403F034) execute natively; (4) added __ex_table uaccess helpers (__strncpy_from_user, etc.) to demand_page_helpers "
+                "and consulted _walk_kernel_pt for vaddr>=0xFFFF0000 so timer IRQs at 0xFFFF0018 use the real vector page (PA 0x1FFFE000). "
+                "Result: ld-2.11.2.so maps /lib/libc.so.6 (0x040FC000..0x041F4000) and jumps to BusyBox _start (0x0000C438/0x0000C439); "
+                "BusyBox and libc.so.6 execute in USR mode reaching svc_hits=71, kuser_hits=35, pt_frame_gen=330, user_restores=214, "
+                "tlb_fills=530,636. Suite 1741 OK."
+            ),
+            boundary=(
+                "No shell yet (serial_bytes=0): at the end of the 800M run, libc.so.6 (LR_usr=0x0412EB07, SP_usr=0x5E864530) branches "
+                "to 0x041F2000 (libc.so.6 RW .got/.data page), triggering a fatal user prefetch abort into em_exception_monitor "
+                "(__delay+0x8). Next: inspect libc.so.6 around 0x0412EAE0..0x0412EB20 and the GOT/PLT slot holding 0x041F2000."
+            ),
+            tier="OFFLINE BOUNDED UNICORN BRING-UP",
+        ),
         EvidenceRef(
             evidence_id="E0476",
             path="docs/evidence/0476-status-prearm-fix-build-audit-unicorn.md",
@@ -450,9 +466,9 @@ STATUS_SNAPSHOT = StatusSnapshot(
         ),
     ),
     suite=SuiteRecord(
-        test_count=1741,
+        test_count=1748,
         recorded_at="2026-11-14",
-        evidence_id="E0504",
+        evidence_id="E0505",
         command="python -m unittest discover -s tests -q",
     ),
     footer=(

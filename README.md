@@ -20,6 +20,8 @@ of "full firmware compatibility."
 
 ## Latest progress
 
+- **ISP Color & Gamma Pipeline ([E0505](docs/evidence/0505-av-cam-cc-3dlut-and-ec-gamma-pipeline.md)):**
+  Decoded the `av-cam.bin` `CC:` 3D LUT controller (`FUN_63ad0fc8` / `FUN_63ad0930`, YCbCr 5×9×9 LUT with Q14 BT.601/BT.709 matrix) and `EC_Gamma` pre-8-bit pipeline (`FUN_63ba8158` / `FUN_63b1f614`) statically, and added typed sensor/LUT table models in [`src/a6400/sensor/`](src/a6400/sensor/__init__.py).
 - **Update chain measured ([E0504](docs/evidence/0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md), and the IPC edge inventory in [E0483](docs/evidence/0483-ipc-edge-inventory-libobj.md), and the platform model in [E0490](docs/evidence/0490-platform-model-and-flash-boundary.md)):**
   The image is **not** AES-encrypted. 484 files under the a6400 tree are ELF objects readable
   as-is; integrity is CRC32 (`uc_crc32sum.elf`, which imports no crypto at all) and MD5
@@ -66,10 +68,10 @@ of "full firmware compatibility."
 
 ## Status overview
 
-Recorded suite: 1741 tests. Each result is bounded by its own dated evidence record; no
+Recorded suite: 1748 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=412a6e19a43f)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=7c327239925a)
 
 ### Subsystem status
 
@@ -84,7 +86,7 @@ UVC video frame, no flash write, and no full firmware boot is claimed.
 | **USB Debugger v2** | Persistent Mass Storage debugger for reading live/warm-reboot kernel logs and USB state | Deploying the always-on WinUSB vendor interface | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
 | **Test UVC video pattern** | Streams a synthetic 720p MJPEG pattern at ~30 FPS; ZV-E10 USB video stack cataloged as reference | Wiring the live camera sensor feed | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
 | **Multi-camera profiles** | Verified a6400 profile and ZV-E10 reference chain | Only the a6400 is a verified execution target | [`src/a6400/targets/`](src/a6400/targets/catalog.py), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
-| **Automated checks** | 1741 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
+| **Automated checks** | 1748 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
 
 ## How to help (no camera needed)
 

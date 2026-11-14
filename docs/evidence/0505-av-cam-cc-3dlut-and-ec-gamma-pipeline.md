@@ -1,4 +1,4 @@
-# E0505: `av-cam.bin` `CC:` 3D LUT and `EC_Gamma` Pre-8-Bit Pipeline Analysis
+# E0505 — `av-cam.bin` `CC:` 3D LUT and `EC_Gamma` Pre-8-Bit Pipeline Analysis
 
 - **Date:** 2026-11-14
 - **Target:** `firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha3_unpacked/av-cam.bin`
