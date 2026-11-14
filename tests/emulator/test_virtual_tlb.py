@@ -1,3 +1,4 @@
+import gc
 import struct
 import unittest
 from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
@@ -20,6 +21,9 @@ def make_machine(**kwargs):
 
 
 class VirtualTlbTest(unittest.TestCase):
+    def tearDown(self):
+        gc.collect()
+
     def test_virtual_tlb_is_enabled(self):
         machine = make_machine()
         self.assertTrue(machine.virtual_tlb, machine.virtual_tlb_error)

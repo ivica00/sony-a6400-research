@@ -38,7 +38,7 @@ from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
                                UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5,
                                UC_ARM_REG_R6, UC_ARM_REG_R7, UC_ARM_REG_R8,
                                UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
-                               UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_SPSR)
+                               UC_ARM_REG_FPEXC, UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_SPSR)
 
 UART0 = 0xF2000000
 PL011_DR = 0x00
@@ -234,6 +234,7 @@ class UnicornMachine:
         self.e0497_trace: list[dict] = []
         self.e0499_trace: list[dict] = []
         self.e0500_frames: list[dict] = []
+        self.e0504_trace: list[dict] = []
         self.timer_ticks_per_instruction = timer_ticks_per_instruction
         self.timer_ticks_per_jiffy = timer_ticks_per_jiffy
         self.timer_irq_start_instructions = timer_irq_start_instructions
@@ -374,6 +375,17 @@ class UnicornMachine:
             '__clear_user', '__copy_to_user', '__copy_from_user',
             'strncpy_from_user', 'strnlen_user', 'copy_from_user',
             'copy_to_user', '__get_user', '__put_user',
+            '__strncpy_from_user', '__strnlen_user',
+            '__get_user_1', '__get_user_2', '__get_user_4',
+            '__put_user_1', '__put_user_2', '__put_user_4', '__put_user_8',
+            'csum_partial_copy_from_user', 'copy_siginfo_to_user',
+            'copy_mount_options', 'file_read_actor', 'filldir', 'filldir64',
+            'iov_fault_in_pages_read', 'iov_iter_fault_in_readable',
+            'pipe_read', 'pipe_to_user', 'sys_getdents64', 'sys_sigaction',
+            'do_sigaltstack', 'do_signal', 'setup_sigframe',
+            'restore_sigframe', 'setup_return', 'do_futex',
+            'do_sys_poll', 'sys_pselect6', 'v7_coherent_user_range',
+            'vfp_preserve_user_clear_hwstate', 'vfp_restore_user_hwstate',
             'padzero', 'copy_strings', 'copy_strings_kernel',
             'create_elf_tables', 'load_elf_binary'}
         self._uart_regs: dict[int, int] = {}
@@ -634,6 +646,27 @@ class UnicornMachine:
             for _pc in (0x6010DEC0, 0x6010DEE0, 0x6010DEEC, 0x6010DEF8):
                 self.uc.hook_add(UC_HOOK_CODE, _e0500_hook,
                                  begin=_pc, end=_pc + 4)
+        except Exception:
+            pass
+
+        try:
+            def _e0504_hook(uc, address, size, user):
+                if len(self.e0504_trace) >= 32:
+                    return
+                try:
+                    cpsr = uc.reg_read(UC_ARM_REG_CPSR)
+                    self.e0504_trace.append({
+                        'pc': f'0x{address:08x}',
+                        'cpsr': f'0x{cpsr:08x}',
+                        'thumb': bool(cpsr & 0x20),
+                        'mode': f'0x{cpsr & 0x1F:02x}',
+                        'sp': f'0x{uc.reg_read(UC_ARM_REG_SP):08x}',
+                        'lr': f'0x{uc.reg_read(UC_ARM_REG_LR):08x}',
+                    })
+                except Exception:
+                    pass
+            self.uc.hook_add(UC_HOOK_CODE, _e0504_hook,
+                             begin=0x0402F660, end=0x0402F670)
         except Exception:
             pass
 
@@ -1867,7 +1900,9 @@ class UnicornMachine:
                     'r3': UC_ARM_REG_R3, 'r4': UC_ARM_REG_R4, 'r5': UC_ARM_REG_R5,
                     'r6': UC_ARM_REG_R6, 'r7': UC_ARM_REG_R7, 'r8': UC_ARM_REG_R8,
                     'r9': UC_ARM_REG_R9, 'r10': UC_ARM_REG_R10, 'r11': UC_ARM_REG_R11,
-                    'r12': UC_ARM_REG_R12, 'sp': UC_ARM_REG_SP, 'lr': UC_ARM_REG_LR}
+                    'r12': UC_ARM_REG_R12, 'sp': UC_ARM_REG_SP, 'lr': UC_ARM_REG_LR,
+                    'sb': UC_ARM_REG_R9, 'sl': UC_ARM_REG_R10, 'fp': UC_ARM_REG_R11,
+                    'ip': UC_ARM_REG_R12}
 
     def _decode_fault_address(self, pc: int, pa: int) -> tuple[int, bool] | None:
         """Decode the faulting load/store [base,offset] and return (VA, is_write)."""
@@ -1876,29 +1911,56 @@ class UnicornMachine:
             return None
         try:
             import capstone
-            raw = bytes(self.uc.mem_read(int(pa), 4))
+            raw = bytes(self.uc.mem_read(int(pa) & ~1, 4))
             md = capstone.Cs(capstone.CS_ARCH_ARM,
                              capstone.CS_MODE_THUMB if thumb else capstone.CS_MODE_ARM)
-            insn = next(iter(md.disasm(raw, pc)), None)
-            if insn is None or '[' not in insn.op_str:
+            insn = next(iter(md.disasm(raw, pc & ~1)), None)
+            if insn is None:
+                return None
+            mnemonic = insn.mnemonic.lower()
+            is_write = mnemonic.startswith(('str', 'stm', 'push', 'vst'))
+            if '[' not in insn.op_str:
+                if mnemonic.startswith(('push', 'pop', 'vpush', 'vpop')):
+                    sp = self.uc.reg_read(UC_ARM_REG_SP)
+                    nregs = insn.op_str.count(',') + 1
+                    addr = (sp - 4 * nregs) if is_write else sp
+                    return addr & 0xFFFFFFFF, is_write
+                if mnemonic.startswith(('stm', 'ldm', 'vst', 'vld')) and '{' in insn.op_str:
+                    bname = insn.op_str.split('{', 1)[0].rstrip(', !').strip().lower()
+                    breg = self._REG_BY_NAME.get(bname)
+                    if breg is not None:
+                        bval = self.uc.reg_read(breg)
+                        nregs = insn.op_str.split('{', 1)[1].count(',') + 1
+                        addr = (bval - 4 * nregs) if 'db' in mnemonic else bval
+                        return addr & 0xFFFFFFFF, is_write
                 return None
             mem = insn.op_str.split('[', 1)[1].split(']', 1)[0]
             parts = [part.strip() for part in mem.split(',')]
-            base_name = parts[0]
-            base_reg = self._REG_BY_NAME.get(base_name)
-            if base_reg is None:
-                return None
-            address = self.uc.reg_read(base_reg)
+            base_name = parts[0].lower()
+            if base_name == 'pc':
+                address = (((pc & ~1) + 4) & ~3) if thumb else ((pc & ~3) + 8)
+            else:
+                base_reg = self._REG_BY_NAME.get(base_name)
+                if base_reg is None:
+                    return None
+                address = self.uc.reg_read(base_reg)
             if len(parts) > 1:
-                off = parts[1]
+                off = parts[1].strip()
                 if off.startswith('#'):
                     address += int(off[1:], 0)
-                elif off in self._REG_BY_NAME:
-                    address += self.uc.reg_read(self._REG_BY_NAME[off])
                 else:
-                    return None
-            mnemonic = insn.mnemonic.lower()
-            is_write = mnemonic.startswith(('str', 'stm', 'push'))
+                    neg = off.startswith('-')
+                    rname = (off[1:].strip() if neg else off).lower()
+                    if rname not in self._REG_BY_NAME:
+                        return None
+                    idx_val = self.uc.reg_read(self._REG_BY_NAME[rname]) & 0xFFFFFFFF
+                    if len(parts) > 2:
+                        spart = parts[2].strip().lower()
+                        if spart.startswith('lsl #'):
+                            idx_val = (idx_val << int(spart.split('#', 1)[1], 0)) & 0xFFFFFFFF
+                        elif spart.startswith('lsr #'):
+                            idx_val = (idx_val >> int(spart.split('#', 1)[1], 0)) & 0xFFFFFFFF
+                    address += (-idx_val if neg else idx_val)
             return address & 0xFFFFFFFF, is_write
         except Exception:
             return None
@@ -2710,7 +2772,9 @@ class UnicornMachine:
             f_cpsr = words[base + 0x40 // 4]
             if ((f_cpsr & 0x1F) == 0x10 and
                     0x1000 <= (f_pc or 0) < 0x60000000):
-                self._fast_frame = {'words': words[base:base + 17],
+                frame_words = list(words[base:base + 17])
+                frame_words[0] = uc.reg_read(UC_ARM_REG_R0)
+                self._fast_frame = {'words': frame_words,
                                     'sp': f_sp, 'lr': f_lr, 'pc': f_pc,
                                     'cpsr': f_cpsr}
         except Exception:
@@ -3160,6 +3224,11 @@ class UnicornMachine:
         if (cpsr & 0x1F) == 0x10 and self._symbol_address('__dabt_usr') is not None:
             if not self._set_cp15_fault(address, 0x5 | (0x800 if write else 0)):
                 return False
+            self._pte_dirty = True
+            self._last_fault_page = address & ~0xFFF
+            self._pending_evict_pages.add(address & ~0xFFF)
+            self._pending_evict_pages.add(pc & ~0xFFF)
+            self._pending_cputlb_flush = True
             self._pending_exception = 'dabt'
             if self._deliver_user_exception(pc, cpsr):
                 return True
@@ -3184,6 +3253,8 @@ class UnicornMachine:
             # exception-table lookup for genuine invalid probes).
             if not self._set_cp15_fault(address, fsr):
                 return False
+            self._pending_evict_pages.add(address & ~0xFFF)
+            self._pending_cputlb_flush = True
             self._pending_exception = 'dabt'
             delivered = self._deliver_svc_exception(pc, cpsr, 'dabt')
             if delivered:
@@ -3444,6 +3515,10 @@ class UnicornMachine:
                                 pass
                             if self._activation_pgd:
                                 self._cached_ttbr0 = self._activation_pgd
+                            try:
+                                self.uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
+                            except Exception:
+                                pass
                             remove = getattr(self.uc, 'ctl_remove_cache', None)
                             if remove is not None:
                                 try:
@@ -3489,6 +3564,7 @@ class UnicornMachine:
                             if len(self.fault_classification_trace) < 64:
                                 self.fault_classification_trace.append({
                                     'pc': f'0x{pc:08x}',
+                                    'cpsr': f'0x{cpsr:08x}',
                                     'address': (f'0x{access_addr:08x}'
                                                 if access_addr is not None else None),
                                     'kind': 'prefetch' if prefetch else 'data',
@@ -3501,6 +3577,21 @@ class UnicornMachine:
                             # reported CPSR mode; gate only on userspace VA + resident
                             # page + INSN message.
                             if self._should_recover_insn_invalid(pc, message):
+                                if ((cpsr & 0x1F) == 0x10 and (cpsr & 0x20) == 0
+                                        and (self.uc.reg_read(UC_ARM_REG_FPEXC) & 0x40000000) == 0):
+                                    try:
+                                        self.uc.reg_write(UC_ARM_REG_FPEXC, 0x40000000)
+                                        _page = pc & ~0xFFF
+                                        remove = getattr(self.uc, 'ctl_remove_cache', None)
+                                        if remove is not None:
+                                            remove(_page, _page + 0x1000)
+                                        self.uc.ctl_flush_tb()
+                                        self._set_pc_and_cpsr(pc, cpsr)
+                                        executed += 1
+                                        remaining = max(0, remaining - 1)
+                                        continue
+                                    except Exception:
+                                        pass
                                 _pro = None
                                 _thumb_cpsr = ((cpsr & ~0x3F) | 0x10 | 0x20)
                                 try:
@@ -3606,6 +3697,7 @@ class UnicornMachine:
                                         if len(self.fault_classification_trace) < 256:
                                             self.fault_classification_trace.append({
                                                 'pc': f'0x{pc:08x}',
+                                                'cpsr': f'0x{cpsr:08x}',
                                                 'address': f'0x{target:08x}',
                                                 'kind': 'data-decoded',
                                                 'write': bool(is_write)})
@@ -3791,6 +3883,7 @@ class UnicornMachine:
             'e0499_trace': list(self.e0499_trace),
             'e0500_frames': list(self.e0500_frames),
             'e0502_fill': list(self.e0502_fill),
+            'e0504_trace': list(self.e0504_trace),
             'user_entry_trace': list(self.user_entry_trace),
             'ret_user_returns': list(self.ret_user_returns),
             'activation_pgd': (f'0x{self._activation_pgd:08x}'
