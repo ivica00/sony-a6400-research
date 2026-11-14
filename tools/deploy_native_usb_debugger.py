@@ -25,7 +25,14 @@ def deploy(cam, spec: DebuggerTargetSpec, *, check_only: bool = False):
         + datetime.now().strftime('%Y%m%d-%H%M%S')
     )
     destination.mkdir(parents=True, exist_ok=False)
-    previous = cam.readFile('/etc/ld.so.preload')
+    preload_existed_before = True
+    try:
+        previous = cam.readFile('/etc/ld.so.preload')
+    except Exception as exc:
+        if 'Senser file control error 130' not in str(exc):
+            raise
+        previous = b''
+        preload_existed_before = False
     (destination / 'ld.so.preload.before').write_bytes(previous)
 
     manifest = {
@@ -33,6 +40,7 @@ def deploy(cam, spec: DebuggerTargetSpec, *, check_only: bool = False):
         'model_name': spec.model_name,
         'qualification': spec.qualification,
         'check_only': check_only,
+        'preload_existed_before': preload_existed_before,
         'bootstrap_mode': 'Senser',
         'operating_transport': 'native Sony USB external command',
         'feature': 35,
