@@ -30,10 +30,13 @@ import struct
 from collections import Counter
 
 from unicorn import (UC_ARCH_ARM, UC_HOOK_CODE, UC_HOOK_INTR,
-                     UC_HOOK_MEM_READ, UC_HOOK_MEM_READ_UNMAPPED,
+                     UC_HOOK_MEM_FETCH_PROT, UC_HOOK_MEM_READ,
+                     UC_HOOK_MEM_READ_PROT, UC_HOOK_MEM_READ_UNMAPPED,
                      UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE,
-                     UC_HOOK_MEM_WRITE_UNMAPPED, UC_MODE_ARM, Uc)
-from unicorn.arm_const import (UC_ARM_REG_CPSR, UC_ARM_REG_LR, UC_ARM_REG_PC,
+                     UC_HOOK_MEM_WRITE_PROT, UC_HOOK_MEM_WRITE_UNMAPPED,
+                     UC_MODE_ARM, Uc)
+from unicorn.arm_const import (UC_ARM_REG_C13_C0_3, UC_ARM_REG_CPSR,
+                               UC_ARM_REG_LR, UC_ARM_REG_PC,
                                UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2,
                                UC_ARM_REG_R3, UC_ARM_REG_R4, UC_ARM_REG_R5,
                                UC_ARM_REG_R6, UC_ARM_REG_R7, UC_ARM_REG_R8,
@@ -45,7 +48,9 @@ PL011_DR = 0x00
 PL011_FR = 0x18
 PL011_FR_TXFE = 0x80
 PL011_FR_RXFE = 0x10
+PL011_IMSC = 0x38
 PL011_RIS = 0x3C
+PL011_MIS = 0x40
 PL011_ICR = 0x44
 
 KERNEL_LOAD = 0x00108000
@@ -273,6 +278,7 @@ class UnicornMachine:
         self._timer_counter = 0
         self._next_jiffy_tick = timer_ticks_per_jiffy
         self._timer_irq_pending = 0
+        self._soft_pending_irqs: set[int] = set()
         self._gic_active_irq = None
         self._gic_iar_served = False
         self._gic_regs: dict[int, int] = {}
@@ -958,10 +964,12 @@ class UnicornMachine:
                     self.id_reads = getattr(self, 'id_reads', 0) + 1
                 return PL011_ID_REGS[offset]
             if offset == PL011_RIS:
-                ris = self._uart_regs.get(PL011_RIS, 0)
+                ris = self._uart_regs.get(PL011_RIS, 0) | 0x20  # TXRIS always ready
                 if self.serial_input:
                     ris |= 0x10
                 return ris
+            if offset == PL011_MIS:
+                return uart_register_value(PL011_RIS) & self._uart_regs.get(PL011_IMSC, 0)
             return self._uart_regs.get(offset, 0)
 
         def mmio_read(uc, access, address, size, value, user):
@@ -978,7 +986,7 @@ class UnicornMachine:
                 return True
             if uart_reads(address):
                 offset = address - self.uart_base
-                if offset in (PL011_DR, PL011_FR, PL011_RIS) or offset in PL011_ID_REGS:
+                if offset in (PL011_DR, PL011_FR, PL011_RIS, PL011_MIS) or offset in PL011_ID_REGS:
                     raw = uart_register_value(offset)
                 else:
                     raw = self._uart_regs.get(offset, 0)
@@ -1048,6 +1056,16 @@ class UnicornMachine:
                 if not cpu_side and offset == 0x000:
                     self._gic_enabled = bool(
                         (value & 1) and (self._gic_regs.get(('cpu', GIC_ICCICR), 0) & 1))
+                if not cpu_side and 0x200 <= offset < 0x280:
+                    base_irq = ((offset - 0x200) // 4) * 32
+                    for bit in range(32):
+                        if (value >> bit) & 1:
+                            self._soft_pending_irqs.add(base_irq + bit)
+                if not cpu_side and 0x280 <= offset < 0x300:
+                    base_irq = ((offset - 0x280) // 4) * 32
+                    for bit in range(32):
+                        if (value >> bit) & 1:
+                            self._soft_pending_irqs.discard(base_irq + bit)
                 return True
             if in_range(address, CRCDC_BASE, 0x1000):
                 self._crcdc_regs[address - CRCDC_BASE] = value & 0xFFFFFFFF
@@ -1132,6 +1150,9 @@ class UnicornMachine:
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, unmapped)
         self.uc.hook_add(UC_HOOK_MEM_READ_UNMAPPED, self._on_unmapped_read)
         self.uc.hook_add(UC_HOOK_MEM_WRITE_UNMAPPED, self._on_unmapped_write)
+        self.uc.hook_add(UC_HOOK_MEM_READ_PROT, self._on_unmapped_read)
+        self.uc.hook_add(UC_HOOK_MEM_WRITE_PROT, self._on_unmapped_write)
+        self.uc.hook_add(UC_HOOK_MEM_FETCH_PROT, self._on_unmapped_read)
         for begin, end in self.probe_write_ranges:
             def probe_write(uc, access, address, size, value, user):
                 stream = self.mmio_write_bytes.setdefault(address, bytearray())
@@ -1311,7 +1332,10 @@ class UnicornMachine:
             self.uc.hook_add(UC_HOOK_CODE, page_fault_hook,
                              begin=page_fault, end=page_fault + 3)
         self._install_fault_mrc_hooks()
-        self._install_kuser_hooks()
+        if self.enable_svc_dispatch and self.virtual_tlb:
+            self._install_kuser_hooks(tls_only=True)
+        else:
+            self._install_kuser_hooks()
         if self.trace_user_mode:
             # Wide low-user window: ld-linux (0x04000000+) and busybox (0x8000+).
             self.uc.hook_add(UC_HOOK_CODE, user_code, begin=0x1000, end=0x60000000)
@@ -1385,14 +1409,23 @@ class UnicornMachine:
         return bool((cpu_ctlr & 1) and (dist_ctlr & 1))
 
     def _try_inject_irq(self) -> bool:
-        """Deliver the pending timer IRQ by emulating ARM IRQ exception entry."""
-        if not self.timer_irq_model or not self._timer_irq_pending:
+        """Deliver a pending software or timer IRQ by emulating ARM IRQ entry."""
+        has_soft = bool(self._soft_pending_irqs)
+        has_timer = bool(self.timer_irq_model and self._timer_irq_pending)
+        if not has_soft and not has_timer:
             return False
         if not self._gic_irq_enabled():
             return False
         cpsr = self.uc.reg_read(UC_ARM_REG_CPSR)
         if cpsr & 0x80:  # CPSR.I: interrupts masked
             return False
+        if has_soft:
+            irq = min(self._soft_pending_irqs)
+            self._soft_pending_irqs.discard(irq)
+        else:
+            irq = self.timer_irq
+            self._timer_irq_pending = 0
+            self._jiffies_injected += 1
         pc = self.uc.reg_read(UC_ARM_REG_PC)
         if (cpsr & 0x1F) == 0x10:
             self.user_sp = self.uc.reg_read(UC_ARM_REG_SP)
@@ -1407,10 +1440,8 @@ class UnicornMachine:
         # ARM exception entry clears the exclusive monitor (spec); our IRQ entry
         # must do the same for a faithful LDREX/STREX retry loop.
         self._exclusive_monitor = None
-        self._gic_active_irq = self.timer_irq
+        self._gic_active_irq = irq
         self._gic_iar_served = False
-        self._timer_irq_pending = 0
-        self._jiffies_injected += 1
         if len(self._injection_pcs) < 20:
             self._injection_pcs.append({'pc': f'0x{pc:08x}',
                                         'cpsr': f'0x{cpsr:08x}'})
@@ -1574,7 +1605,7 @@ class UnicornMachine:
         self.banked_restore_hits += 1
         self.uc.reg_write(UC_ARM_REG_PC, pc + 4)
 
-    def _install_kuser_hooks(self) -> None:
+    def _install_kuser_hooks(self, tls_only: bool = False) -> None:
         """Emulate the ARM kuser helpers (E0434).
 
         The vector page helpers are user-callable code at 0xFFFF0FA0..0xFFFF0FFC.
@@ -1616,7 +1647,12 @@ class UnicornMachine:
 
         def get_tls(uc, address, size, user):
             record(0xFFFF0FE0, 'get_tls')
-            uc.reg_write(UC_ARM_REG_R0, self.tls_value & 0xFFFFFFFF)
+            try:
+                tpidruro = uc.reg_read(UC_ARM_REG_C13_C0_3) & 0xFFFFFFFF
+            except Exception:
+                tpidruro = 0
+            val = tpidruro if tpidruro else (self.tls_value & 0xFFFFFFFF)
+            uc.reg_write(UC_ARM_REG_R0, val)
             uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
         def helper_version(uc, address, size, user):
@@ -1624,8 +1660,10 @@ class UnicornMachine:
             uc.reg_write(UC_ARM_REG_R0, 5)
             uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
-        for pc, handler in ((0xFFFF0FA0, memory_barrier), (0xFFFF0FC0, cmpxchg),
-                            (0xFFFF0FE0, get_tls), (0xFFFF0FFC, helper_version)):
+        hooks = ((0xFFFF0FE0, get_tls),) if tls_only else (
+            (0xFFFF0FA0, memory_barrier), (0xFFFF0FC0, cmpxchg),
+            (0xFFFF0FE0, get_tls), (0xFFFF0FFC, helper_version))
+        for pc, handler in hooks:
             self.uc.hook_add(UC_HOOK_CODE, handler, begin=pc, end=pc + 3)
 
     def _svc_return_address(self, pc: int, thumb: bool) -> int:
@@ -2719,8 +2757,9 @@ class UnicornMachine:
                 return True
         return False
 
-    def _walk_page_tables_phys(self, vaddr: int) -> int | None:
-        """Walk live TTBR0 -> L1 -> L2 using physical mem_read only (no guest exec)."""
+    def _walk_page_tables_phys_with_perms(
+            self, vaddr: int) -> tuple[int, int] | None:
+        """Walk live TTBR0 -> L1 -> L2 and decode ARMv7 R/W/X permissions (E0505)."""
         ttbr0 = self._cached_ttbr0
         if not ttbr0:
             return None
@@ -2728,17 +2767,34 @@ class UnicornMachine:
             l1 = struct.unpack('<I', self.uc.mem_read(
                 (ttbr0 & 0xFFFFC000) + ((vaddr >> 20) & 0xFFF) * 4, 4))[0]
             if l1 & 2:
-                return (l1 & 0xFFF00000) | (vaddr & 0x000FFFFF)
+                pa = (l1 & 0xFFF00000) | (vaddr & 0x000FFFFF)
+                ap2 = (l1 >> 15) & 1
+                ap10 = (l1 >> 10) & 3
+                xn = (l1 >> 4) & 1
+                perms = 1 | (2 if (ap2 == 0 and ap10 == 3) else 0) | (
+                    4 if xn == 0 else 0)
+                return pa, perms
             if not (l1 & 1):
                 return None
             l2pa = l1 & 0xFFFFFC00
             l2 = struct.unpack('<I', self.uc.mem_read(
                 l2pa + ((vaddr >> 12) & 0xFF) * 4, 4))[0]
             if l2 & 2:
-                return (l2 & 0xFFFFF000) | (vaddr & 0xFFF)
+                pa = (l2 & 0xFFFFF000) | (vaddr & 0xFFF)
+                ap2 = (l2 >> 9) & 1
+                ap10 = (l2 >> 4) & 3
+                xn = l2 & 1
+                perms = 1 | (2 if (ap2 == 0 and ap10 == 3) else 0) | (
+                    4 if xn == 0 else 0)
+                return pa, perms
             return None
         except Exception:
             return None
+
+    def _walk_page_tables_phys(self, vaddr: int) -> int | None:
+        """Walk live TTBR0 -> L1 -> L2 using physical mem_read only (no guest exec)."""
+        res = self._walk_page_tables_phys_with_perms(vaddr)
+        return res[0] if res is not None else None
 
     def _translate_virtual(self, vaddr: int) -> int | None:
         """Map a VA to a PA for the UC_TLB_VIRTUAL fill hook (E0448)."""
@@ -2855,7 +2911,15 @@ class UnicornMachine:
         try:
             if access == 18 and vaddr >= 0x60000000:  # UC_MEM_FETCH
                 self._mmu_enabled = True
-            target = self._translate_virtual(vaddr)
+            perms = 7  # UC_PROT_ALL
+            if self._mmu_enabled and vaddr < 0x60000000:
+                res = self._walk_page_tables_phys_with_perms(vaddr)
+                if res is not None:
+                    target, perms = res
+                else:
+                    target = None
+            else:
+                target = self._translate_virtual(vaddr)
             if 0x0402F000 <= vaddr < 0x04030000 and len(self.e0502_fill) < 24:
                 self.e0502_fill.append({
                     'vaddr': f'0x{vaddr:08x}', 'access': access,
@@ -2899,7 +2963,7 @@ class UnicornMachine:
                     self.tlb_fill_samples.append(sample)
                 return False
             entry.paddr = target
-            entry.perms = 7  # UC_PROT_ALL
+            entry.perms = perms
             return True
         except Exception:
             return False
@@ -3534,7 +3598,8 @@ class UnicornMachine:
                                     pass
                     except Exception as error:
                         message = str(error)
-                        if ('UNMAPPED' in message or 'UC_ERR_EXCEPTION' in message
+                        if ('UNMAPPED' in message or 'PROT' in message
+                                or 'UC_ERR_EXCEPTION' in message
                                 or 'FETCH' in message or 'INSN' in message):
                             pc = self.uc.reg_read(UC_ARM_REG_PC)
                             cpsr = self.uc.reg_read(UC_ARM_REG_CPSR)

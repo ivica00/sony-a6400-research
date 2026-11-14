@@ -493,6 +493,36 @@ class VirtualTlbTest(unittest.TestCase):
         self.assertIsNotNone(machine._fast_frame)
         self.assertEqual(machine._fast_frame['words'][0], 0x00055000)
 
+    def test_on_tlb_fill_respects_armv7_ap2_and_xn(self):
+        import struct
+        from types import SimpleNamespace
+
+        machine = make_machine(virtual_tlb_on_userspace=True)
+        machine._mmu_enabled = True
+        machine._cached_ttbr0 = 0x10000
+        # L1 entry at 0x10000 + (0x041F1000 >> 20)*4 -> L2 table at 0x20000 (type=1)
+        l1_idx = (0x041F1000 >> 20) & 0xFFF
+        machine.uc.mem_write(0x10000 + l1_idx * 4, struct.pack('<I', 0x20001))
+
+        cases = [
+            # empty_zero_page: AP[2]=1, AP[1:0]=3, XN=1 -> READ only (1)
+            (0xBF7FEE7F, 0xBF7FE000, 1),
+            # RWX: AP[2]=0, AP[1:0]=3, XN=0 -> ALL (7)
+            (0x0042F03E, 0x0042F000, 7),
+            # RX: AP[2]=1, AP[1:0]=3, XN=0 -> READ|EXEC (5)
+            (0x0042F23E, 0x0042F000, 5),
+            # RW NX: AP[2]=0, AP[1:0]=3, XN=1 -> READ|WRITE (3)
+            (0x0042F03F, 0x0042F000, 3),
+        ]
+        l2_idx = (0x041F1000 >> 12) & 0xFF
+        for l2_val, expected_pa, expected_perms in cases:
+            machine.uc.mem_write(0x20000 + l2_idx * 4, struct.pack('<I', l2_val))
+            entry = SimpleNamespace(paddr=0, perms=0)
+            ok = machine._on_tlb_fill(machine.uc, 0x041F1000, 16, entry)
+            self.assertTrue(ok)
+            self.assertEqual(entry.paddr, expected_pa)
+            self.assertEqual(entry.perms, expected_perms)
+
 
 if __name__ == '__main__':
     unittest.main()
