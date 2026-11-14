@@ -20,6 +20,8 @@ of "full firmware compatibility."
 
 ## Latest progress
 
+- **Sugilite GPU & Sub-Micro Cross-Gen Parity ([cxd90045-sugilite-cross-gen-parity.md](docs/architecture/cxd90045-sugilite-cross-gen-parity.md)):**
+  Disassembly of `CXD90045` `grm_gles.ko` (`sugilite_interrupt` `0x658`, `sugilite_clock_up_internal` `0x248`, `sugilite_register_init` `0x54`) confirms byte-for-byte parity with `Oein/a5000-emulator` (`CXD90014`) for `BAR 0xF1000000`, IRQ `76`, `+0x34` completion bits (`31/30/26`), ISR acks, and `0xF3400080` clock readback (`0x15`). Added clean-room `dmp_p3d.py`, `submicro_link.py`, `GuestGles.poll_p3d_bar()`, and `UnicornMachine` Sugilite MMIO/clock wiring.
 - **ILCE-6400A Reference Qualification ([E0506](docs/evidence/0506-a6400a-offline-qualification-and-debugger-boundary.md)–[E0509](docs/evidence/0509-a6400a-msc-reply-lifetime-and-verified-native-identity.md)):**
   Qualified the signed `ILCE-6400A 1.01` updater package offline (`bionzx_machine_map`: 30 partition rows, 8 MMIO mappings, moved kernel hook sites) and added a narrowly allowlisted read-only USBSTOR identity probe (`a6400a_native_readonly` + `msc_extcmd_trace`), verifying normal-mode `GetModelInfo` (`0032858730` in `2.727 ms`) while keeping `ilce_6400a` at `reference`.
 - **ISP Color & Gamma Pipeline ([E0505](docs/evidence/0505-av-cam-cc-3dlut-and-ec-gamma-pipeline.md)):**

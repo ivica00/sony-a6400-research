@@ -67,6 +67,12 @@ TIMER_HZ = 100  # clock_event period 0x2710 on a 1 MHz timer
 TIMER_TICKS_PER_JIFFY = 0x2710
 VECTORS_BASE = 0xFFFF0000
 CRCDC_BASE = 0xF2A31000
+#: CXD90045 Sugilite GPU BAR0 and clock/reset block (verified in grm_gles.ko E0510).
+SUGILITE_BASE = 0xF1000000
+SUGILITE_SIZE = 0x4000
+SUGILITE_IRQ = 76
+SUGILITE_CLK_BASE = 0xF3400000
+SUGILITE_CLK_SIZE = 0x1000
 # ARM PL011 PrimeCell identification registers (+0xFE0..+0xFFC).
 PL011_ID_REGS = {
     0xFE0: 0x11, 0xFE4: 0x10, 0xFE8: 0x14, 0xFEC: 0x00,   # 0x00141011
@@ -289,6 +295,9 @@ class UnicornMachine:
             for offset in range(0x820, 0xC00, 4)
         }
         self._timer_regs: dict[int, int] = {}
+        from src.a6400.execution.dmp_p3d import SugiliteMmioModel
+        self._sugilite_clk_regs: dict[int, int] = {}
+        self._sugilite_mmio = SugiliteMmioModel()
         self._gic_enabled = False
         self._jiffies_injected = 0
         self._timer_counter_reads = 0
@@ -990,6 +999,18 @@ class UnicornMachine:
                 # report completion immediately (bit0 clear) instead of timing out.
                 uc.mem_write(address, struct.pack('<I', 0))
                 return True
+            if in_range(address, SUGILITE_CLK_BASE, SUGILITE_CLK_SIZE):
+                offset = address - SUGILITE_CLK_BASE
+                stored = self._sugilite_clk_regs.get(offset, 0)
+                uc.mem_write(address, (stored & ((1 << (size * 8)) - 1))
+                             .to_bytes(size, 'little'))
+                return True
+            if in_range(address, SUGILITE_BASE, SUGILITE_SIZE):
+                offset = address - SUGILITE_BASE
+                stored = self._sugilite_mmio.read_reg(offset)
+                uc.mem_write(address, (stored & ((1 << (size * 8)) - 1))
+                             .to_bytes(size, 'little'))
+                return True
             if uart_reads(address):
                 offset = address - self.uart_base
                 if offset in (PL011_DR, PL011_FR, PL011_RIS, PL011_MIS) or offset in PL011_ID_REGS:
@@ -1075,6 +1096,25 @@ class UnicornMachine:
                 return True
             if in_range(address, CRCDC_BASE, 0x1000):
                 self._crcdc_regs[address - CRCDC_BASE] = value & 0xFFFFFFFF
+                return True
+            if in_range(address, SUGILITE_CLK_BASE, SUGILITE_CLK_SIZE):
+                offset = address - SUGILITE_CLK_BASE
+                val32 = value & 0xFFFFFFFF
+                if offset in (0x080, 0x280):
+                    self._sugilite_clk_regs[offset] = self._sugilite_clk_regs.get(offset, 0) | val32
+                elif offset in (0x084, 0x284):
+                    base_off = offset - 4
+                    self._sugilite_clk_regs[base_off] = self._sugilite_clk_regs.get(base_off, 0) & ~val32
+                else:
+                    self._sugilite_clk_regs[offset] = val32
+                return True
+            if in_range(address, SUGILITE_BASE, SUGILITE_SIZE):
+                offset = address - SUGILITE_BASE
+                self._sugilite_mmio.write_reg(offset, value & 0xFFFFFFFF)
+                if self._sugilite_mmio.irq_asserted:
+                    self._soft_pending_irqs.add(SUGILITE_IRQ)
+                else:
+                    self._soft_pending_irqs.discard(SUGILITE_IRQ)
                 return True
             if in_range(address, self.uart_base):
                 offset = address - self.uart_base
