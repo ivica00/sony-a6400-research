@@ -48,5 +48,14 @@ class GuestKikilog:
                                       'returned': 0, 'policy': self.policy,
                                       'log_bytes_supplied': False, 'native_threads_executed': False})
             return 0
+        if command == 0x80044a10 and self.policy == 'observed-running-e0301':
+            # Stores the argument as the notify queue id; fails unless the main thread exists.
+            # Main thread present as in resume_existing; the notifications stay unsupplied.
+            if not getattr(self, 'mutexes_initialized', False):
+                raise UnsupportedKikilog('kikilog_notify_before_resume', cmd=command, arg=argument)
+            self.notify_qid = argument
+            self.transactions.append({'operation': 'set_notify_qid', 'cmd': command, 'qid': argument, 'returned': 0,
+                                      'policy': self.policy, 'notifications_supplied': False})
+            return 0
         raise UnsupportedKikilog('kikilog_ioctl_state_not_supplied', cmd=command, arg=argument,
                                   source=self.source_sha256)

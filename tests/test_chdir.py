@@ -28,6 +28,14 @@ class ChdirTests(unittest.TestCase):
         self.assertEqual(self.chdir('/lib/file'), 0xffffffec)
         self.assertEqual(self.fs.cwd, '/usr/share')  # failures leave cwd alone
 
+    def test_relative_open_resolves_against_chdir_cwd(self):
+        self.assertEqual(self.chdir('/lib'), 0)
+        self.mu.mem_write(0x3000, b'file\0')
+        opened = self.fs.request(5, [0x3000, 0, 0])
+        self.assertIn(opened['returned'], self.fs.fds)
+        self.assertEqual(opened['path'], '/lib/file')
+        self.assertEqual(self.fs.fds[opened['returned']]['path'], '/lib/file')
+
 
 if __name__ == '__main__':
     unittest.main()

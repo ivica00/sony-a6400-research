@@ -64,6 +64,30 @@ class TimerObjectServiceTests(unittest.TestCase):
         self.assertEqual(bytes(self.mem), before)
         self.assertFalse(hasattr(uipc, 'timer_objects'))
 
+    def test_arm_sets_deadline_and_stop_clears_it(self):
+        uipc = self.make_uipc()
+        uipc.now_us = 1000
+        self.call(uipc, 0)
+        self.call(uipc, 2, key=1, a=500, b=0)
+        self.assertEqual(uipc.timer_deadlines(), {1: 1500})
+        self.assertTrue(uipc.timer_dirty)
+        self.call(uipc, 3, key=1)
+        self.assertEqual(uipc.timer_deadlines(), {})
+
+    def test_fire_posts_event_body_once(self):
+        uipc = self.make_uipc()
+        uipc.pool_base = 0x1000
+        uipc.total_pool_size = 0x10000
+        uipc.now_us = 10
+        self.call(uipc, 0)
+        self.call(uipc, 1, key=1, a=0x1234, b=7, c=0x1050)
+        self.call(uipc, 2, key=1, a=5, b=0)
+        written = {}
+        self.assertTrue(uipc.fire_timer(1, lambda addr, data: written.__setitem__(addr, data)))
+        msg, = uipc.message_queues[0x00EE0001]
+        self.assertEqual(struct.unpack('<10I', written[msg])[4:8], (0x1234, 7, 0x1050, 1))
+        self.assertFalse(uipc.fire_timer(1, lambda addr, data: None))  # one-shot
+
 
 if __name__ == '__main__':
     unittest.main()

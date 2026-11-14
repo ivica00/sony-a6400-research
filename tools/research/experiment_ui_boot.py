@@ -15,6 +15,13 @@ from src.a6400.execution.guest_memory import cstring_preview, accessible
 from src.a6400.execution.guarded_bytes import UnverifiedGuestData
 
 
+def _nflasha_image(text):
+    number, sep, path = text.partition('=')
+    if number not in ('4', '23') or not sep or not path:
+        raise argparse.ArgumentTypeError('expected 4=<path> or 23=<path> (only nflasha4 and nflasha23 are supported)')
+    return int(number), path
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--instructions', type=int, default=15000000)
@@ -38,8 +45,12 @@ def build_parser():
                         help='image-driver selects verified 249:7 ABI; physical stream bytes remain guarded')
     parser.add_argument('--stream2-device', choices=('stop', 'open-only'), default='stop',
                         help='open-only accepts the observed /dev/stream2 (249:8) O_RDWR|O_DSYNC open and stops at the first ioctl/mmap')
+    parser.add_argument('--ldec-device', choices=('stop', 'open-only', 'lz77'), default='stop',
+                        help='open-only: /dev/ldec opens and closes; any ioctl still stops. lz77: open-only plus ioctl cmd 1 decoded in software')
     parser.add_argument('--nflasha4-device', choices=('stop', 'open-only', 'observed-dump', 'synthetic-erased'), default='stop',
-                        help='stop on /dev/nflasha4 (default); open-only accepts the observed O_RDWR open and stops at the first data/ioctl/mmap; observed-dump serves reads from the hash-checked 12 MiB MPR dump and answers only the observed read-only ioctl 0x80014123 (writes/mmap/other ioctls stay boundaries); synthetic-erased serves an all-zero (erased, E0305 B=00) image through the same paths')
+                        help='stop on /dev/nflasha4 (default); open-only accepts the observed O_RDWR open and stops at the first data/ioctl/mmap; observed-dump serves reads from the hash-checked 12 MiB MPR dump and answers only the observed read-only ioctl 0x80014123 (writes/mmap/other ioctls stay boundaries); synthetic-erased serves an all-0xFF (erased, ioctl byte 0x00 per E0305) image, or the --nflasha-image 4= file through the same paths')
+    parser.add_argument('--nflasha-image', metavar='N=PATH', action='append', default=[], type=_nflasha_image,
+                        help='initial in-memory image for /dev/nflashaN from a read-only host file (only N=4, a 12 MiB MPR dump, is supported); guest writes stay in memory and the file is never modified. Implies --nflasha4-device synthetic-erased unless observed-dump is chosen. Ignored on a checkpoint resume (the checkpoint carries its own image).')
     parser.add_argument('--mount-service', choices=('stop', 'observed-nflasha1'), default='stop',
                         help='stop on mount(2) (default); observed-nflasha1 serves only the observed read-only mount("/dev/nflasha1","/mnt","vfat",...,"posix_attr") and materializes the hash-checked nflasha1 vfat dump as read-only guest nodes')
     parser.add_argument('--setting-service', choices=('stop', 'observed-nflasha2', 'observed-dat4'), default='stop',
@@ -123,6 +134,15 @@ def build_parser():
     parser.add_argument('--uipc-sync-direct', choices=('return', 'yield'), default='return',
                         help="'yield' switches to a runnable peer after each snd_sync_direct (ioctl 0x80000006), "
                              'like sched_yield (threads syscall policy, which build_boot_session always uses)')
+    parser.add_argument('--upm-boot-key', type=int, default=None,
+                        help='opt-in: answer the boot-factor request (queue 0x924127, op 0x111) with this boot key '
+                             '(KEY_* index: 0 DEFAULT, 1 PLAY, 2 POWER, 3 POWER_SLIDE); needs a kernel UIPC policy')
+    parser.add_argument('--model-info-reply', type=int, default=None, metavar='COUNT',
+                        help='opt-in: deliver the 0x1004 model-info reply (COUNT entries; 0 = empty table) to the model-info sync callback on queue 0x870136; '
+                             'needs --uipc-sync-callback-delivery kernel-origin')
+    parser.add_argument('--capid-table-reply', type=lambda v: int(v, 0), default=None, metavar='PHYS',
+                        help='opt-in: answer the capture-ID-table request (queue 0x4015e, cmd 0x1000) with this physical address '
+                             '(the /dev/mem table stays zero-filled)')
     parser.add_argument('--uipc-rcv-timeout', choices=('blocking', 'modeled'), default='blocking',
                         help='modeled: rcv_msg_tmo with a positive timeout returns OSAL timeout at its guest-time deadline')
     parser.add_argument('--uipc-timer-service', choices=('off', 'emulated'), default='off',
@@ -211,8 +231,29 @@ def build_parser():
                         help='opt-in read-only display surface extraction; camera-e0074-e0044 registers the evidence-backed OSD/Sugilite contract')
     parser.add_argument('--mmap-eof', choices=('zero-fill', 'sigbus'), default='zero-fill',
                         help='file mappings past EOF: zero-fill (historical) or sigbus (Linux: access to a page wholly past EOF faults)')
+    parser.add_argument('--file-overlay', action='append', default=[], metavar='GUEST=HOST',
+                        help='DECLARED deviation from the image: serve HOST file bytes (and size) for guest regular file GUEST')
     parser.add_argument('--report', type=Path, default=PROJECT_ROOT / 'artifacts/execution/interpreter-ui-boot-test.json')
     return parser
+
+
+def apply_file_overlays(probe, overlays):
+    """Replace guest file content per --file-overlay; every overlay is recorded with its hash."""
+    applied = []
+    for item in overlays:
+        guest, _, host = item.partition('=')
+        node = probe.filesystem.nodes.get(guest)
+        if not host or node is None or node.get('kind') != 'file':
+            raise ValueError(f'--file-overlay needs GUEST=HOST with GUEST an image regular file: {item}')
+        data = Path(host).read_bytes()
+        probe.filesystem.nodes[guest] = {**node, 'size': len(data)}
+        probe.filesystem.cache[guest] = data
+        applied.append({'guest_path': guest, 'image_size': node.get('size'), 'size': len(data),
+                        'sha256': hashlib.sha256(data).hexdigest()})
+    if applied:
+        probe.report['declared_file_overlays'] = applied
+        probe.report['camera_fidelity_validated'] = False
+    return applied
 
 
 def main():
@@ -260,6 +301,7 @@ def main():
             parser.error('--uipc-rcv-timeout modeled requires the threads syscall policy')
         probe.uipc.rcv_timeout_policy = 'modeled'
         probe.report['uipc_rcv_timeout'] = 'modeled'
+    apply_file_overlays(probe, args.file_overlay)
     if hasattr(probe, 'mmap'):
         probe.mmap.eof_policy = args.mmap_eof
     probe.report['mmap_eof_policy'] = args.mmap_eof

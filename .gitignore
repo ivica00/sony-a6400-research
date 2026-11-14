@@ -7,9 +7,9 @@ __pycache__/
 node_modules/
 
 # Firmware, device state, dumps and generated outputs
-firmware/
+/firmware
 backups/
-artifacts/
+/artifacts
 scratch/
 assets/reference/*
 !assets/reference/README.md

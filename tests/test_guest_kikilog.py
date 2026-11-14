@@ -29,5 +29,5 @@ class KikilogTests(unittest.TestCase):
         self.assertEqual(device.status_list, [])
         before = list(device.transactions)
         with self.assertRaisesRegex(UnsupportedKikilog, 'state_not_supplied'):
-            device.ioctl(owner, 0x80044a10, 0x1234)
+            device.ioctl(owner, 0x80044a11, 0x1234)
         self.assertEqual(device.transactions, before)

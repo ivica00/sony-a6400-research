@@ -1,3 +1,4 @@
+import stat
 import struct
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ import unicorn
 from unicorn import arm_const as arm
 
 from src.a6400.execution.guest_checkpoint import restore_checkpoint, save_checkpoint
+from src.a6400.execution.guest_filesystem import GuestFilesystem
 from src.a6400.execution.guest_threads import GuestThreads
 from src.a6400.execution.guest_uipc import GuestUipc
 
@@ -159,5 +161,52 @@ class TestGuestCheckpoint(unittest.TestCase):
         self.assertEqual(p3.uipc.callback_proxy_owners, p1.uipc.callback_proxy_owners)
 
 
+    def test_checkpoint_saves_and_restores_filesystem_cwd(self):
+        d = {'kind': 'directory', 'mode': stat.S_IFDIR | 0o755, 'uid': 0, 'gid': 0}
+        nodes = {'/': dict(d), '/lib': dict(d),
+                 '/lib/file': {'kind': 'file', 'mode': stat.S_IFREG | 0o644, 'uid': 0, 'gid': 0, 'size': 1}}
+
+        def make_probe():
+            probe = MockProbe()
+            probe.mu.mem_map(0x10000, 0x1000, unicorn.UC_PROT_ALL)
+            probe.filesystem = GuestFilesystem(probe.mu, dict(nodes), lambda path, node: b'x')
+            return probe
+
+        p1 = make_probe()
+        p1.mu.mem_write(0x10100, b'/lib' + bytes(1))
+        self.assertEqual(p1.filesystem.request(12, [0x10100, 0, 0])['returned'], 0)
+        self.assertEqual(p1.filesystem.cwd, '/lib')
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ckpt_path = Path(tmpdir) / 'cwd.ckpt'
+            save_checkpoint(p1, ckpt_path)
+            p2 = make_probe()
+            restore_checkpoint(p2, ckpt_path)
+            self.assertEqual(p2.filesystem.cwd, '/lib')
+            p2.mu.mem_write(0x10200, b'file' + bytes(1))
+            opened = p2.filesystem.request(5, [0x10200, 0, 0])
+            self.assertIn(opened['returned'], p2.filesystem.fds)
+            self.assertEqual(opened['path'], '/lib/file')
+
+            # a checkpoint without a cwd leaves cwd unset, so relative paths still stop
+            p3 = make_probe()
+            save_checkpoint(make_probe(), ckpt_path)
+            restore_checkpoint(p3, ckpt_path)
+            self.assertFalse(hasattr(p3.filesystem, 'cwd'))
+
+
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestRunGuardThumb(unittest.TestCase):
+    def test_budget_stop_keeps_thumb_state(self):
+        from types import SimpleNamespace
+        from src.a6400.execution.interpreter_probe import InterpreterProbe
+        for cpsr in (0x30, 0x10):
+            uc = unicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_ARM)
+            uc.mem_map(0x1000, 0x1000)
+            uc.reg_write(arm.UC_ARM_REG_CPSR, cpsr)
+            stub = SimpleNamespace(PROGRESS_SYSCALLS=(5,), stall_syscalls=0, report={'instruction_budget': 1}, instructions=1)
+            self.assertTrue(InterpreterProbe._run_guard(stub, uc, 5, 0x1000))
+            self.assertEqual(uc.reg_read(arm.UC_ARM_REG_CPSR) & 0x20, cpsr & 0x20)

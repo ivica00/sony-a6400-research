@@ -350,6 +350,41 @@ class GuestThreadsTests(unittest.TestCase):
         self.assertEqual(gt.threads[1002].state, 'runnable')
         self.assertEqual(struct.unpack('<i', self.mem_reader(0x3000, 4))[0], 0)
 
+    def _blocked_poll(self, deadline, peer='runnable'):
+        gt = GuestThreads(initial_tid=1000)
+        gt.threads[1001] = GuestThread(tid=1001, name='peer', state=peer)
+        gt.handle_fd_wait(7, 'poll', 0x1000, extra_fds=[8], deadline=deadline)
+        return gt
+
+    def test_poll_deadline_expiry_wakes_thread_once(self):
+        gt = self._blocked_poll(5000)
+        self.assertEqual(gt.timer_waiters, {1000: 5000})
+        self.assertEqual(gt.wake_due(4999), [])
+        self.assertEqual(gt.threads[1000].state, 'blocked_poll')
+        self.assertEqual(gt.wake_due(5000), [1000])
+        self.assertEqual(gt.threads[1000].state, 'runnable')
+        self.assertTrue(gt.threads[1000].poll_expired)
+        self.assertFalse(any(1000 in w for w in gt.fd_waiters.values()))
+
+    def test_poll_data_wake_cancels_deadline(self):
+        gt = self._blocked_poll(5000)
+        self.assertEqual(gt.handle_fd_wake(8), [1000])
+        self.assertEqual(gt.timer_waiters, {})
+        self.assertFalse(any(1000 in w for w in gt.fd_waiters.values()))
+        self.assertFalse(getattr(gt.threads[1000], 'poll_expired', False))
+
+    def test_poll_without_deadline_blocks_indefinitely(self):
+        gt = self._blocked_poll(None)
+        self.assertEqual(gt.timer_waiters, {})
+        self.assertEqual(gt.wake_due(10**12), [])
+        self.assertEqual(gt.threads[1000].state, 'blocked_poll')
+
+    def test_idle_clock_jumps_to_poll_deadline(self):
+        gt = self._blocked_poll(5000, peer='blocked_futex')  # idle: the block itself jumps the clock
+        self.assertEqual(gt.clock_floor, 5000)
+        self.assertEqual(gt.threads[1000].state, 'runnable')
+        self.assertTrue(gt.threads[1000].poll_expired)
+
 
 if __name__ == '__main__':
     unittest.main()
