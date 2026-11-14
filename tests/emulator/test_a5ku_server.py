@@ -32,6 +32,7 @@ from src.a6400.execution.a5ku_server import (
     A5kuUvcTestHandler,
 )
 from src.a6400.execution.usb_host_enum import EXPECTED_VIDEO_STREAMING_INTERFACE
+from tests.emulator.test_a5ku_host_enum import _build_test_uvc_ptp_config_descriptor
 
 
 def _build_test_device_descriptor() -> bytes:
@@ -44,7 +45,10 @@ def _build_test_device_descriptor() -> bytes:
 
 class TestA5kuServerAndUvc(unittest.TestCase):
     def test_uvc_probe_commit_set_interface_and_explicit_frame_in(self) -> None:
-        handler = A5kuUvcTestHandler(_build_test_device_descriptor())
+        handler = A5kuUvcTestHandler(
+            _build_test_device_descriptor(),
+            config_descriptor=_build_test_uvc_ptp_config_descriptor(),
+        )
         session = A5kuDeviceSession(handler, attached=True, speed=A5kuSpeed.HIGH)
 
         with A5kuTcpServer(session, host="127.0.0.1", port=0) as server:
@@ -88,7 +92,10 @@ class TestA5kuServerAndUvc(unittest.TestCase):
                 self.assertEqual(got, sample_frame)
 
     def test_live_attach_and_detach_push_events(self) -> None:
-        handler = A5kuUvcTestHandler(_build_test_device_descriptor())
+        handler = A5kuUvcTestHandler(
+            _build_test_device_descriptor(),
+            config_descriptor=_build_test_uvc_ptp_config_descriptor(),
+        )
         session = A5kuDeviceSession(handler, attached=False)
 
         with A5kuTcpServer(session, host="127.0.0.1", port=0) as server:

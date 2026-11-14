@@ -30,6 +30,8 @@ from src.a6400.execution.a5ku_protocol import (
     make_hello_frame,
 )
 from src.a6400.execution.usb_host_enum import (
+    DEFAULT_DESCRIPTOR_MANIFEST,
+    DEFAULT_ENABLEMENT_MANIFEST,
     USB_DT_CONFIG,
     USB_DT_DEVICE,
     UsbConfiguration,
@@ -99,7 +101,7 @@ class A5kuEnumerationResult:
     address: int
     device_descriptor: A5kuDeviceDescriptor
     configuration: UsbConfiguration
-    set_config_plan: dict[str, Any]
+    set_config_plan: dict[str, Any] | None
 
 
 class A5kuVerifiedDescriptorHandler:
@@ -297,7 +299,12 @@ class A5kuHostClient:
         reply = self._request(frame, A5kuMessageType.IN_DONE)
         return reply.payload
 
-    def enumerate_uvc_ptp(self, address: int = 1) -> A5kuEnumerationResult:
+    def enumerate_uvc_ptp(
+        self,
+        address: int = 1,
+        *,
+        plan_set_config: bool | None = None,
+    ) -> A5kuEnumerationResult:
         """Execute the RE_USB_HOST_PATH §6.2 enumeration sequence and validate UVC+PTP."""
         speed = self.reset()
         dev_raw = self.control_in(0x80, 0x06, (USB_DT_DEVICE << 8) | 0, 0, _DEVICE_DESC_SIZE)
@@ -310,7 +317,12 @@ class A5kuHostClient:
         cfg_raw = self.control_in(0x80, 0x06, (USB_DT_CONFIG << 8) | 0, 0, total_length)
         configuration = select_uvc_ptp_configuration(parse_configuration_descriptor(cfg_raw))
         self.control_out(0x00, 0x09, configuration.value, 0)
-        plan = plan_set_configuration(configuration.value)
+        if plan_set_config is None:
+            plan_set_config = (
+                DEFAULT_DESCRIPTOR_MANIFEST.is_file()
+                and DEFAULT_ENABLEMENT_MANIFEST.is_file()
+            )
+        plan = plan_set_configuration(configuration.value) if plan_set_config else None
         return A5kuEnumerationResult(
             speed=speed,
             address=address & 0x7F,
