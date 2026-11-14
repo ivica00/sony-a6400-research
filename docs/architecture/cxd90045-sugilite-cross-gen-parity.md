@@ -2,8 +2,11 @@
 
 - **Date:** 2026-11-14
 - **Track:** L2 Full-System (`UnicornMachine`) & L3 Graphics (`GuestGles`, `dmp_p3d`)
-- **Primary Input:** `firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/grm_gles.ko`
-  - **SHA-256:** `a8d1dbe8c66be365d32371b13f35a0e7d598c415c0ff17f2c8f544084ccc6882`
+- **Primary Inputs:**
+  - `firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/kmod/grm_gles.ko`
+    (**SHA-256:** `a8d1dbe8c66be365d32371b13f35a0e7d598c415c0ff17f2c8f544084ccc6882`)
+  - `firmware/extracted_a6400/firmware.tar_unpacked/0700_part_image/dev/nflasha15_unpacked/lib/libObj.so`
+    (**SHA-256:** `60ffd2b0f31f4bc139a7c13a4f62c25cdeb6a531ad5ef35df48471e6e36e88b1`)
 - **Tooling:** `arm-linux-gnueabi-objdump`, `nm` (WSL Ubuntu)
 - **Prior Art / Cross-Reference:** [Oein/a5000-emulator](https://github.com/Oein/a5000-emulator) (`docs/RE_DISPLAY_GPU.md` §2, CC BY 4.0, by Park SungHyun / Oein)
 
@@ -29,6 +32,10 @@ Disassembly of `grm_gles.ko` establishes byte-for-byte contract parity with `CXD
    - Writes `0x15` to `0xF3400080`, delays, writes `0x10` to `0xF3400280`, then **reads back `0xF3400080` and calls `__bug_noarg` if `!= 0x15`**.
 4. **Register Init (`sugilite_register_init` `0x54`):**
    - Writes `+0x10C0 = 0xFFFFFFFF`, `+0x10C4 = 0xFFFFFFFF`, `+0x1000 = 0`, `+0x1080 = 0x12345678`, `+0x10C0 = 0xFFFFFFF0`, `+0x10D0 = 0`, `+0x1100 = 1`, `+0x1128 = 0`, `+0x1110 = 0`, `+0x1114`, `+0x1118`, `+0x1410 = 0`, and (when `async_fix == 1`) `+0x50`/`+0x54`.
+5. **User-Space `rm_*` Submission (`libObj.so` `0x72b404..0x72b5d0`):**
+   - `0x72b404`: `cmp.w r0, #0x1800` (tv-mode skip guard on P3D kick).
+   - `0x72b458 / 0x72b470 / 0x72b49c`: PPF writes `+0xC00`, `+0xC10`, `+0xC18` (trigger).
+   - `0x72b5c6 / 0x72b5d0`: P3D kick writes `+0x1804` (list PA) then `+0x1800` (entry count).
 
 ## 3. Implementation & Verification
 

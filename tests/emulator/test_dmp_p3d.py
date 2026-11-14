@@ -314,6 +314,15 @@ class TestGicItargetsrPreRoute(unittest.TestCase):
         self.assertEqual(machine._gic_regs.get(('dist', 0xBFC)), 0x01010101)
         self.assertNotIn(('dist', 0x800), machine._gic_regs)
 
+    def test_sugilite_clock_and_mmio_wired(self) -> None:
+        try:
+            from src.a6400.execution.unicorn_machine import SUGILITE_IRQ, UnicornMachine
+        except ImportError as exc:
+            self.skipTest(f'Unicorn/ctypes unavailable in this shell: {exc}')
+        machine = UnicornMachine()
+        self.assertEqual(SUGILITE_IRQ, 76)
+        self.assertIsNotNone(machine._sugilite_mmio)
+
 
 if __name__ == '__main__':
     unittest.main()
