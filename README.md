@@ -74,15 +74,14 @@ of "full firmware compatibility."
   symbols now resolve for every body **without a camera**, and for the a6400 the offline
   decode matches the existing live `/proc/kallsyms` read on all seven symbols. The
   `ilce_6100`, `ilce_6600` and `ilce_7m3` profiles stop being stubs and carry sourced values.
-- **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0504](docs/evidence/0504-cxd90045-0x0402f666-pc-ldr-decode-fast-r0-vfp-and-busybox-entry.md)):**
+- **Offline Linux Kernel Boot ([E0414](docs/evidence/0414-nflasha-readonly-device-check-and-boot-area-dumps.md)–[E0510](docs/evidence/0510-nflasha1-busybox-ash-ttyam0-shell.md)):**
   Decoded the camera's first-stage bootloader and updater boot images, and emulated the
-  interrupt controller, system timers, clock hardware, and serial console. The updater
-  Linux kernel now boots through delay calibration, mounts its compressed root filesystem,
-  captures **52,976 bytes** of live serial output, and accepts Sony's custom boot-argument
-  override. User-space demand paging, fast-syscall return, and ARM VFP context save now
-  carry `ld-2.11.2.so` through `/lib/libc.so.6` linking into **BusyBox `_start` (`0x0000C439`)**
-  with 71 user syscalls and 35 kuser helper calls before a `libc.so.6` branch to `0x041F2000`
-  (so an interactive shell is not open yet).
+  interrupt controller, system timers, clock hardware, and serial console (`PL011` IRQ `150`).
+  The updater Linux kernel now boots through delay calibration, mounts its compressed root
+  filesystem, enables `ttyAM0` via `amba2.console=1`, preserves per-process `SP_usr` across
+  `sys_clone` and `kuser` (`0xFFFF0000..0xFFFF1000`) returns, and boots cleanly into an
+  interactive **`BusyBox v1.13.4` `/bin/ash`** shell (`/ # `), executing `uname -a` and `ls -la /`
+  with zero unmapped accesses (`cpu_v7_do_idle+0x8`, completing Phase 1).
 - **Persistent USB Debugger ([E0400](docs/evidence/0400-usb-debugger-and-runtime-probe-infra.md)–[E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md)):**
   A v2 USB debugger runs in Mass Storage mode, letting us read kernel logs (including
   logs preserved across warm reboots), check USB state, and recover cleanly without pulling
@@ -102,10 +101,10 @@ of "full firmware compatibility."
 
 ## Status overview
 
-Recorded suite: 1782 tests. Each result is bounded by its own dated evidence record; no
+Recorded suite: 1787 tests. Each result is bounded by its own dated evidence record; no
 UVC video frame, no flash write, and no full firmware boot is claimed.
 
-![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=5128a1e1373c)
+![Research status: demonstrated results and remaining boundaries](docs/images/research-status.svg?v=ea20a40fa2dc)
 
 ### Subsystem status
 
@@ -120,7 +119,7 @@ UVC video frame, no flash write, and no full firmware boot is claimed.
 | **USB Debugger v2** | Persistent Mass Storage debugger for reading live/warm-reboot kernel logs and USB state | Deploying the always-on WinUSB vendor interface | [E0401](docs/evidence/0401-usb-debugger-v2-ring-recover-and-mode-boundary.md), [E0405ab](docs/evidence/0405ab-device-desc-builder-and-msos2-subset.md) |
 | **Test UVC video pattern** | Streams a synthetic 720p MJPEG pattern at ~30 FPS; ZV-E10 USB video stack cataloged as reference | Wiring the live camera sensor feed | [E0143](docs/evidence/0143-uvc-720p-test-transport-and-30fps-verified.md), [E0321](docs/evidence/0321-zve10-uvc-enablement-manifest.md) |
 | **Multi-camera profiles** | Six sourced profiles, including `ilce_6400a` package/USB evidence | Only original a6400 is a verified execution target; a6400A bootstrap remains unqualified | [E0506](docs/evidence/0506-a6400a-offline-qualification-and-debugger-boundary.md), [`src/a6400/targets/`](src/a6400/targets/catalog.py), [Adding a camera](docs/ADDING_A_BIONZX_CAMERA.md) |
-| **Automated checks** | 1782 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
+| **Automated checks** | 1787 tests pass offline (structure, profiles, emulator contracts, doc sync) | Proves bounded contracts, not full compatibility | [tests/](tests/README.md) |
 
 ## How to help (no camera needed)
 

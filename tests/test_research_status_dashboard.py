@@ -166,7 +166,7 @@ class TestKpiDerivation(unittest.TestCase):
         # E0436 filled the three declared stubs from their own packaged updaters, so the pill
         # lists every body that now carries evidence rather than only the two it listed before.
         self.assertEqual(
-            pill.value, "ILCE-6100 + ILCE-6400 + ILCE-6400A + ILCE-6600 + ILCE-7M3 + ZV-E10")
+            pill.value, "ILCE-6100 + ILCE-6400 + ILCE-6400A + ILCE-6600 + ILCE-7C + ILCE-7M3 + ZV-E10")
         self.assertEqual(pill.tone, "violet")
 
     def test_pills_cover_the_required_kpis(self):

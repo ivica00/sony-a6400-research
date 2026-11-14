@@ -1,20 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="920" height="966" viewBox="0 0 920 966" role="img" aria-labelledby="title desc">
-<title id="title">Status &amp; Bounded Telemetry — 2026-11-13 | E0509</title>
-<desc id="desc">Status &amp; Bounded Telemetry: 1,782 tests recorded passing, 511 evidence receipts through E0509. Bounded telemetry, not a firmware compatibility percentage.</desc>
+<title id="title">Status &amp; Bounded Telemetry — 2026-11-14 | E0510</title>
+<desc id="desc">Status &amp; Bounded Telemetry: 1,787 tests recorded passing, 512 evidence receipts through E0510. Bounded telemetry, not a firmware compatibility percentage.</desc>
 <rect width="920" height="966" rx="16" fill="#0d1117" />
 <g>
 <text x="24" y="38" fill="#f0f6fc" font-size="21" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Status &amp; Bounded Telemetry</text>
 <text x="24" y="54" fill="#9da7b3" font-size="9" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Sony a6400 · BIONZ X CXD90045 · bounded contract inventories — not a compatibility score</text>
 <rect x="760.82" y="22" width="135.18" height="22" rx="11" fill="#161b22" stroke="#30363d" stroke-width="1" />
-<text x="887" y="38" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">2026-11-13 | E0509</text>
+<text x="887" y="38" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Consolas, 'Courier New', monospace" text-anchor="end">2026-11-14 | E0510</text>
 <rect x="24" y="68" width="197.818" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
 <rect x="124.32" y="68" width="97.4976" height="26" rx="5" fill="#2ea043" />
 <text x="33" y="85" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">contract tests</text>
-<text x="133.32" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">1,782 passing</text>
+<text x="133.32" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">1,787 passing</text>
 <rect x="229.818" y="68" width="209.342" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
 <rect x="347.778" y="68" width="91.3824" height="26" rx="5" fill="#1f6feb" />
 <text x="238.818" y="85" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">evidence receipts</text>
-<text x="356.778" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">511 recorded</text>
+<text x="356.778" y="85" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">512 recorded</text>
 <rect x="447.16" y="68" width="251.914" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
 <rect x="571" y="68" width="128.074" height="26" rx="5" fill="#2ea043" />
 <text x="456.16" y="85" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">teardown sequencer</text>
@@ -23,10 +23,10 @@
 <rect x="106.68" y="100" width="91.3824" height="26" rx="5" fill="#d29922" />
 <text x="33" y="117" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">task phases</text>
 <text x="115.68" y="117" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">1/8 observed</text>
-<rect x="206.062" y="100" width="527.803" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
-<rect x="312.262" y="100" width="421.603" height="26" rx="5" fill="#8957e5" />
+<rect x="206.062" y="100" width="588.955" height="26" rx="5" fill="#21262d" stroke="#30363d" stroke-width="1" />
+<rect x="312.262" y="100" width="482.755" height="26" rx="5" fill="#8957e5" />
 <text x="215.062" y="117" fill="#c9d1d9" font-size="10.5" font-weight="400" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">BIONZ X targets</text>
-<text x="321.262" y="117" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">ILCE-6100 + ILCE-6400 + ILCE-6400A + ILCE-6600 + ILCE-7M3 + ZV-E10</text>
+<text x="321.262" y="117" fill="#ffffff" font-size="10.5" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">ILCE-6100 + ILCE-6400 + ILCE-6400A + ILCE-6600 + ILCE-7C + ILCE-7M3 + ZV-E10</text>
 <rect x="24" y="144" width="426" height="488" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1" />
 <rect x="470" y="144" width="426" height="488" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1" />
 <text x="40" y="166" fill="#f0f6fc" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="start">Firmware &amp; Subsystem Contract Map</text>
